@@ -26,7 +26,7 @@ juce_add_plugin(GP5_VST_Editor
     PLUGIN_MANUFACTURER_CODE ARSo
     PLUGIN_CODE Gp5e
     
-    # MIDI-Konfiguration (aus .jucer: pluginProducesMidiOut, pluginWantsMidiIn)
+    # MIDI-Konfiguration - Als Instrument mit MIDI Output
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT TRUE
@@ -35,8 +35,8 @@ juce_add_plugin(GP5_VST_Editor
     # Editor vorhanden
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     
-    # VST3-Kategorien
-    VST3_CATEGORIES "Instrument" "Synth"
+    # VST3-Kategorien - Instrument mit MIDI
+    VST3_CATEGORIES "Instrument" "Generator"
     
     # Kopiere Plugin in den VST3-Ordner nach dem Build
     COPY_PLUGIN_AFTER_BUILD TRUE

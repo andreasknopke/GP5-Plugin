@@ -135,6 +135,9 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     auto totalNumInputChannels  = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
 
+    // Temporärer Buffer für neue MIDI-Events
+    juce::MidiBuffer generatedMidi;
+
     // =========================================================================
     // DAW Synchronisation - Hole Position vom Host
     // =========================================================================
@@ -165,6 +168,122 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             }
         }
     }
+
+    // =========================================================================
+    // MIDI Output - Generiere MIDI-Noten basierend auf der aktuellen Position
+    // =========================================================================
+    if (fileLoaded && midiOutputEnabled.load())
+    {
+        bool isPlaying = hostIsPlaying.load();
+        double currentBeat = hostPositionBeats.load();
+        int trackIdx = selectedTrackIndex.load();
+        
+        const auto& tracks = gp5Parser.getTracks();
+        
+        // Stop-Erkennung: Wenn Playback stoppt, alle Noten beenden
+        if (!isPlaying && wasPlaying)
+        {
+            for (int note : activeNotes)
+            {
+                generatedMidi.addEvent(juce::MidiMessage::noteOff(1, note), 0);
+            }
+            activeNotes.clear();
+            lastProcessedMeasure = -1;
+            lastProcessedBeatIndex = -1;
+            DBG("MIDI: Playback stopped, all notes off");
+        }
+        
+        // Nur MIDI generieren wenn:
+        // - Playback läuft
+        // - Gültiger Track ausgewählt
+        if (isPlaying && trackIdx >= 0 && trackIdx < tracks.size())
+        {
+            const auto& track = tracks[trackIdx];
+            
+            // Berechne aktuellen Takt und Beat-Position
+            int timeSigNum = hostTimeSigNumerator.load();
+            int timeSigDen = hostTimeSigDenominator.load();
+            double beatsPerMeasure = timeSigNum * (4.0 / timeSigDen);
+            
+            int measureIndex = static_cast<int>(currentBeat / beatsPerMeasure);
+            double beatInMeasure = fmod(currentBeat, beatsPerMeasure);
+            
+            // Begrenze auf gültige Takte
+            if (measureIndex >= 0 && measureIndex < track.measures.size())
+            {
+                const auto& measure = track.measures[measureIndex];
+                const auto& beats = measure.voice1;  // Verwende Voice 1
+                
+                if (beats.size() > 0)
+                {
+                    // Berechne welcher Beat gerade gespielt wird
+                    double beatDuration = beatsPerMeasure / beats.size();
+                    int beatIndex = static_cast<int>(beatInMeasure / beatDuration);
+                    beatIndex = juce::jlimit(0, beats.size() - 1, beatIndex);
+                    
+                    // Nur neue Noten spielen wenn sich der Beat geändert hat
+                    if (measureIndex != lastProcessedMeasure || beatIndex != lastProcessedBeatIndex)
+                    {
+                        // Alle aktiven Noten stoppen
+                        for (int note : activeNotes)
+                        {
+                            generatedMidi.addEvent(juce::MidiMessage::noteOff(1, note), 0);
+                        }
+                        activeNotes.clear();
+                        
+                        // Neue Noten starten
+                        const auto& beat = beats[beatIndex];
+                        
+                        if (!beat.isRest)
+                        {
+                            for (const auto& [stringIndex, gpNote] : beat.notes)
+                            {
+                                if (!gpNote.isDead && !gpNote.isTied)
+                                {
+                                    // Konvertiere Fret zu MIDI-Note
+                                    // MIDI = Tuning der Saite + Fret
+                                    int midiNote = 0;
+                                    if (stringIndex < track.tuning.size())
+                                    {
+                                        midiNote = track.tuning[stringIndex] + gpNote.fret;
+                                    }
+                                    else
+                                    {
+                                        // Standard-Tuning als Fallback (E2, A2, D3, G3, B3, E4)
+                                        const int standardTuning[] = { 64, 59, 55, 50, 45, 40 };
+                                        if (stringIndex < 6)
+                                            midiNote = standardTuning[stringIndex] + gpNote.fret;
+                                    }
+                                    
+                                    // Velocity basierend auf Note-Velocity
+                                    int velocity = gpNote.velocity > 0 ? gpNote.velocity : 95;
+                                    if (gpNote.isGhost) velocity = 60;
+                                    if (gpNote.hasAccent) velocity = 120;
+                                    
+                                    if (midiNote > 0 && midiNote < 128)
+                                    {
+                                        auto msg = juce::MidiMessage::noteOn(1, midiNote, (juce::uint8)velocity);
+                                        generatedMidi.addEvent(msg, 0);
+                                        activeNotes.insert(midiNote);
+                                        DBG("MIDI: Note ON - " << midiNote << " vel=" << velocity << " (Measure " << measureIndex << ", Beat " << beatIndex << ")");
+                                    }
+                                }
+                            }
+                        }
+                        
+                        lastProcessedMeasure = measureIndex;
+                        lastProcessedBeatIndex = beatIndex;
+                    }
+                }
+            }
+        }
+        
+        wasPlaying = isPlaying;
+        lastProcessedBeat = currentBeat;
+    }
+    
+    // Generierte MIDI-Events zum Output hinzufügen
+    midiMessages.addEvents(generatedMidi, 0, buffer.getNumSamples(), 0);
 
     // In case we have more outputs than inputs, this code clears any output
     // channels that didn't contain input data, (because these aren't

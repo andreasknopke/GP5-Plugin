@@ -221,12 +221,16 @@ void NewProjectAudioProcessorEditor::trackSelectionChanged()
     
     if (trackIndex >= 0 && trackIndex < gp5Parser.getTrackCount())
     {
+        // Tab-Ansicht aktualisieren
         TabTrack track = gp5Parser.convertToTabTrack(trackIndex);
         tabView.setTrack(track);
         
+        // MIDI-Output auf diesen Track setzen
+        audioProcessor.setSelectedTrack(trackIndex);
+        
         const auto& gp5Track = gp5Parser.getTracks()[trackIndex];
         DBG("Track " << (trackIndex + 1) << " geladen: " << gp5Track.name 
-            << " mit " << track.measures.size() << " Takten");
+            << " mit " << track.measures.size() << " Takten (MIDI Output aktiviert)");
     }
 }
 

@@ -11,6 +11,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "GP5Parser.h"
 #include <atomic>
+#include <set>
 
 //==============================================================================
 /**
@@ -80,12 +81,32 @@ public:
     
     // Position innerhalb des aktuellen Taktes (0.0 = Anfang, 1.0 = Ende)
     double getPositionInCurrentMeasure() const;
+    
+    //==============================================================================
+    // Track Selection for MIDI Output
+    void setSelectedTrack(int trackIndex) { selectedTrackIndex.store(trackIndex); }
+    int getSelectedTrack() const { return selectedTrackIndex.load(); }
+    
+    // MIDI Output enable/disable
+    void setMidiOutputEnabled(bool enabled) { midiOutputEnabled.store(enabled); }
+    bool isMidiOutputEnabled() const { return midiOutputEnabled.load(); }
 
 private:
     //==============================================================================
     GP5Parser gp5Parser;
     juce::String loadedFilePath;
     bool fileLoaded = false;
+    
+    // Selected track for MIDI output
+    std::atomic<int> selectedTrackIndex { 0 };
+    std::atomic<bool> midiOutputEnabled { true };
+    
+    // MIDI note tracking - which notes are currently playing
+    std::set<int> activeNotes;  // MIDI note numbers currently playing
+    double lastProcessedBeat = -1.0;
+    int lastProcessedMeasure = -1;
+    int lastProcessedBeatIndex = -1;
+    bool wasPlaying = false;
     
     // DAW sync state (atomic for thread-safe access from UI)
     std::atomic<bool> hostIsPlaying { false };
