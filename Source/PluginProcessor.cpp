@@ -135,6 +135,37 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     auto totalNumInputChannels  = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
 
+    // =========================================================================
+    // DAW Synchronisation - Hole Position vom Host
+    // =========================================================================
+    if (auto* playHead = getPlayHead())
+    {
+        if (auto posInfo = playHead->getPosition())
+        {
+            // Play/Stop Status
+            hostIsPlaying.store(posInfo->getIsPlaying());
+            
+            // Tempo
+            if (auto bpm = posInfo->getBpm())
+                hostTempo.store(*bpm);
+            
+            // Position in Beats (Quarter Notes)
+            if (auto ppqPosition = posInfo->getPpqPosition())
+                hostPositionBeats.store(*ppqPosition);
+            
+            // Position in Seconds
+            if (auto timeInSeconds = posInfo->getTimeInSeconds())
+                hostPositionSeconds.store(*timeInSeconds);
+            
+            // Time Signature
+            if (auto timeSig = posInfo->getTimeSignature())
+            {
+                hostTimeSigNumerator.store(timeSig->numerator);
+                hostTimeSigDenominator.store(timeSig->denominator);
+            }
+        }
+    }
+
     // In case we have more outputs than inputs, this code clears any output
     // channels that didn't contain input data, (because these aren't
     // guaranteed to be empty - they may contain garbage).
@@ -153,7 +184,7 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     for (int channel = 0; channel < totalNumInputChannels; ++channel)
     {
         auto* channelData = buffer.getWritePointer (channel);
-
+        juce::ignoreUnused(channelData);
         // ..do something to the data...
     }
 }
@@ -172,15 +203,87 @@ juce::AudioProcessorEditor* NewProjectAudioProcessor::createEditor()
 //==============================================================================
 void NewProjectAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    // You should use this method to store your parameters in the memory block.
-    // You could do that either as raw data, or use the XML or ValueTree classes
-    // as intermediaries to make it easy to save and load complex data.
+    // Speichere den Dateipfad der geladenen GP5-Datei
+    juce::ValueTree state ("GP5PluginState");
+    state.setProperty ("filePath", loadedFilePath, nullptr);
+    
+    juce::MemoryOutputStream stream (destData, false);
+    state.writeToStream (stream);
 }
 
 void NewProjectAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    // You should use this method to restore your parameters from this memory block,
-    // whose contents will have been created by the getStateInformation() call.
+    // Lade den Dateipfad und parse die Datei erneut
+    juce::ValueTree state = juce::ValueTree::readFromData (data, static_cast<size_t>(sizeInBytes));
+    
+    if (state.isValid() && state.hasType ("GP5PluginState"))
+    {
+        juce::String filePath = state.getProperty ("filePath", "").toString();
+        
+        if (filePath.isNotEmpty())
+        {
+            juce::File file (filePath);
+            if (file.existsAsFile())
+            {
+                loadGP5File (file);
+            }
+        }
+    }
+}
+
+bool NewProjectAudioProcessor::loadGP5File(const juce::File& file)
+{
+    if (gp5Parser.parse(file))
+    {
+        loadedFilePath = file.getFullPathName();
+        fileLoaded = true;
+        DBG("Processor: GP5 file loaded successfully: " << loadedFilePath);
+        return true;
+    }
+    else
+    {
+        fileLoaded = false;
+        DBG("Processor: Failed to load GP5 file: " << gp5Parser.getLastError());
+        return false;
+    }
+}
+
+int NewProjectAudioProcessor::getCurrentMeasureIndex() const
+{
+    if (!fileLoaded)
+        return 0;
+    
+    double positionInBeats = hostPositionBeats.load();
+    
+    // Einfache Berechnung basierend auf der aktuellen DAW-Taktart
+    // Die meisten DAWs verwenden PPQ (Pulses Per Quarter note)
+    // Bei 4/4: 4 Beats pro Takt, bei 3/4: 3 Beats pro Takt
+    int timeSigNum = hostTimeSigNumerator.load();
+    int timeSigDen = hostTimeSigDenominator.load();
+    
+    // Beats pro Takt = Zähler * (4 / Nenner)
+    double beatsPerMeasure = timeSigNum * (4.0 / timeSigDen);
+    
+    // Takt-Index berechnen (0-basiert)
+    int measureIndex = static_cast<int>(positionInBeats / beatsPerMeasure);
+    
+    // Begrenzen auf gültige Takte
+    int maxMeasure = gp5Parser.getMeasureCount() - 1;
+    return juce::jlimit(0, juce::jmax(0, maxMeasure), measureIndex);
+}
+
+double NewProjectAudioProcessor::getPositionInCurrentMeasure() const
+{
+    double positionInBeats = hostPositionBeats.load();
+    int timeSigNum = hostTimeSigNumerator.load();
+    int timeSigDen = hostTimeSigDenominator.load();
+    
+    // Beats pro Takt
+    double beatsPerMeasure = timeSigNum * (4.0 / timeSigDen);
+    
+    // Position innerhalb des Taktes (0.0 - 1.0)
+    double posInMeasure = fmod(positionInBeats, beatsPerMeasure) / beatsPerMeasure;
+    return juce::jlimit(0.0, 1.0, posInMeasure);
 }
 
 //==============================================================================

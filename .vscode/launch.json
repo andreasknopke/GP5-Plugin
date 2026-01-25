@@ -1,0 +1,11 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "An Cubase anheften",
+            "type": "cppvsdbg",
+            "request": "attach",
+            "processId": "${command:extension.pickNativeProcess}"
+        }
+    ]
+}

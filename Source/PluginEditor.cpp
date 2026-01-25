@@ -26,7 +26,7 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     // Track Selector
     addAndMakeVisible (trackLabel);
     trackLabel.setText ("Track:", juce::dontSendNotification);
-    trackLabel.setFont (juce::Font(12.0f));
+    trackLabel.setFont (juce::FontOptions(12.0f));
     trackLabel.setColour (juce::Label::textColourId, juce::Colours::white);
     
     addAndMakeVisible (trackSelector);
@@ -35,9 +35,21 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     
     // Info Label
     addAndMakeVisible (infoLabel);
-    infoLabel.setFont (juce::Font(12.0f));
+    infoLabel.setFont (juce::FontOptions(12.0f));
     infoLabel.setColour (juce::Label::textColourId, juce::Colours::white);
     infoLabel.setText ("Load a GP5 file to see the tablature", juce::dontSendNotification);
+    
+    // Transport Label
+    addAndMakeVisible (transportLabel);
+    transportLabel.setFont (juce::FontOptions(11.0f));
+    transportLabel.setColour (juce::Label::textColourId, juce::Colours::lightgreen);
+    transportLabel.setText ("Stopped", juce::dontSendNotification);
+    
+    // Auto-Scroll Toggle
+    addAndMakeVisible (autoScrollButton);
+    autoScrollButton.setToggleState (true, juce::dontSendNotification);
+    autoScrollButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
+    autoScrollButton.setColour (juce::ToggleButton::tickColourId, juce::Colours::lightgreen);
     
     // Tabulatur-Ansicht
     addAndMakeVisible (tabView);
@@ -46,13 +58,20 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     };
 
     // Fenstergröße setzen (größer für die Tab-Ansicht)
-    setSize (800, 400);
+    setSize (900, 450);
     setResizable (true, true);
-    setResizeLimits (600, 300, 1920, 1080);
+    setResizeLimits (700, 350, 1920, 1080);
+    
+    // Wenn bereits eine Datei geladen ist, UI aktualisieren
+    refreshFromProcessor();
+    
+    // Timer für DAW-Sync starten (30 Hz Update-Rate)
+    startTimerHz (30);
 }
 
 NewProjectAudioProcessorEditor::~NewProjectAudioProcessorEditor()
 {
+    stopTimer();
 }
 
 //==============================================================================
@@ -71,19 +90,27 @@ void NewProjectAudioProcessorEditor::resized()
     toolbar = toolbar.reduced(5);
     
     // Load Button
-    loadButton.setBounds (toolbar.removeFromLeft(120));
+    loadButton.setBounds (toolbar.removeFromLeft(100));
     toolbar.removeFromLeft(10); // Spacer
     
     // Zoom Buttons
     zoomOutButton.setBounds (toolbar.removeFromLeft(30));
     toolbar.removeFromLeft(5);
     zoomInButton.setBounds (toolbar.removeFromLeft(30));
-    toolbar.removeFromLeft(20); // Spacer
+    toolbar.removeFromLeft(15); // Spacer
     
     // Track Selector
     trackLabel.setBounds (toolbar.removeFromLeft(40));
-    trackSelector.setBounds (toolbar.removeFromLeft(180));
-    toolbar.removeFromLeft(20); // Spacer
+    trackSelector.setBounds (toolbar.removeFromLeft(160));
+    toolbar.removeFromLeft(15); // Spacer
+    
+    // Auto-Scroll Toggle
+    autoScrollButton.setBounds (toolbar.removeFromLeft(100));
+    toolbar.removeFromLeft(15); // Spacer
+    
+    // Transport Label
+    transportLabel.setBounds (toolbar.removeFromLeft(200));
+    toolbar.removeFromLeft(10); // Spacer
     
     // Info Label (Rest der Toolbar)
     infoLabel.setBounds (toolbar);
@@ -111,52 +138,56 @@ void NewProjectAudioProcessorEditor::loadButtonClicked()
         {
             DBG ("Datei ausgewählt: " << file.getFullPathName());
             
-            // GP5-Parser aufrufen
-            if (gp5Parser.parse(file))
+            // GP5-Parser im Processor aufrufen
+            if (audioProcessor.loadGP5File(file))
             {
-                const auto& info = gp5Parser.getSongInfo();
-                
-                DBG("Parsed successfully. Track count: " << gp5Parser.getTrackCount());
-                DBG("Tracks array size: " << gp5Parser.getTracks().size());
-                
-                // Info-Label aktualisieren
-                juce::String infoText = info.title;
-                if (info.artist.isNotEmpty())
-                    infoText += " - " + info.artist;
-                infoText += " | " + juce::String(info.tempo) + " BPM";
-                infoText += " | " + juce::String(gp5Parser.getTrackCount()) + " Tracks";
-                infoText += " | " + juce::String(gp5Parser.getMeasureCount()) + " Measures";
-                infoText += " | Parsed: " + juce::String(gp5Parser.getTracks().size());
-                infoLabel.setText(infoText, juce::dontSendNotification);
-                
-                // Track-Auswahl aktualisieren
-                updateTrackSelector();
-                
-                DBG("After updateTrackSelector, combobox items: " << trackSelector.getNumItems());
-                
-                // Ersten Track laden, wenn vorhanden
-                if (gp5Parser.getTrackCount() > 0)
-                {
-                    trackSelector.setSelectedId(1, juce::dontSendNotification);
-                    trackSelectionChanged();
-                }
-                
+                refreshFromProcessor();
                 DBG("GP5 erfolgreich geladen!");
             }
             else
             {
-                infoLabel.setText("Fehler: " + gp5Parser.getLastError(), juce::dontSendNotification);
-                DBG("Fehler: " << gp5Parser.getLastError());
+                infoLabel.setText("Fehler: " + audioProcessor.getGP5Parser().getLastError(), juce::dontSendNotification);
+                DBG("Fehler: " << audioProcessor.getGP5Parser().getLastError());
             }
         }
     });
+}
+
+void NewProjectAudioProcessorEditor::refreshFromProcessor()
+{
+    if (!audioProcessor.isFileLoaded())
+        return;
+    
+    const auto& gp5Parser = audioProcessor.getGP5Parser();
+    const auto& info = gp5Parser.getSongInfo();
+    
+    DBG("Refreshing UI from processor. Track count: " << gp5Parser.getTrackCount());
+    
+    // Info-Label aktualisieren
+    juce::String infoText = info.title;
+    if (info.artist.isNotEmpty())
+        infoText += " - " + info.artist;
+    infoText += " | " + juce::String(info.tempo) + " BPM";
+    infoText += " | " + juce::String(gp5Parser.getTrackCount()) + " Tracks";
+    infoText += " | " + juce::String(gp5Parser.getMeasureCount()) + " Measures";
+    infoLabel.setText(infoText, juce::dontSendNotification);
+    
+    // Track-Auswahl aktualisieren
+    updateTrackSelector();
+    
+    // Ersten Track laden, wenn vorhanden
+    if (gp5Parser.getTrackCount() > 0)
+    {
+        trackSelector.setSelectedId(1, juce::dontSendNotification);
+        trackSelectionChanged();
+    }
 }
 
 void NewProjectAudioProcessorEditor::updateTrackSelector()
 {
     trackSelector.clear(juce::dontSendNotification);
     
-    const auto& tracks = gp5Parser.getTracks();
+    const auto& tracks = audioProcessor.getGP5Parser().getTracks();
     
     DBG("updateTrackSelector: " << tracks.size() << " tracks found");
     
@@ -186,6 +217,8 @@ void NewProjectAudioProcessorEditor::trackSelectionChanged()
     
     int trackIndex = selectedId - 1;  // Zurück zu 0-basiert
     
+    const auto& gp5Parser = audioProcessor.getGP5Parser();
+    
     if (trackIndex >= 0 && trackIndex < gp5Parser.getTrackCount())
     {
         TabTrack track = gp5Parser.convertToTabTrack(trackIndex);
@@ -195,4 +228,62 @@ void NewProjectAudioProcessorEditor::trackSelectionChanged()
         DBG("Track " << (trackIndex + 1) << " geladen: " << gp5Track.name 
             << " mit " << track.measures.size() << " Takten");
     }
+}
+
+void NewProjectAudioProcessorEditor::timerCallback()
+{
+    updateTransportDisplay();
+    
+    // Aktuellen Takt und Position immer aktualisieren (auch wenn gestoppt)
+    int currentMeasure = audioProcessor.getCurrentMeasureIndex();
+    double positionInMeasure = audioProcessor.getPositionInCurrentMeasure();
+    
+    // Playhead-Position immer aktualisieren (für flüssige Bewegung)
+    tabView.setPlayheadPosition(positionInMeasure);
+    
+    // Takt-Highlight nur aktualisieren wenn sich der Takt geändert hat
+    if (currentMeasure != lastDisplayedMeasure)
+    {
+        lastDisplayedMeasure = currentMeasure;
+        tabView.setCurrentMeasure(currentMeasure);
+        
+        // Auto-Scroll nur wenn aktiviert UND DAW spielt
+        if (autoScrollButton.getToggleState() && audioProcessor.isHostPlaying())
+        {
+            tabView.scrollToMeasure(currentMeasure);
+        }
+    }
+}
+
+void NewProjectAudioProcessorEditor::updateTransportDisplay()
+{
+    bool isPlaying = audioProcessor.isHostPlaying();
+    double tempo = audioProcessor.getHostTempo();
+    double posBeats = audioProcessor.getHostPositionInBeats();
+    int timeSigNum = audioProcessor.getHostTimeSignatureNumerator();
+    int timeSigDen = audioProcessor.getHostTimeSignatureDenominator();
+    
+    // Berechne Takt und Beat basierend auf PPQ-Position
+    double beatsPerMeasure = timeSigNum * (4.0 / timeSigDen);
+    int currentMeasure = static_cast<int>(posBeats / beatsPerMeasure) + 1;  // 1-basiert für Anzeige
+    int beatInMeasure = static_cast<int>(fmod(posBeats, beatsPerMeasure)) + 1;
+    
+    juce::String statusText;
+    
+    if (isPlaying)
+    {
+        statusText = juce::String::charToString(0x25B6) + " ";  // Play-Symbol
+        transportLabel.setColour(juce::Label::textColourId, juce::Colours::lightgreen);
+    }
+    else
+    {
+        statusText = juce::String::charToString(0x25A0) + " ";  // Stop-Symbol
+        transportLabel.setColour(juce::Label::textColourId, juce::Colours::orange);
+    }
+    
+    statusText += "Bar " + juce::String(currentMeasure) + "." + juce::String(beatInMeasure);
+    statusText += " | " + juce::String(tempo, 1) + " BPM";
+    statusText += " | " + juce::String(timeSigNum) + "/" + juce::String(timeSigDen);
+    
+    transportLabel.setText(statusText, juce::dontSendNotification);
 }

@@ -78,6 +78,45 @@ public:
         repaint();
     }
     
+    // Neue Methoden für DAW-Sync
+    void setCurrentMeasure(int measureIndex)
+    {
+        currentPlayingMeasure = measureIndex;
+        repaint();
+    }
+    
+    void setPlayheadPosition(double positionInMeasure)
+    {
+        playheadPositionInMeasure = positionInMeasure;
+        repaint();
+    }
+    
+    int getCurrentMeasure() const { return currentPlayingMeasure; }
+    
+    void scrollToMeasure(int measureIndex)
+    {
+        if (measureIndex < 0 || measureIndex >= track.measures.size())
+            return;
+        
+        float measureX = track.measures[measureIndex].xPosition * zoom;
+        float measureWidth = track.measures[measureIndex].calculatedWidth * zoom;
+        float viewWidth = static_cast<float>(getWidth()) - 20.0f;
+        
+        // Scroll so dass der aktuelle Takt im linken Drittel sichtbar ist
+        float targetScroll = measureX - viewWidth * 0.2f;
+        
+        // Smooth scrolling - nur scrollen wenn der Takt fast am Rand ist
+        float rightEdge = scrollOffset + viewWidth * 0.7f;
+        float leftEdge = scrollOffset + viewWidth * 0.1f;
+        
+        if (measureX < leftEdge || measureX + measureWidth > rightEdge)
+        {
+            scrollOffset = juce::jmax(0.0f, targetScroll);
+            scrollOffset = juce::jmin(scrollOffset, juce::jmax(0.0f, totalWidth - viewWidth));
+            updateScrollbar();
+        }
+    }
+    
     // Callback when a measure is clicked
     std::function<void(int)> onMeasureClicked;
     
@@ -93,13 +132,30 @@ public:
         
         // Calculate vertical centering
         float trackHeight = scaledConfig.getTotalHeight(track.stringCount);
-        float availableHeight = getHeight() - scrollbarHeight;
+        float availableHeight = static_cast<float>(getHeight()) - static_cast<float>(scrollbarHeight);
         float yOffset = (availableHeight - trackHeight) / 2.0f;
         yOffset = juce::jmax(0.0f, yOffset);
         
-        // Draw track
-        juce::Rectangle<float> renderBounds(0, yOffset, getWidth(), trackHeight);
+        // Draw track FIRST
+        juce::Rectangle<float> renderBounds(0, yOffset, static_cast<float>(getWidth()), trackHeight);
         renderer.render(g, track, scaledConfig, renderBounds, scrollOffset, highlightedMeasure);
+        
+        // Draw current playing measure highlight AFTER track rendering (so it's visible on top)
+        if (currentPlayingMeasure >= 0 && currentPlayingMeasure < track.measures.size())
+        {
+            const auto& measure = track.measures[currentPlayingMeasure];
+            float measureX = 25.0f + measure.xPosition * zoom - scrollOffset;
+            float measureWidth = measure.calculatedWidth * zoom;
+            
+            // Semi-transparent green overlay für aktuellen Takt
+            g.setColour(juce::Colour(0x2000FF00));  // Transparentes Grün
+            g.fillRect(measureX, yOffset, measureWidth, trackHeight);
+            
+            // Playhead-Linie an der exakten Position innerhalb des Taktes
+            float playheadX = measureX + static_cast<float>(playheadPositionInMeasure) * measureWidth;
+            g.setColour(juce::Colours::limegreen);
+            g.fillRect(playheadX - 1.0f, yOffset, 3.0f, trackHeight);
+        }
     }
     
     void resized() override
@@ -165,6 +221,8 @@ private:
     float scrollOffset = 0.0f;
     float totalWidth = 0.0f;
     int highlightedMeasure = -1;
+    int currentPlayingMeasure = -1;
+    double playheadPositionInMeasure = 0.0;
     
     juce::ScrollBar horizontalScrollbar { false };
     const int scrollbarHeight = 14;

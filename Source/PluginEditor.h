@@ -9,14 +9,14 @@
 #pragma once
 
 #include "PluginProcessor.h"
-#include "GP5Parser.h"
 #include "TabViewComponent.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 
 //==============================================================================
 /**
 */
-class NewProjectAudioProcessorEditor  : public juce::AudioProcessorEditor
+class NewProjectAudioProcessorEditor  : public juce::AudioProcessorEditor,
+                                        private juce::Timer
 {
 public:
     NewProjectAudioProcessorEditor (NewProjectAudioProcessor&);
@@ -27,6 +27,9 @@ public:
     void resized() override;
 
 private:
+    // Timer callback für DAW-Sync
+    void timerCallback() override;
+    
     // 1. Der Button
     juce::TextButton loadButton { "Load GP5 File" };
     
@@ -40,20 +43,28 @@ private:
 
     // 4. Der FileChooser (smart pointer, um Speicherlecks zu vermeiden)
     std::unique_ptr<juce::FileChooser> fileChooser;
-
-    // 5. Der GP5 Parser
-    GP5Parser gp5Parser;
     
-    // 6. Die Tabulatur-Ansicht
+    // 5. Die Tabulatur-Ansicht
     TabViewComponent tabView;
     
-    // 7. Info-Label für Song-Informationen
+    // 6. Info-Label für Song-Informationen
     juce::Label infoLabel;
+    
+    // 7. Transport-Info Label (Position, Tempo)
+    juce::Label transportLabel;
+    
+    // 8. Auto-Scroll Toggle
+    juce::ToggleButton autoScrollButton { "Auto-Scroll" };
 
-    // 8. Hilfsfunktionen
+    // 9. Hilfsfunktionen
     void loadButtonClicked();
     void trackSelectionChanged();
     void updateTrackSelector();
+    void refreshFromProcessor();
+    void updateTransportDisplay();
+    
+    // 10. State
+    int lastDisplayedMeasure = -1;
 
     NewProjectAudioProcessor& audioProcessor;
 
