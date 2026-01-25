@@ -224,12 +224,29 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                     // Nur neue Noten spielen wenn sich der Beat geändert hat
                     if (measureIndex != lastProcessedMeasure || beatIndex != lastProcessedBeatIndex)
                     {
-                        // Alle aktiven Noten stoppen
-                        for (int note : activeNotes)
+                        // Prüfe ob nächste Note ein Hammer-On/Pull-Off ist (Legato)
+                        bool nextIsLegato = false;
+                        if (beatIndex + 1 < beats.size())
                         {
-                            generatedMidi.addEvent(juce::MidiMessage::noteOff(1, note), 0);
+                            const auto& nextBeat = beats[beatIndex + 1];
+                            for (const auto& [si, n] : nextBeat.notes)
+                            {
+                                if (n.hasHammerOn) nextIsLegato = true;
+                            }
                         }
-                        activeNotes.clear();
+                        
+                        // Alle aktiven Noten stoppen (außer bei Legato)
+                        if (!nextIsLegato)
+                        {
+                            for (int note : activeNotes)
+                            {
+                                generatedMidi.addEvent(juce::MidiMessage::noteOff(1, note), 0);
+                            }
+                            activeNotes.clear();
+                        }
+                        
+                        // Pitch Bend zurücksetzen am Anfang jedes Beats
+                        generatedMidi.addEvent(juce::MidiMessage::pitchWheel(1, 8192), 0);  // 8192 = center
                         
                         // Neue Noten starten
                         const auto& beat = beats[beatIndex];
@@ -259,6 +276,58 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                                     int velocity = gpNote.velocity > 0 ? gpNote.velocity : 95;
                                     if (gpNote.isGhost) velocity = 60;
                                     if (gpNote.hasAccent) velocity = 120;
+                                    
+                                    // =========================================
+                                    // MIDI Controller für Spieltechniken
+                                    // =========================================
+                                    
+                                    // Vibrato -> CC1 (Modulation Wheel)
+                                    if (gpNote.hasVibrato)
+                                    {
+                                        generatedMidi.addEvent(juce::MidiMessage::controllerEvent(1, 1, 80), 0);  // Mod wheel
+                                        DBG("MIDI: Vibrato ON (CC1=80)");
+                                    }
+                                    else
+                                    {
+                                        generatedMidi.addEvent(juce::MidiMessage::controllerEvent(1, 1, 0), 0);  // Mod wheel off
+                                    }
+                                    
+                                    // Hammer-On / Pull-Off -> CC68 (Legato Pedal)
+                                    if (gpNote.hasHammerOn)
+                                    {
+                                        generatedMidi.addEvent(juce::MidiMessage::controllerEvent(1, 68, 127), 0);  // Legato ON
+                                        velocity = juce::jmax(40, velocity - 20);  // Etwas leiser für Legato
+                                        DBG("MIDI: Hammer-On/Pull-Off (CC68=127)");
+                                    }
+                                    else
+                                    {
+                                        generatedMidi.addEvent(juce::MidiMessage::controllerEvent(1, 68, 0), 0);  // Legato OFF
+                                    }
+                                    
+                                    // Slide -> CC5 (Portamento Time) + CC65 (Portamento ON)
+                                    if (gpNote.hasSlide)
+                                    {
+                                        generatedMidi.addEvent(juce::MidiMessage::controllerEvent(1, 65, 127), 0);  // Portamento ON
+                                        generatedMidi.addEvent(juce::MidiMessage::controllerEvent(1, 5, 64), 0);   // Portamento Time
+                                        DBG("MIDI: Slide (Portamento ON)");
+                                    }
+                                    else
+                                    {
+                                        generatedMidi.addEvent(juce::MidiMessage::controllerEvent(1, 65, 0), 0);  // Portamento OFF
+                                    }
+                                    
+                                    // Bend -> Pitch Bend
+                                    if (gpNote.hasBend && gpNote.bendValue != 0)
+                                    {
+                                        // GP5 bend value ist in "cents" oder Halbtonschritten
+                                        // Pitch Bend Range: 0-16383, 8192 = center
+                                        // Typisch: +/- 2 Halbtöne = 8192 pro 2 Halbtöne
+                                        // bendValue von 100 = 1 Halbton in GP5
+                                        int pitchBend = 8192 + (gpNote.bendValue * 4096 / 100);
+                                        pitchBend = juce::jlimit(0, 16383, pitchBend);
+                                        generatedMidi.addEvent(juce::MidiMessage::pitchWheel(1, pitchBend), 0);
+                                        DBG("MIDI: Bend value=" << gpNote.bendValue << " -> PitchBend=" << pitchBend);
+                                    }
                                     
                                     if (midiNote > 0 && midiNote < 128)
                                     {
