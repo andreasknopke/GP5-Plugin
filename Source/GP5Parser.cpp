@@ -332,6 +332,13 @@ void GP5Parser::readMeasure(GP5Track& track, int measureIndex)
     auto& measure = track.measures.getReference(measureIndex);
     const auto& header = measureHeaders[measureIndex];
     
+    // DEBUG: Zeige Position für wichtige Takte
+    int trackIdx = &track - &tracks.getReference(0);
+    if (measureIndex == 41 && trackIdx == 2)  // Measure 42, Track 3
+    {
+        DBG("=== DEBUG: Reading Measure 42, Track 3 at stream pos " << inputStream->getPosition() << " ===");
+    }
+    
     // Voice 1
     readVoice(measure.voice1, header);
     
@@ -495,6 +502,12 @@ void GP5Parser::readNote(GP5Note& note)
     {
         note.fret = readI8();
         DBG("            -> fret=" << note.fret);
+        
+        // DEBUG: Bei hohen Frets extra warnen
+        if (note.fret >= 10)
+        {
+            DBG("            *** HIGH FRET DETECTED: " << note.fret << " ***");
+        }
     }
     
     // Left/right hand fingering (flags & 0x80)
@@ -817,6 +830,20 @@ TabTrack GP5Parser::convertToTabTrack(int trackIndex) const
         const auto& gp5Measure = gp5Track.measures[m];
         const auto& header = measureHeaders[m];
         
+        // DEBUG: Log fret values for measures 40-50
+        if (m >= 39 && m < 50)
+        {
+            DBG("=== Measure " << (m+1) << " Track " << trackIndex << " ===");
+            for (int b = 0; b < gp5Measure.voice1.size(); ++b)
+            {
+                const auto& beat = gp5Measure.voice1[b];
+                for (const auto& [sIdx, note] : beat.notes)
+                {
+                    DBG("  Beat " << b << " string " << sIdx << " fret=" << note.fret);
+                }
+            }
+        }
+        
         DBG("  Measure " << m << ": voice1 has " << gp5Measure.voice1.size() << " beats");
         
         TabMeasure tabMeasure;
@@ -838,6 +865,7 @@ TabTrack GP5Parser::convertToTabTrack(int trackIndex) const
             tabBeat.isPalmMuted = gp5Beat.isPalmMute;
             tabBeat.hasDownstroke = gp5Beat.hasDownstroke;
             tabBeat.hasUpstroke = gp5Beat.hasUpstroke;
+            tabBeat.text = gp5Beat.text;
             
             if (gp5Beat.tupletN > 0)
             {

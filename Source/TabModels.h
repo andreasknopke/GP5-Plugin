@@ -123,6 +123,9 @@ struct TabBeat
     bool hasDownstroke = false;     // Abschlag-Symbol
     bool hasUpstroke = false;       // Aufschlag-Symbol
     
+    // Text annotation (e.g., "Don't pick", "let ring", etc.)
+    juce::String text;
+    
     // Rest (Pause)
     bool isRest = false;
     

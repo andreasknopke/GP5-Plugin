@@ -128,6 +128,12 @@ public:
                 // Draw rhythm notation BELOW the staff
                 drawRhythmNotation(g, beat, beatX, lastStringY + 20.0f);
                 
+                // Draw beat text annotation (e.g., "Don't pick")
+                if (beat.text.isNotEmpty())
+                {
+                    drawBeatText(g, beat.text, beatX, firstStringY - 25.0f);
+                }
+                
                 // Draw notes or rest
                 if (beat.isRest)
                 {
@@ -140,6 +146,12 @@ public:
                     {
                         float noteY = firstStringY + note.string * config.stringSpacing;
                         drawNote(g, note, beatX, noteY, nextBeatX, firstStringY);
+                        
+                        // Draw bend symbol if note has bend
+                        if (note.effects.bend)
+                        {
+                            drawBend(g, note, beatX, noteY);
+                        }
                     }
                     
                     // Draw slurs (legato connections)
@@ -169,14 +181,7 @@ private:
     {
         const float noteRadius = config.stringSpacing * 0.45f;
         
-        // Background (to cover the string line)
-        g.setColour(config.backgroundColor);
-        g.fillEllipse(x - noteRadius, y - noteRadius, noteRadius * 2, noteRadius * 2);
-        
-        // Draw fret number or effect
-        g.setColour(config.fretTextColour);
-        g.setFont(config.fretFontSize);
-        
+        // Build fret text first to determine background size
         juce::String fretText;
         if (note.effects.deadNote)
             fretText = "X";
@@ -185,8 +190,21 @@ private:
         else
             fretText = juce::String(note.fret);
         
+        // Calculate text width - need wider area for multi-digit fret numbers
+        g.setFont(config.fretFontSize);
+        float textWidth = g.getCurrentFont().getStringWidthFloat(fretText) + 4.0f;
+        float bgWidth = juce::jmax(noteRadius * 2.0f, textWidth);
+        float bgHeight = noteRadius * 2.0f;
+        
+        // Background (to cover the string line) - sized to fit text
+        g.setColour(config.backgroundColor);
+        g.fillRect(x - bgWidth / 2.0f, y - bgHeight / 2.0f, bgWidth, bgHeight);
+        
+        // Draw fret number or effect
+        g.setColour(config.fretTextColour);
+        
         g.drawText(fretText, 
-                   juce::Rectangle<float>(x - noteRadius, y - noteRadius, noteRadius * 2, noteRadius * 2),
+                   juce::Rectangle<float>(x - bgWidth / 2.0f, y - bgHeight / 2.0f, bgWidth, bgHeight),
                    juce::Justification::centred, false);
         
         // Draw vibrato ABOVE the strings (at the top) and extending to next beat
@@ -245,6 +263,65 @@ private:
             // Slide in from above
             g.drawLine(x - lineLength, y - radius * 0.7f, x - radius, y, 1.5f);
         }
+    }
+    
+    void drawBend(juce::Graphics& g, const TabNote& note, float x, float y)
+    {
+        g.setColour(juce::Colours::black);
+        
+        const float noteRadius = config.stringSpacing * 0.45f;
+        const float bendHeight = 20.0f;
+        const float bendWidth = 15.0f;
+        
+        // Draw curved bend arrow
+        juce::Path bendPath;
+        float startX = x + noteRadius + 2.0f;
+        float startY = y;
+        float endY = y - bendHeight;
+        
+        bendPath.startNewSubPath(startX, startY);
+        bendPath.quadraticTo(startX + bendWidth * 0.3f, startY - bendHeight * 0.5f,
+                             startX + bendWidth * 0.5f, endY);
+        
+        g.strokePath(bendPath, juce::PathStrokeType(1.5f));
+        
+        // Draw arrowhead
+        juce::Path arrow;
+        float arrowX = startX + bendWidth * 0.5f;
+        float arrowY = endY;
+        arrow.startNewSubPath(arrowX - 3.0f, arrowY + 5.0f);
+        arrow.lineTo(arrowX, arrowY);
+        arrow.lineTo(arrowX + 3.0f, arrowY + 5.0f);
+        g.strokePath(arrow, juce::PathStrokeType(1.5f));
+        
+        // Draw bend value text (e.g., "full", "1/2")
+        juce::String bendText;
+        float bendValue = note.effects.bendValue / 100.0f;  // GP5 stores as percentage of semitone
+        
+        if (bendValue >= 0.9f && bendValue <= 1.1f)
+            bendText = "full";
+        else if (bendValue >= 0.45f && bendValue <= 0.55f)
+            bendText = juce::CharPointer_UTF8("\xC2\xBD");  // 1/2 symbol
+        else if (bendValue >= 0.2f && bendValue <= 0.3f)
+            bendText = juce::CharPointer_UTF8("\xC2\xBC");  // 1/4 symbol
+        else if (bendValue > 1.1f)
+            bendText = juce::String(bendValue, 1);
+        else
+            bendText = juce::String(bendValue, 1);
+        
+        g.setFont(9.0f);
+        g.drawText(bendText, 
+                   juce::Rectangle<float>(startX + bendWidth * 0.5f - 10.0f, endY - 12.0f, 20.0f, 10.0f),
+                   juce::Justification::centred, false);
+    }
+    
+    void drawBeatText(juce::Graphics& g, const juce::String& text, float x, float y)
+    {
+        g.setColour(juce::Colours::darkgrey);
+        g.setFont(juce::Font(10.0f).italicised());
+        g.drawText(text, 
+                   juce::Rectangle<float>(x - 30.0f, y, 100.0f, 14.0f),
+                   juce::Justification::left, false);
     }
     
     void drawSlurs(juce::Graphics& g, const TabBeat& beat, float beatX, float firstStringY)
