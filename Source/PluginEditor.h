@@ -65,6 +65,8 @@ private:
     
     // 10. State
     int lastDisplayedMeasure = -1;
+    double lastPositionInBeats = -1.0;  // Für Erkennung von Positionssprüngen
+    bool wasPlaying = false;            // Letzter Play-Status
 
     NewProjectAudioProcessor& audioProcessor;
 

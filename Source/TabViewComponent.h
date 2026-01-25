@@ -91,30 +91,87 @@ public:
         repaint();
     }
     
+    // Setze die exakte Playhead-Position für smooth scrolling
+    void setExactPlayheadPosition(int measureIndex, double positionInMeasure)
+    {
+        currentPlayingMeasure = measureIndex;
+        playheadPositionInMeasure = positionInMeasure;
+        repaint();
+    }
+    
     int getCurrentMeasure() const { return currentPlayingMeasure; }
+    
+    // Smooth Scroll: Playhead läuft zur Mitte, dann scrollt Content
+    void updateSmoothScroll(int measureIndex, double positionInMeasure, bool forceUpdate = false)
+    {
+        if (measureIndex < 0 || measureIndex >= track.measures.size())
+            return;
+        
+        currentPlayingMeasure = measureIndex;
+        playheadPositionInMeasure = positionInMeasure;
+        
+        // Berechne die exakte X-Position des Playheads
+        const auto& measure = track.measures[measureIndex];
+        float measureX = measure.xPosition * zoom;
+        float measureWidth = measure.calculatedWidth * zoom;
+        float playheadX = measureX + static_cast<float>(positionInMeasure) * measureWidth;
+        
+        // Sichtbare Breite
+        float viewWidth = static_cast<float>(getWidth()) - 20.0f;
+        float centerX = viewWidth / 2.0f;
+        
+        // Ziel-Scroll-Position: Playhead soll in der Mitte sein
+        float targetScroll = playheadX - centerX;
+        
+        // Am Anfang: Scroll bleibt bei 0, Playhead läuft bis zur Mitte
+        // Danach: Scroll folgt dem Playhead, sodass er in der Mitte bleibt
+        // Am Ende: Scroll stoppt, Playhead läuft weiter
+        float maxScroll = juce::jmax(0.0f, totalWidth - viewWidth);
+        targetScroll = juce::jlimit(0.0f, maxScroll, targetScroll);
+        
+        // Smooth interpolation
+        if (forceUpdate)
+        {
+            // Bei manueller Positionänderung (z.B. zurück zum Anfang) sofort springen
+            scrollOffset = targetScroll;
+        }
+        else
+        {
+            // Smooth scrolling mit Lerp
+            float scrollSpeed = 0.15f;
+            scrollOffset += (targetScroll - scrollOffset) * scrollSpeed;
+        }
+        
+        updateScrollbar();
+        repaint();
+    }
+    
+    // Reset scroll position (z.B. bei Stop oder zurück zum Anfang)
+    void resetScrollPosition()
+    {
+        scrollOffset = 0.0f;
+        currentPlayingMeasure = 0;
+        playheadPositionInMeasure = 0.0;
+        lastPlayheadX = 0.0f;
+        updateScrollbar();
+        repaint();
+    }
     
     void scrollToMeasure(int measureIndex)
     {
         if (measureIndex < 0 || measureIndex >= track.measures.size())
             return;
         
+        // Diese Methode wird nicht mehr direkt verwendet,
+        // stattdessen updateSmoothScroll benutzen für flüssiges Scrolling
         float measureX = track.measures[measureIndex].xPosition * zoom;
         float measureWidth = track.measures[measureIndex].calculatedWidth * zoom;
         float viewWidth = static_cast<float>(getWidth()) - 20.0f;
         
-        // Scroll so dass der aktuelle Takt im linken Drittel sichtbar ist
-        float targetScroll = measureX - viewWidth * 0.2f;
-        
-        // Smooth scrolling - nur scrollen wenn der Takt fast am Rand ist
-        float rightEdge = scrollOffset + viewWidth * 0.7f;
-        float leftEdge = scrollOffset + viewWidth * 0.1f;
-        
-        if (measureX < leftEdge || measureX + measureWidth > rightEdge)
-        {
-            scrollOffset = juce::jmax(0.0f, targetScroll);
-            scrollOffset = juce::jmin(scrollOffset, juce::jmax(0.0f, totalWidth - viewWidth));
-            updateScrollbar();
-        }
+        // Scroll so dass der Playhead in der Mitte ist
+        float targetScroll = measureX - viewWidth / 2.0f + measureWidth / 2.0f;
+        scrollOffset = juce::jlimit(0.0f, juce::jmax(0.0f, totalWidth - viewWidth), targetScroll);
+        updateScrollbar();
     }
     
     // Callback when a measure is clicked
@@ -223,6 +280,7 @@ private:
     int highlightedMeasure = -1;
     int currentPlayingMeasure = -1;
     double playheadPositionInMeasure = 0.0;
+    float lastPlayheadX = 0.0f;  // Für Erkennung von Positionänderungen
     
     juce::ScrollBar horizontalScrollbar { false };
     const int scrollbarHeight = 14;

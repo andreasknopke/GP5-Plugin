@@ -244,18 +244,12 @@ void NewProjectAudioProcessorEditor::timerCallback()
     
     // Playhead-Position immer aktualisieren (für flüssige Bewegung)
     tabView.setPlayheadPosition(positionInMeasure);
+    tabView.setCurrentMeasure(currentMeasure);
     
-    // Takt-Highlight nur aktualisieren wenn sich der Takt geändert hat
-    if (currentMeasure != lastDisplayedMeasure)
+    // Auto-Scroll nur wenn aktiviert UND DAW spielt
+    if (autoScrollButton.getToggleState() && audioProcessor.isHostPlaying())
     {
-        lastDisplayedMeasure = currentMeasure;
-        tabView.setCurrentMeasure(currentMeasure);
-        
-        // Auto-Scroll nur wenn aktiviert UND DAW spielt
-        if (autoScrollButton.getToggleState() && audioProcessor.isHostPlaying())
-        {
-            tabView.scrollToMeasure(currentMeasure);
-        }
+        tabView.scrollToMeasure(currentMeasure);
     }
 }
 

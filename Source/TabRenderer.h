@@ -117,6 +117,11 @@ public:
                 const auto& beat = measure.beats[b];
                 float beatX = measureX + (b < beatPositions.size() ? beatPositions[b] : 0);
                 
+                // Calculate next beat X position for vibrato drawing
+                float nextBeatX = measureEndX; // Default to end of measure
+                if (b + 1 < measure.beats.size() && b + 1 < beatPositions.size())
+                    nextBeatX = measureX + beatPositions[b + 1];
+                
                 // Calculate bottom of strings for rhythm notation position
                 float lastStringY = firstStringY + (stringCount - 1) * config.stringSpacing;
                 
@@ -134,7 +139,7 @@ public:
                     for (const auto& note : beat.notes)
                     {
                         float noteY = firstStringY + note.string * config.stringSpacing;
-                        drawNote(g, note, beatX, noteY);
+                        drawNote(g, note, beatX, noteY, nextBeatX, firstStringY);
                     }
                     
                     // Draw slurs (legato connections)
@@ -160,7 +165,7 @@ private:
     TabLayoutConfig config;
     juce::Rectangle<float> bounds;
     
-    void drawNote(juce::Graphics& g, const TabNote& note, float x, float y)
+    void drawNote(juce::Graphics& g, const TabNote& note, float x, float y, float nextBeatX, float firstStringY)
     {
         const float noteRadius = config.stringSpacing * 0.45f;
         
@@ -184,10 +189,13 @@ private:
                    juce::Rectangle<float>(x - noteRadius, y - noteRadius, noteRadius * 2, noteRadius * 2),
                    juce::Justification::centred, false);
         
-        // Draw vibrato (wavy line above the note)
+        // Draw vibrato ABOVE the strings (at the top) and extending to next beat
         if (note.effects.vibrato)
         {
-            drawVibrato(g, x, y - noteRadius - 4.0f, noteRadius * 2);
+            float vibratoY = firstStringY - 12.0f;  // Above all strings
+            float vibratoWidth = nextBeatX - x - 5.0f;  // Extend to next beat
+            vibratoWidth = juce::jmax(vibratoWidth, noteRadius * 3.0f);  // Minimum width
+            drawVibrato(g, x, vibratoY, vibratoWidth);
         }
         
         // Draw slide
@@ -197,22 +205,22 @@ private:
         }
     }
     
-    void drawVibrato(juce::Graphics& g, float x, float y, float width)
+    void drawVibrato(juce::Graphics& g, float startX, float y, float width)
     {
         g.setColour(config.vibratoColour);
         
         juce::Path vibrato;
-        float amplitude = 2.0f;
-        float frequency = 3.0f;
+        float amplitude = 2.5f;
+        float wavelength = 6.0f;  // Pixels per wave cycle
         
-        vibrato.startNewSubPath(x - width/2, y);
-        for (float dx = 0; dx <= width; dx += 1.0f)
+        vibrato.startNewSubPath(startX, y);
+        for (float dx = 0; dx <= width; dx += 0.5f)
         {
-            float yOffset = std::sin(dx * frequency * 0.5f) * amplitude;
-            vibrato.lineTo(x - width/2 + dx, y + yOffset);
+            float yOffset = std::sin(dx * 2.0f * juce::MathConstants<float>::pi / wavelength) * amplitude;
+            vibrato.lineTo(startX + dx, y + yOffset);
         }
         
-        g.strokePath(vibrato, juce::PathStrokeType(1.0f));
+        g.strokePath(vibrato, juce::PathStrokeType(1.5f));
     }
     
     void drawSlide(juce::Graphics& g, const TabNote& note, float x, float y, float radius)
