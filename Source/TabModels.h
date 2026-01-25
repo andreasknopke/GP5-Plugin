@@ -1,0 +1,261 @@
+/*
+  ==============================================================================
+
+    TabModels.h
+    
+    Datenmodell für die Tabulatur-Darstellung
+    Basierend auf Konzepten von TuxGuitar und MuseScore
+
+  ==============================================================================
+*/
+
+#pragma once
+
+#include <juce_core/juce_core.h>
+#include <juce_graphics/juce_graphics.h>
+
+//==============================================================================
+// Notenwert / Dauer
+//==============================================================================
+enum class NoteDuration
+{
+    Whole = 1,          // Ganze Note
+    Half = 2,           // Halbe Note
+    Quarter = 4,        // Viertelnote
+    Eighth = 8,         // Achtelnote
+    Sixteenth = 16,     // Sechzehntelnote
+    ThirtySecond = 32   // Zweiunddreißigstelnote
+};
+
+//==============================================================================
+// Effekte und Artikulationen
+//==============================================================================
+enum class SlideType
+{
+    None,
+    SlideIntoFromBelow,   // Slide von unten
+    SlideIntoFromAbove,   // Slide von oben
+    SlideOutDownwards,    // Slide nach unten
+    SlideOutUpwards,      // Slide nach oben
+    ShiftSlide,           // Legato Slide zum nächsten Ton
+    LegatoSlide           // Hammer-On Slide
+};
+
+enum class HarmonicType
+{
+    None,
+    Natural,      // Natürliches Harmonic
+    Artificial,   // Künstliches Harmonic
+    Tapped,       // Getapptes Harmonic
+    Pinch,        // Pinch Harmonic
+    Semi          // Semi-Harmonic
+};
+
+struct NoteEffects
+{
+    // Vibrato
+    bool vibrato = false;
+    bool wideVibrato = false;
+    
+    // Slides
+    SlideType slideType = SlideType::None;
+    
+    // Bending
+    bool bend = false;
+    float bendValue = 0.0f;  // In Halbtönen
+    
+    // Harmonics
+    HarmonicType harmonic = HarmonicType::None;
+    
+    // Hammer-On / Pull-Off
+    bool hammerOn = false;
+    bool pullOff = false;
+    
+    // Sonstige
+    bool letRing = false;
+    bool staccato = false;
+    bool ghostNote = false;      // Klammern um die Note
+    bool accentuatedNote = false;
+    bool heavyAccentuatedNote = false;
+    bool deadNote = false;       // X statt Zahl
+    bool tapping = false;        // T über der Note
+};
+
+//==============================================================================
+// Einzelne Note auf einer Saite
+//==============================================================================
+struct TabNote
+{
+    int fret = 0;           // Bundnummer (0 = Leersaite)
+    int string = 0;         // Saitennummer (0 = höchste Saite, 5 = tiefste bei 6-Saiter)
+    NoteEffects effects;    // Effekte und Artikulationen
+    int velocity = 100;     // Anschlagstärke (0-127)
+    
+    // Für Ties (gehaltene Noten)
+    bool isTied = false;
+    
+    // Berechnet die Breite des Textes für Layout
+    int getDisplayWidth() const
+    {
+        if (effects.deadNote) return 1;  // "X"
+        if (fret >= 10) return 2;        // Zweistellig
+        return 1;
+    }
+};
+
+//==============================================================================
+// Ein Beat (Zeitpunkt mit mehreren gleichzeitigen Noten)
+//==============================================================================
+struct TabBeat
+{
+    juce::Array<TabNote> notes;     // Alle Noten dieses Beats
+    NoteDuration duration = NoteDuration::Quarter;
+    
+    // Rhythmische Modifikationen
+    bool isDotted = false;          // Punktiert
+    bool isDoubleDotted = false;    // Doppelt punktiert
+    int tupletNumerator = 1;        // Für Triolen etc. (3 bei Triole)
+    int tupletDenominator = 1;      // (2 bei Triole -> 3:2)
+    
+    // Beat-Effekte
+    bool isPalmMuted = false;       // P.M.-----
+    bool isLetRing = false;         // Let Ring-----
+    bool hasDownstroke = false;     // Abschlag-Symbol
+    bool hasUpstroke = false;       // Aufschlag-Symbol
+    
+    // Rest (Pause)
+    bool isRest = false;
+    
+    // Berechnet die "Gewichtung" für das Layout
+    // Kürzere Noten brauchen mehr Platz pro Zeiteinheit
+    float getLayoutWeight() const
+    {
+        float weight = static_cast<float>(duration);
+        if (isDotted) weight *= 0.666f;
+        return weight;
+    }
+    
+    // Gibt die Dauer in Vierteln zurück
+    float getDurationInQuarters() const
+    {
+        float base = 4.0f / static_cast<float>(duration);
+        if (isDotted) base *= 1.5f;
+        if (isDoubleDotted) base *= 1.75f;
+        base *= static_cast<float>(tupletDenominator) / static_cast<float>(tupletNumerator);
+        return base;
+    }
+};
+
+//==============================================================================
+// Ein Takt (Measure)
+//==============================================================================
+struct TabMeasure
+{
+    juce::Array<TabBeat> beats;
+    int measureNumber = 1;
+    
+    // Taktart
+    int timeSignatureNumerator = 4;
+    int timeSignatureDenominator = 4;
+    
+    // Wiederholungen
+    bool isRepeatOpen = false;      // |:
+    bool isRepeatClose = false;     // :|
+    int repeatCount = 0;            // Anzahl Wiederholungen
+    
+    // Alternative Endungen (1., 2., etc.)
+    int alternateEnding = 0;
+    
+    // Marker (z.B. "Verse", "Chorus")
+    juce::String marker;
+    
+    // Layout-Informationen (werden beim Rendern berechnet)
+    float calculatedWidth = 0.0f;
+    float xPosition = 0.0f;
+    
+    // Berechnet die Mindestbreite basierend auf Inhalt
+    float calculateMinWidth(float baseNoteWidth) const
+    {
+        float totalWeight = 0.0f;
+        for (const auto& beat : beats)
+        {
+            totalWeight += beat.getLayoutWeight();
+        }
+        // Mindestens so breit wie die Anzahl der Beats
+        return juce::jmax(static_cast<float>(beats.size()) * baseNoteWidth, 
+                          totalWeight * baseNoteWidth * 0.5f);
+    }
+};
+
+//==============================================================================
+// Eine Spur (Track) - eine Gitarre/Bass
+//==============================================================================
+struct TabTrack
+{
+    juce::String name = "Track 1";
+    int stringCount = 6;            // Anzahl Saiten
+    juce::Array<int> tuning;        // Stimmung (MIDI-Noten, z.B. E2=40, A2=45...)
+    int capo = 0;                   // Kapodaster-Position
+    
+    juce::Array<TabMeasure> measures;
+    
+    // Farbe für die Darstellung
+    juce::Colour colour = juce::Colours::orange;
+    
+    TabTrack()
+    {
+        // Standard-Stimmung: E-Standard (E2, A2, D3, G3, B3, E4)
+        tuning = { 40, 45, 50, 55, 59, 64 };
+    }
+};
+
+//==============================================================================
+// Der komplette Song
+//==============================================================================
+struct TabSong
+{
+    juce::String title;
+    juce::String artist;
+    juce::String album;
+    
+    int tempo = 120;                // BPM
+    juce::Array<TabTrack> tracks;
+    
+    // Aktueller Wiedergabeposition
+    int currentMeasure = 0;
+    int currentBeat = 0;
+};
+
+//==============================================================================
+// Layout-Konfiguration
+//==============================================================================
+struct TabLayoutConfig
+{
+    // Abstände
+    float stringSpacing = 12.0f;        // Abstand zwischen Saiten
+    float measurePadding = 10.0f;       // Padding am Taktanfang/-ende
+    float minBeatSpacing = 20.0f;       // Minimaler Abstand zwischen Beats
+    float baseNoteWidth = 25.0f;        // Basis-Breite für Notenwerte
+    
+    // Schrift
+    float fretFontSize = 11.0f;         // Schriftgröße für Bundzahlen
+    float measureNumberFontSize = 9.0f; // Schriftgröße für Taktnummern
+    
+    // Farben
+    juce::Colour stringColour = juce::Colour(0xFF555555);
+    juce::Colour fretTextColour = juce::Colours::black;
+    juce::Colour measureLineColour = juce::Colour(0xFF333333);
+    juce::Colour backgroundColor = juce::Colours::white;
+    juce::Colour playheadColour = juce::Colour(0xFF4A90D9);
+    
+    // Effekt-Farben
+    juce::Colour slideColour = juce::Colour(0xFF666666);
+    juce::Colour vibratoColour = juce::Colour(0xFF666666);
+    juce::Colour palmMuteColour = juce::Colour(0xFF888888);
+    
+    // Berechnet die Gesamthöhe für n Saiten
+    float getTotalHeight(int stringCount) const
+    {
+        return stringSpacing * (stringCount + 3); // Extra Platz für Rhythmik oben/unten
+    }
+};

@@ -1,0 +1,25 @@
+# Build outputs
+build/
+Builds/
+
+# IDE files
+*.user
+*.suo
+.vs/
+
+# Compiled files
+*.obj
+*.o
+*.pdb
+*.ilk
+*.lib
+*.dll
+*.exe
+*.vst3
+
+# JUCE generated
+JuceLibraryCode/
+
+# Temporary files
+*.tmp
+*.log
