@@ -316,7 +316,7 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                                         midiNote = standardTuning[stringIndex] + gpNote.fret;
                                 }
                                 
-                                // Velocity basierend auf Note-Velocity, skaliert mit Track-Volume
+                                // Velocity basierend auf Note-Eigenschaften (Volume wird separat als CC7 gesendet)
                                 int velocity = gpNote.velocity > 0 ? gpNote.velocity : 95;
                                 if (gpNote.isGhost) velocity = 60;
                                 if (gpNote.hasAccent) velocity = 120;
