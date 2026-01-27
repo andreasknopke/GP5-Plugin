@@ -10,6 +10,7 @@
 
 #include "PluginProcessor.h"
 #include "TabViewComponent.h"
+#include "TrackSettingsComponent.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 
 //==============================================================================
@@ -40,6 +41,9 @@ private:
     // 3. Track-Auswahl ComboBox
     juce::ComboBox trackSelector;
     juce::Label trackLabel;
+    
+    // 3b. Track Settings Button
+    juce::TextButton settingsButton { "Settings" };
 
     // 4. Der FileChooser (smart pointer, um Speicherlecks zu vermeiden)
     std::unique_ptr<juce::FileChooser> fileChooser;
@@ -55,15 +59,20 @@ private:
     
     // 8. Auto-Scroll Toggle
     juce::ToggleButton autoScrollButton { "Auto-Scroll" };
+    
+    // 9. Track Settings Panel (popup)
+    std::unique_ptr<TrackSettingsComponent> trackSettingsPanel;
+    bool settingsPanelVisible = false;
 
-    // 9. Hilfsfunktionen
+    // 10. Hilfsfunktionen
     void loadButtonClicked();
     void trackSelectionChanged();
     void updateTrackSelector();
     void refreshFromProcessor();
     void updateTransportDisplay();
+    void toggleSettingsPanel();
     
-    // 10. State
+    // 11. State
     int lastDisplayedMeasure = -1;
     double lastPositionInBeats = -1.0;  // Für Erkennung von Positionssprüngen
     bool wasPlaying = false;            // Letzter Play-Status

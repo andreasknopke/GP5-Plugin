@@ -22,6 +22,19 @@ NewProjectAudioProcessor::NewProjectAudioProcessor()
                        )
 #endif
 {
+    // Initialize all track settings with defaults
+    for (int i = 0; i < maxTracks; ++i)
+    {
+        trackMidiChannels[i].store(i + 1);  // Track 0 -> Channel 1, Track 1 -> Channel 2, etc.
+        trackMuted[i].store(false);
+        trackSolo[i].store(false);
+        trackVolume[i].store(100);  // Default volume
+        trackPan[i].store(64);      // Center pan
+    }
+    
+    // Initialize per-track beat tracking
+    lastProcessedBeatPerTrack.resize(maxTracks, -1);
+    lastProcessedMeasurePerTrack.resize(maxTracks, -1);
 }
 
 NewProjectAudioProcessor::~NewProjectAudioProcessor()
@@ -171,34 +184,43 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
 
     // =========================================================================
     // MIDI Output - Generiere MIDI-Noten basierend auf der aktuellen Position
+    // ALLE TRACKS auf ihren jeweiligen MIDI-Kanälen
     // =========================================================================
     if (fileLoaded && midiOutputEnabled.load())
     {
         bool isPlaying = hostIsPlaying.load();
         double currentBeat = hostPositionBeats.load();
-        int trackIdx = selectedTrackIndex.load();
         
         const auto& tracks = gp5Parser.getTracks();
         
-        // Stop-Erkennung: Wenn Playback stoppt, alle Noten beenden
+        // Stop-Erkennung: Wenn Playback stoppt, alle Noten auf allen Kanälen beenden
         if (!isPlaying && wasPlaying)
         {
-            for (int note : activeNotes)
+            for (auto& [channel, notes] : activeNotesPerChannel)
             {
-                generatedMidi.addEvent(juce::MidiMessage::noteOff(1, note), 0);
+                for (int note : notes)
+                {
+                    generatedMidi.addEvent(juce::MidiMessage::noteOff(channel, note), 0);
+                }
+                notes.clear();
             }
-            activeNotes.clear();
-            lastProcessedMeasure = -1;
-            lastProcessedBeatIndex = -1;
-            DBG("MIDI: Playback stopped, all notes off");
+            activeNotesPerChannel.clear();
+            
+            // Reset per-track beat tracking
+            for (int i = 0; i < maxTracks; ++i)
+            {
+                lastProcessedBeatPerTrack[i] = -1;
+                lastProcessedMeasurePerTrack[i] = -1;
+            }
+            
+            DBG("MIDI: Playback stopped, all notes off on all channels");
         }
         
-        // Nur MIDI generieren wenn:
-        // - Playback läuft
-        // - Gültiger Track ausgewählt
-        if (isPlaying && trackIdx >= 0 && trackIdx < tracks.size())
+        // Nur MIDI generieren wenn Playback läuft
+        if (isPlaying)
         {
-            const auto& track = tracks[trackIdx];
+            // Check if any track has Solo enabled
+            bool anySoloActive = hasAnySolo();
             
             // Berechne aktuellen Takt und Beat-Position
             int timeSigNum = hostTimeSigNumerator.load();
@@ -208,141 +230,146 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             int measureIndex = static_cast<int>(currentBeat / beatsPerMeasure);
             double beatInMeasure = fmod(currentBeat, beatsPerMeasure);
             
-            // Begrenze auf gültige Takte
-            if (measureIndex >= 0 && measureIndex < track.measures.size())
+            // Iteriere über ALLE Tracks
+            for (int trackIdx = 0; trackIdx < juce::jmin((int)tracks.size(), maxTracks); ++trackIdx)
             {
+                // Check Mute/Solo status
+                bool isMuted = isTrackMuted(trackIdx);
+                bool isSolo = isTrackSolo(trackIdx);
+                
+                // Skip if muted OR if solo is active on another track but not this one
+                if (isMuted || (anySoloActive && !isSolo))
+                    continue;
+                
+                const auto& track = tracks[trackIdx];
+                int midiChannel = getTrackMidiChannel(trackIdx);
+                int volumeScale = getTrackVolume(trackIdx);
+                int pan = getTrackPan(trackIdx);
+                
+                // Begrenze auf gültige Takte
+                if (measureIndex < 0 || measureIndex >= track.measures.size())
+                    continue;
+                
                 const auto& measure = track.measures[measureIndex];
                 const auto& beats = measure.voice1;  // Verwende Voice 1
                 
-                if (beats.size() > 0)
+                if (beats.size() == 0)
+                    continue;
+                
+                // Berechne welcher Beat gerade gespielt wird
+                double beatDuration = beatsPerMeasure / beats.size();
+                int beatIndex = static_cast<int>(beatInMeasure / beatDuration);
+                beatIndex = juce::jlimit(0, (int)beats.size() - 1, beatIndex);
+                
+                // Nur neue Noten spielen wenn sich der Beat für diesen Track geändert hat
+                if (measureIndex != lastProcessedMeasurePerTrack[trackIdx] || 
+                    beatIndex != lastProcessedBeatPerTrack[trackIdx])
                 {
-                    // Berechne welcher Beat gerade gespielt wird
-                    double beatDuration = beatsPerMeasure / beats.size();
-                    int beatIndex = static_cast<int>(beatInMeasure / beatDuration);
-                    beatIndex = juce::jlimit(0, beats.size() - 1, beatIndex);
-                    
-                    // Nur neue Noten spielen wenn sich der Beat geändert hat
-                    if (measureIndex != lastProcessedMeasure || beatIndex != lastProcessedBeatIndex)
+                    // Prüfe ob nächste Note ein Hammer-On/Pull-Off ist (Legato)
+                    bool nextIsLegato = false;
+                    if (beatIndex + 1 < (int)beats.size())
                     {
-                        // Prüfe ob nächste Note ein Hammer-On/Pull-Off ist (Legato)
-                        bool nextIsLegato = false;
-                        if (beatIndex + 1 < beats.size())
+                        const auto& nextBeat = beats[beatIndex + 1];
+                        for (const auto& [si, n] : nextBeat.notes)
                         {
-                            const auto& nextBeat = beats[beatIndex + 1];
-                            for (const auto& [si, n] : nextBeat.notes)
-                            {
-                                if (n.hasHammerOn) nextIsLegato = true;
-                            }
+                            if (n.hasHammerOn) nextIsLegato = true;
                         }
-                        
-                        // Alle aktiven Noten stoppen (außer bei Legato)
-                        if (!nextIsLegato)
+                    }
+                    
+                    // Alle aktiven Noten auf diesem Kanal stoppen (außer bei Legato)
+                    if (!nextIsLegato && activeNotesPerChannel.count(midiChannel))
+                    {
+                        for (int note : activeNotesPerChannel[midiChannel])
                         {
-                            for (int note : activeNotes)
-                            {
-                                generatedMidi.addEvent(juce::MidiMessage::noteOff(1, note), 0);
-                            }
-                            activeNotes.clear();
+                            generatedMidi.addEvent(juce::MidiMessage::noteOff(midiChannel, note), 0);
                         }
+                        activeNotesPerChannel[midiChannel].clear();
+                    }
+                    
+                    // Pitch Bend zurücksetzen am Anfang jedes Beats
+                    generatedMidi.addEvent(juce::MidiMessage::pitchWheel(midiChannel, 8192), 0);
+                    
+                    // Neue Noten starten
+                    const auto& beat = beats[beatIndex];
+                    
+                    if (!beat.isRest)
+                    {
+                        // Send Volume (CC7) and Pan (CC10) at start of each beat
+                        generatedMidi.addEvent(juce::MidiMessage::controllerEvent(midiChannel, 7, volumeScale), 0);
+                        generatedMidi.addEvent(juce::MidiMessage::controllerEvent(midiChannel, 10, pan), 0);
                         
-                        // Pitch Bend zurücksetzen am Anfang jedes Beats
-                        generatedMidi.addEvent(juce::MidiMessage::pitchWheel(1, 8192), 0);  // 8192 = center
-                        
-                        // Neue Noten starten
-                        const auto& beat = beats[beatIndex];
-                        
-                        if (!beat.isRest)
+                        for (const auto& [stringIndex, gpNote] : beat.notes)
                         {
-                            for (const auto& [stringIndex, gpNote] : beat.notes)
+                            if (!gpNote.isDead && !gpNote.isTied)
                             {
-                                if (!gpNote.isDead && !gpNote.isTied)
+                                // Konvertiere Fret zu MIDI-Note
+                                int midiNote = 0;
+                                if (stringIndex < track.tuning.size())
                                 {
-                                    // Konvertiere Fret zu MIDI-Note
-                                    // MIDI = Tuning der Saite + Fret
-                                    int midiNote = 0;
-                                    if (stringIndex < track.tuning.size())
-                                    {
-                                        midiNote = track.tuning[stringIndex] + gpNote.fret;
-                                    }
-                                    else
-                                    {
-                                        // Standard-Tuning als Fallback (E2, A2, D3, G3, B3, E4)
-                                        const int standardTuning[] = { 64, 59, 55, 50, 45, 40 };
-                                        if (stringIndex < 6)
-                                            midiNote = standardTuning[stringIndex] + gpNote.fret;
-                                    }
-                                    
-                                    // Velocity basierend auf Note-Velocity
-                                    int velocity = gpNote.velocity > 0 ? gpNote.velocity : 95;
-                                    if (gpNote.isGhost) velocity = 60;
-                                    if (gpNote.hasAccent) velocity = 120;
-                                    
-                                    // =========================================
-                                    // MIDI Controller für Spieltechniken
-                                    // =========================================
-                                    
-                                    // Vibrato -> CC1 (Modulation Wheel)
-                                    if (gpNote.hasVibrato)
-                                    {
-                                        generatedMidi.addEvent(juce::MidiMessage::controllerEvent(1, 1, 80), 0);  // Mod wheel
-                                        DBG("MIDI: Vibrato ON (CC1=80)");
-                                    }
-                                    else
-                                    {
-                                        generatedMidi.addEvent(juce::MidiMessage::controllerEvent(1, 1, 0), 0);  // Mod wheel off
-                                    }
-                                    
-                                    // Hammer-On / Pull-Off -> CC68 (Legato Pedal)
-                                    if (gpNote.hasHammerOn)
-                                    {
-                                        generatedMidi.addEvent(juce::MidiMessage::controllerEvent(1, 68, 127), 0);  // Legato ON
-                                        velocity = juce::jmax(40, velocity - 20);  // Etwas leiser für Legato
-                                        DBG("MIDI: Hammer-On/Pull-Off (CC68=127)");
-                                    }
-                                    else
-                                    {
-                                        generatedMidi.addEvent(juce::MidiMessage::controllerEvent(1, 68, 0), 0);  // Legato OFF
-                                    }
-                                    
-                                    // Slide -> CC5 (Portamento Time) + CC65 (Portamento ON)
-                                    if (gpNote.hasSlide)
-                                    {
-                                        generatedMidi.addEvent(juce::MidiMessage::controllerEvent(1, 65, 127), 0);  // Portamento ON
-                                        generatedMidi.addEvent(juce::MidiMessage::controllerEvent(1, 5, 64), 0);   // Portamento Time
-                                        DBG("MIDI: Slide (Portamento ON)");
-                                    }
-                                    else
-                                    {
-                                        generatedMidi.addEvent(juce::MidiMessage::controllerEvent(1, 65, 0), 0);  // Portamento OFF
-                                    }
-                                    
-                                    // Bend -> Pitch Bend
-                                    if (gpNote.hasBend && gpNote.bendValue != 0)
-                                    {
-                                        // GP5 bend value ist in "cents" oder Halbtonschritten
-                                        // Pitch Bend Range: 0-16383, 8192 = center
-                                        // Typisch: +/- 2 Halbtöne = 8192 pro 2 Halbtöne
-                                        // bendValue von 100 = 1 Halbton in GP5
-                                        int pitchBend = 8192 + (gpNote.bendValue * 4096 / 100);
-                                        pitchBend = juce::jlimit(0, 16383, pitchBend);
-                                        generatedMidi.addEvent(juce::MidiMessage::pitchWheel(1, pitchBend), 0);
-                                        DBG("MIDI: Bend value=" << gpNote.bendValue << " -> PitchBend=" << pitchBend);
-                                    }
-                                    
-                                    if (midiNote > 0 && midiNote < 128)
-                                    {
-                                        auto msg = juce::MidiMessage::noteOn(1, midiNote, (juce::uint8)velocity);
-                                        generatedMidi.addEvent(msg, 0);
-                                        activeNotes.insert(midiNote);
-                                        DBG("MIDI: Note ON - " << midiNote << " vel=" << velocity << " (Measure " << measureIndex << ", Beat " << beatIndex << ")");
-                                    }
+                                    midiNote = track.tuning[stringIndex] + gpNote.fret;
+                                }
+                                else
+                                {
+                                    // Standard-Tuning als Fallback
+                                    const int standardTuning[] = { 64, 59, 55, 50, 45, 40 };
+                                    if (stringIndex < 6)
+                                        midiNote = standardTuning[stringIndex] + gpNote.fret;
+                                }
+                                
+                                // Velocity basierend auf Note-Velocity, skaliert mit Track-Volume
+                                int velocity = gpNote.velocity > 0 ? gpNote.velocity : 95;
+                                if (gpNote.isGhost) velocity = 60;
+                                if (gpNote.hasAccent) velocity = 120;
+                                
+                                // MIDI Controller für Spieltechniken
+                                if (gpNote.hasVibrato)
+                                {
+                                    generatedMidi.addEvent(juce::MidiMessage::controllerEvent(midiChannel, 1, 80), 0);
+                                }
+                                else
+                                {
+                                    generatedMidi.addEvent(juce::MidiMessage::controllerEvent(midiChannel, 1, 0), 0);
+                                }
+                                
+                                if (gpNote.hasHammerOn)
+                                {
+                                    generatedMidi.addEvent(juce::MidiMessage::controllerEvent(midiChannel, 68, 127), 0);
+                                    velocity = juce::jmax(40, velocity - 20);
+                                }
+                                else
+                                {
+                                    generatedMidi.addEvent(juce::MidiMessage::controllerEvent(midiChannel, 68, 0), 0);
+                                }
+                                
+                                if (gpNote.hasSlide)
+                                {
+                                    generatedMidi.addEvent(juce::MidiMessage::controllerEvent(midiChannel, 65, 127), 0);
+                                    generatedMidi.addEvent(juce::MidiMessage::controllerEvent(midiChannel, 5, 64), 0);
+                                }
+                                else
+                                {
+                                    generatedMidi.addEvent(juce::MidiMessage::controllerEvent(midiChannel, 65, 0), 0);
+                                }
+                                
+                                if (gpNote.hasBend && gpNote.bendValue != 0)
+                                {
+                                    int pitchBend = 8192 + (gpNote.bendValue * 4096 / 100);
+                                    pitchBend = juce::jlimit(0, 16383, pitchBend);
+                                    generatedMidi.addEvent(juce::MidiMessage::pitchWheel(midiChannel, pitchBend), 0);
+                                }
+                                
+                                if (midiNote > 0 && midiNote < 128)
+                                {
+                                    auto msg = juce::MidiMessage::noteOn(midiChannel, midiNote, (juce::uint8)velocity);
+                                    generatedMidi.addEvent(msg, 0);
+                                    activeNotesPerChannel[midiChannel].insert(midiNote);
                                 }
                             }
                         }
-                        
-                        lastProcessedMeasure = measureIndex;
-                        lastProcessedBeatIndex = beatIndex;
                     }
+                    
+                    lastProcessedMeasurePerTrack[trackIdx] = measureIndex;
+                    lastProcessedBeatPerTrack[trackIdx] = beatIndex;
                 }
             }
         }
@@ -425,6 +452,10 @@ bool NewProjectAudioProcessor::loadGP5File(const juce::File& file)
     {
         loadedFilePath = file.getFullPathName();
         fileLoaded = true;
+        
+        // Initialize track settings based on loaded file
+        initializeTrackSettings();
+        
         DBG("Processor: GP5 file loaded successfully: " << loadedFilePath);
         return true;
     }
@@ -434,6 +465,44 @@ bool NewProjectAudioProcessor::loadGP5File(const juce::File& file)
         DBG("Processor: Failed to load GP5 file: " << gp5Parser.getLastError());
         return false;
     }
+}
+
+void NewProjectAudioProcessor::initializeTrackSettings()
+{
+    const auto& tracks = gp5Parser.getTracks();
+    
+    for (int i = 0; i < juce::jmin((int)tracks.size(), maxTracks); ++i)
+    {
+        const auto& track = tracks[i];
+        
+        // Use MIDI channel from GP5 file, or assign sequentially
+        int channel = track.midiChannel;
+        if (channel < 1 || channel > 16)
+            channel = (i % 16) + 1;
+        
+        // Drums typically use channel 10
+        if (track.isPercussion)
+            channel = 10;
+        
+        trackMidiChannels[i].store(channel);
+        trackMuted[i].store(false);
+        trackSolo[i].store(false);
+        trackVolume[i].store(track.volume > 0 ? track.volume : 100);
+        trackPan[i].store(track.pan >= 0 ? track.pan : 64);
+    }
+    
+    // Reset beat tracking
+    for (int i = 0; i < maxTracks; ++i)
+    {
+        lastProcessedBeatPerTrack[i] = -1;
+        lastProcessedMeasurePerTrack[i] = -1;
+    }
+    
+    // Clear all active notes
+    activeNotesPerChannel.clear();
+    activeNotes.clear();
+    
+    DBG("Track settings initialized for " << tracks.size() << " tracks");
 }
 
 int NewProjectAudioProcessor::getCurrentMeasureIndex() const

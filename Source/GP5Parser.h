@@ -106,6 +106,9 @@ struct GP5Track
     juce::Array<int> tuning;
     int port = 0;
     int channelIndex = 0;
+    int midiChannel = 1;      // MIDI channel (1-16)
+    int volume = 100;         // Track volume (0-127)
+    int pan = 64;             // Track pan (0-127, 64 = center)
     int fretCount = 24;
     int capo = 0;
     juce::Colour colour;

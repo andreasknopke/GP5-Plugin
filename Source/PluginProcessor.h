@@ -12,6 +12,8 @@
 #include "GP5Parser.h"
 #include <atomic>
 #include <set>
+#include <map>
+#include <vector>
 
 //==============================================================================
 /**
@@ -90,6 +92,86 @@ public:
     // MIDI Output enable/disable
     void setMidiOutputEnabled(bool enabled) { midiOutputEnabled.store(enabled); }
     bool isMidiOutputEnabled() const { return midiOutputEnabled.load(); }
+    
+    //==============================================================================
+    // Per-Track MIDI Settings
+    //==============================================================================
+    
+    // MIDI Channel per track (1-16)
+    int getTrackMidiChannel(int trackIndex) const 
+    { 
+        if (trackIndex >= 0 && trackIndex < maxTracks)
+            return trackMidiChannels[trackIndex].load();
+        return 1;
+    }
+    void setTrackMidiChannel(int trackIndex, int channel) 
+    { 
+        if (trackIndex >= 0 && trackIndex < maxTracks)
+            trackMidiChannels[trackIndex].store(juce::jlimit(1, 16, channel));
+    }
+    
+    // Mute per track
+    bool isTrackMuted(int trackIndex) const 
+    { 
+        if (trackIndex >= 0 && trackIndex < maxTracks)
+            return trackMuted[trackIndex].load();
+        return false;
+    }
+    void setTrackMuted(int trackIndex, bool muted) 
+    { 
+        if (trackIndex >= 0 && trackIndex < maxTracks)
+            trackMuted[trackIndex].store(muted);
+    }
+    
+    // Solo per track
+    bool isTrackSolo(int trackIndex) const 
+    { 
+        if (trackIndex >= 0 && trackIndex < maxTracks)
+            return trackSolo[trackIndex].load();
+        return false;
+    }
+    void setTrackSolo(int trackIndex, bool solo) 
+    { 
+        if (trackIndex >= 0 && trackIndex < maxTracks)
+            trackSolo[trackIndex].store(solo);
+    }
+    
+    // Check if any track has solo enabled
+    bool hasAnySolo() const
+    {
+        for (int i = 0; i < maxTracks; ++i)
+            if (trackSolo[i].load()) return true;
+        return false;
+    }
+    
+    // Volume per track (0-127, 100 = default)
+    int getTrackVolume(int trackIndex) const 
+    { 
+        if (trackIndex >= 0 && trackIndex < maxTracks)
+            return trackVolume[trackIndex].load();
+        return 100;
+    }
+    void setTrackVolume(int trackIndex, int volume) 
+    { 
+        if (trackIndex >= 0 && trackIndex < maxTracks)
+            trackVolume[trackIndex].store(juce::jlimit(0, 127, volume));
+    }
+    
+    // Pan per track (0-127, 64 = center)
+    int getTrackPan(int trackIndex) const 
+    { 
+        if (trackIndex >= 0 && trackIndex < maxTracks)
+            return trackPan[trackIndex].load();
+        return 64;
+    }
+    void setTrackPan(int trackIndex, int pan) 
+    { 
+        if (trackIndex >= 0 && trackIndex < maxTracks)
+            trackPan[trackIndex].store(juce::jlimit(0, 127, pan));
+    }
+    
+    // Initialize track settings based on GP5 file
+    void initializeTrackSettings();
 
 private:
     //==============================================================================
@@ -101,12 +183,27 @@ private:
     std::atomic<int> selectedTrackIndex { 0 };
     std::atomic<bool> midiOutputEnabled { true };
     
+    // Per-track MIDI settings (max 16 tracks)
+    static constexpr int maxTracks = 16;
+    std::atomic<int> trackMidiChannels[maxTracks];
+    std::atomic<bool> trackMuted[maxTracks];
+    std::atomic<bool> trackSolo[maxTracks];
+    std::atomic<int> trackVolume[maxTracks];
+    std::atomic<int> trackPan[maxTracks];
+    
+    // Per-track active notes (for proper note-off per channel)
+    std::map<int, std::set<int>> activeNotesPerChannel;  // channel -> active MIDI notes
+    
     // MIDI note tracking - which notes are currently playing
-    std::set<int> activeNotes;  // MIDI note numbers currently playing
+    std::set<int> activeNotes;  // MIDI note numbers currently playing (legacy, single track)
     double lastProcessedBeat = -1.0;
     int lastProcessedMeasure = -1;
     int lastProcessedBeatIndex = -1;
     bool wasPlaying = false;
+    
+    // Per-track beat tracking
+    std::vector<int> lastProcessedBeatPerTrack;
+    std::vector<int> lastProcessedMeasurePerTrack;
     
     // DAW sync state (atomic for thread-safe access from UI)
     std::atomic<bool> hostIsPlaying { false };

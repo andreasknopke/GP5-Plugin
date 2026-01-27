@@ -33,6 +33,10 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     trackSelector.onChange = [this] { trackSelectionChanged(); };
     trackSelector.setTextWhenNothingSelected ("-- Select Track --");
     
+    // Settings Button (opens track MIDI settings panel)
+    addAndMakeVisible (settingsButton);
+    settingsButton.onClick = [this] { toggleSettingsPanel(); };
+    
     // Info Label
     addAndMakeVisible (infoLabel);
     infoLabel.setFont (juce::FontOptions(12.0f));
@@ -102,7 +106,11 @@ void NewProjectAudioProcessorEditor::resized()
     // Track Selector
     trackLabel.setBounds (toolbar.removeFromLeft(40));
     trackSelector.setBounds (toolbar.removeFromLeft(160));
-    toolbar.removeFromLeft(15); // Spacer
+    toolbar.removeFromLeft(5); // Spacer
+    
+    // Settings Button
+    settingsButton.setBounds (toolbar.removeFromLeft(70));
+    toolbar.removeFromLeft(10); // Spacer
     
     // Auto-Scroll Toggle
     autoScrollButton.setBounds (toolbar.removeFromLeft(100));
@@ -284,4 +292,28 @@ void NewProjectAudioProcessorEditor::updateTransportDisplay()
     statusText += " | " + juce::String(timeSigNum) + "/" + juce::String(timeSigDen);
     
     transportLabel.setText(statusText, juce::dontSendNotification);
+}
+void NewProjectAudioProcessorEditor::toggleSettingsPanel()
+{
+    if (settingsPanelVisible && trackSettingsPanel != nullptr)
+    {
+        // Hide panel
+        removeChildComponent(trackSettingsPanel.get());
+        trackSettingsPanel.reset();
+        settingsPanelVisible = false;
+    }
+    else
+    {
+        // Show panel
+        trackSettingsPanel = std::make_unique<TrackSettingsComponent>(audioProcessor);
+        trackSettingsPanel->onClose = [this]() { toggleSettingsPanel(); };
+        
+        // Position the panel (overlay on right side)
+        int panelWidth = 480;
+        int panelHeight = juce::jmin(400, getHeight() - 60);
+        trackSettingsPanel->setBounds(getWidth() - panelWidth - 10, 55, panelWidth, panelHeight);
+        
+        addAndMakeVisible(trackSettingsPanel.get());
+        settingsPanelVisible = true;
+    }
 }
