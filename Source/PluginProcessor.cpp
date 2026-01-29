@@ -393,8 +393,7 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                     
                     if (!beat.isRest)
                     {
-                        // Send Volume (CC7) and Pan (CC10) at start of each beat
-                        generatedMidi.addEvent(juce::MidiMessage::controllerEvent(midiChannel, 7, volumeScale), 0);
+                        // Send Pan (CC10) at start of each beat
                         generatedMidi.addEvent(juce::MidiMessage::controllerEvent(midiChannel, 10, pan), 0);
                         
                         for (const auto& [stringIndex, gpNote] : beat.notes)
@@ -415,10 +414,17 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                                         midiNote = standardTuning[stringIndex] + gpNote.fret;
                                 }
                                 
-                                // Velocity basierend auf Note-Eigenschaften (Volume wird separat als CC7 gesendet)
+                                // Basis-Velocity aus der Note
                                 int velocity = gpNote.velocity > 0 ? gpNote.velocity : 95;
                                 if (gpNote.isGhost) velocity = 60;
                                 if (gpNote.hasAccent) velocity = 120;
+                                
+                                // Skaliere Velocity mit Track-Volume (volumeScale 0-127, 100 = neutral)
+                                // Bei volumeScale=100: velocity bleibt gleich
+                                // Bei volumeScale=0: velocity wird 0
+                                // Bei volumeScale=127: velocity wird leicht erhöht
+                                velocity = (velocity * volumeScale) / 100;
+                                velocity = juce::jlimit(1, 127, velocity);
                                 
                                 // MIDI Controller für Spieltechniken
                                 if (gpNote.hasVibrato)
