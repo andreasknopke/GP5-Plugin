@@ -282,6 +282,38 @@ bool GP5Parser::parse(const juce::File& file)
         // Blank bytes after tracks
         skip(versionMinor == 0 ? 2 : 1);
         
+        // Assign MIDI channels from midiChannels list to tracks
+        for (int i = 0; i < tracks.size(); ++i)
+        {
+            auto& track = tracks.getReference(i);
+            int channelIdx = track.channelIndex;
+            
+            // channelIndex is the index into the midiChannels array
+            // midiChannels has 64 entries (4 ports x 16 channels)
+            if (channelIdx >= 0 && channelIdx < midiChannels.size())
+            {
+                // GP uses 0-based channels, MIDI uses 1-based (1-16)
+                // The channel within the 16-channel block is the MIDI channel
+                track.midiChannel = (channelIdx % 16) + 1;
+                track.volume = midiChannels[channelIdx].volume;
+                track.pan = midiChannels[channelIdx].balance;
+                
+                // Channel 10 is typically drums
+                if (track.midiChannel == 10)
+                    track.isPercussion = true;
+                    
+                DBG("Track " << (i+1) << " (" << track.name << "): MIDI Channel " << track.midiChannel 
+                    << ", Volume " << track.volume << ", Pan " << track.pan
+                    << (track.isPercussion ? " [DRUMS]" : ""));
+            }
+            else
+            {
+                // Fallback: assign sequential channels
+                track.midiChannel = (i % 16) + 1;
+                DBG("Track " << (i+1) << " (" << track.name << "): MIDI Channel " << track.midiChannel << " (fallback)");
+            }
+        }
+        
         DBG("Tracks array size after parsing tracks: " << tracks.size());
         DBG("Stream position before measures: " << inputStream->getPosition() << " / " << inputStream->getTotalLength());
         

@@ -134,6 +134,12 @@ public:
                     drawBeatText(g, beat.text, beatX, firstStringY - 25.0f);
                 }
                 
+                // Draw Palm Mute indicator (P.M.)
+                if (beat.isPalmMuted)
+                {
+                    drawPalmMute(g, beatX, nextBeatX, firstStringY - 20.0f);
+                }
+                
                 // Draw notes or rest - NIEMALS beides!
                 if (beat.isRest)
                 {
@@ -293,6 +299,15 @@ private:
         g.drawText(fretText, 
                    juce::Rectangle<float>(x - bgWidth / 2.0f, y - bgHeight / 2.0f, bgWidth, bgHeight),
                    juce::Justification::centred, false);
+        
+        // Draw Tapping indicator (T) above the note
+        if (note.effects.tapping)
+        {
+            g.setFont(9.0f);
+            g.drawText("T",
+                       juce::Rectangle<float>(x - 5.0f, y - noteRadius - 12.0f, 10.0f, 10.0f),
+                       juce::Justification::centred, false);
+        }
         
         // Draw vibrato ABOVE the strings (at the top) and extending to next beat
         if (note.effects.vibrato)
@@ -497,6 +512,30 @@ private:
         g.drawText(text, 
                    juce::Rectangle<float>(x - 30.0f, y, 100.0f, 14.0f),
                    juce::Justification::left, false);
+    }
+    
+    /**
+     * Zeichnet Palm Mute Indikator (P.M. mit gepunkteter Linie)
+     */
+    void drawPalmMute(juce::Graphics& g, float startX, float endX, float y)
+    {
+        g.setColour(config.palmMuteColour);
+        g.setFont(8.0f);
+        
+        // Zeichne "P.M." Text
+        g.drawText("P.M.",
+                   juce::Rectangle<float>(startX - 2.0f, y - 5.0f, 20.0f, 10.0f),
+                   juce::Justification::left, false);
+        
+        // Zeichne gepunktete Linie bis zum nächsten Beat
+        float lineStartX = startX + 18.0f;
+        float lineY = y;
+        float dotSpacing = 3.0f;
+        
+        for (float dx = lineStartX; dx < endX - 5.0f; dx += dotSpacing)
+        {
+            g.fillEllipse(dx, lineY - 1.0f, 2.0f, 2.0f);
+        }
     }
     
     void drawSlurs(juce::Graphics& g, const TabBeat& beat, float beatX, float firstStringY)
