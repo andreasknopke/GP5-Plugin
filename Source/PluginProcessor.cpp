@@ -10,6 +10,84 @@
 #include "PluginEditor.h"
 
 //==============================================================================
+// Helper: Berechnet die Dauer eines GP5-Beats in Viertelnoten (Quarter Notes)
+//==============================================================================
+static double getGP5BeatDurationInQuarters(const GP5Beat& beat)
+{
+    // GP5 duration: -2=whole, -1=half, 0=quarter, 1=eighth, 2=sixteenth, 3=32nd
+    // Formel: Dauer in Vierteln = 4 / (2^(duration + 2))
+    // -2 -> 4/1 = 4.0 (ganze Note)
+    // -1 -> 4/2 = 2.0 (halbe Note)
+    //  0 -> 4/4 = 1.0 (Viertelnote)
+    //  1 -> 4/8 = 0.5 (Achtelnote)
+    //  2 -> 4/16= 0.25 (Sechzehntelnote)
+    //  3 -> 4/32= 0.125 (Zweiunddreißigstelnote)
+    
+    double baseDuration = 4.0 / std::pow(2.0, beat.duration + 2);
+    
+    // Punktierung: +50% der Dauer
+    if (beat.isDotted)
+        baseDuration *= 1.5;
+    
+    // Tuplet (z.B. Triole: 3 Noten in der Zeit von 2)
+    if (beat.tupletN > 0)
+    {
+        // Typische Tuplets: 3 (Triole), 5, 6, 7, etc.
+        // Eine Triole bedeutet: 3 Noten in der Zeit von 2
+        // Allgemein: N Noten in der Zeit von floor(N * 2/3) für ungerade N
+        // Für Standardfälle:
+        switch (beat.tupletN)
+        {
+            case 3:  baseDuration *= (2.0 / 3.0); break;  // Triole: 3 in 2
+            case 5:  baseDuration *= (4.0 / 5.0); break;  // Quintole: 5 in 4
+            case 6:  baseDuration *= (4.0 / 6.0); break;  // Sextole: 6 in 4
+            case 7:  baseDuration *= (4.0 / 7.0); break;  // Septole: 7 in 4
+            case 9:  baseDuration *= (8.0 / 9.0); break;  // 9 in 8
+            case 10: baseDuration *= (8.0 / 10.0); break; // 10 in 8
+            case 11: baseDuration *= (8.0 / 11.0); break; // 11 in 8
+            case 12: baseDuration *= (8.0 / 12.0); break; // 12 in 8
+            case 13: baseDuration *= (8.0 / 13.0); break; // 13 in 8
+            default: break;  // Kein Tuplet oder unbekannt
+        }
+    }
+    
+    return baseDuration;
+}
+
+//==============================================================================
+// Helper: Findet den Beat-Index und die relative Position für eine Beat-Position im Takt
+// Gibt den Index des Beats zurück, der bei beatInMeasure aktiv ist
+// beatStartTime wird auf die Startzeit des gefundenen Beats gesetzt
+//==============================================================================
+static int findBeatAtPosition(const juce::Array<GP5Beat>& beats, double beatInMeasure, double& beatStartTime)
+{
+    double cumulativeTime = 0.0;
+    
+    for (int i = 0; i < beats.size(); ++i)
+    {
+        double beatDuration = getGP5BeatDurationInQuarters(beats[i]);
+        
+        if (beatInMeasure < cumulativeTime + beatDuration)
+        {
+            beatStartTime = cumulativeTime;
+            return i;
+        }
+        
+        cumulativeTime += beatDuration;
+    }
+    
+    // Falls wir über das Ende hinaus sind, letzten Beat zurückgeben
+    if (beats.size() > 0)
+    {
+        beatStartTime = cumulativeTime - getGP5BeatDurationInQuarters(beats[beats.size() - 1]);
+        return beats.size() - 1;
+    }
+    
+    beatStartTime = 0.0;
+    return 0;
+}
+
+//==============================================================================
 NewProjectAudioProcessor::NewProjectAudioProcessor()
 #ifndef JucePlugin_PreferredChannelConfigurations
      : AudioProcessor (BusesProperties()
@@ -222,13 +300,34 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             // Check if any track has Solo enabled
             bool anySoloActive = hasAnySolo();
             
-            // Berechne aktuellen Takt und Beat-Position
-            int timeSigNum = hostTimeSigNumerator.load();
-            int timeSigDen = hostTimeSigDenominator.load();
-            double beatsPerMeasure = timeSigNum * (4.0 / timeSigDen);
+            // Hole die MeasureHeaders für korrekte Taktart-Berechnung
+            const auto& measureHeaders = gp5Parser.getMeasureHeaders();
             
-            int measureIndex = static_cast<int>(currentBeat / beatsPerMeasure);
-            double beatInMeasure = fmod(currentBeat, beatsPerMeasure);
+            // Berechne aktuellen Takt basierend auf GP5-Taktarten
+            // Jeder Takt kann eine andere Taktart haben!
+            int measureIndex = 0;
+            double measureStartBeat = 0.0;
+            double cumulativeBeat = 0.0;
+            
+            for (int m = 0; m < measureHeaders.size(); ++m)
+            {
+                // Taktlänge in Viertelnoten: numerator * (4.0 / denominator)
+                // z.B. 4/4 = 4 Viertelnoten, 3/4 = 3 Viertelnoten, 6/8 = 3 Viertelnoten
+                double measureLength = measureHeaders[m].numerator * (4.0 / measureHeaders[m].denominator);
+                
+                if (currentBeat < cumulativeBeat + measureLength)
+                {
+                    measureIndex = m;
+                    measureStartBeat = cumulativeBeat;
+                    break;
+                }
+                cumulativeBeat += measureLength;
+                measureIndex = m;  // Falls wir am Ende sind
+                measureStartBeat = cumulativeBeat;
+            }
+            
+            // Position innerhalb des aktuellen Taktes (in Viertelnoten)
+            double beatInMeasure = currentBeat - measureStartBeat;
             
             // Iteriere über ALLE Tracks
             for (int trackIdx = 0; trackIdx < juce::jmin((int)tracks.size(), maxTracks); ++trackIdx)
@@ -256,9 +355,9 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                 if (beats.size() == 0)
                     continue;
                 
-                // Berechne welcher Beat gerade gespielt wird
-                double beatDuration = beatsPerMeasure / beats.size();
-                int beatIndex = static_cast<int>(beatInMeasure / beatDuration);
+                // Berechne welcher Beat gerade gespielt wird basierend auf tatsächlichen Dauern
+                double beatStartTime = 0.0;
+                int beatIndex = findBeatAtPosition(beats, beatInMeasure, beatStartTime);
                 beatIndex = juce::jlimit(0, (int)beats.size() - 1, beatIndex);
                 
                 // Nur neue Noten spielen wenn sich der Beat für diesen Track geändert hat
