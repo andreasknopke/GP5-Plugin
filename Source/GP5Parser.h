@@ -73,7 +73,9 @@ struct GP5Note
     bool hasVibrato = false;
     bool hasHammerOn = false;
     bool hasBend = false;
-    int bendValue = 0;
+    int bendValue = 0;        // Max bend value in 1/100 semitones (100 = 1/2 tone, 200 = full tone)
+    int bendType = 0;         // 0=none, 1=bend, 2=bend+release, 3=release, 4=pre-bend, 5=pre-bend+release
+    bool hasReleaseBend = false;
     bool hasSlide = false;
     int slideType = 0;
     bool hasHarmonic = false;

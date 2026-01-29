@@ -62,7 +62,9 @@ struct NoteEffects
     
     // Bending
     bool bend = false;
-    float bendValue = 0.0f;  // In Halbtönen
+    float bendValue = 0.0f;  // In Halbtönen (0.5 = 1/2, 1.0 = full, 2.0 = 2 Stufen)
+    int bendType = 0;        // 0=none, 1=bend, 2=bend+release, 3=release, 4=pre-bend, 5=pre-bend+release
+    bool releaseBend = false;
     
     // Harmonics
     HarmonicType harmonic = HarmonicType::None;
@@ -235,10 +237,12 @@ struct TabSong
 struct TabLayoutConfig
 {
     // Abstände
-    float stringSpacing = 12.0f;        // Abstand zwischen Saiten
-    float measurePadding = 10.0f;       // Padding am Taktanfang/-ende
-    float minBeatSpacing = 20.0f;       // Minimaler Abstand zwischen Beats
-    float baseNoteWidth = 25.0f;        // Basis-Breite für Notenwerte
+    float stringSpacing = 16.0f;        // Abstand zwischen Saiten
+    float measurePadding = 15.0f;       // Padding am Taktanfang/-ende (erhöht)
+    float minBeatSpacing = 35.0f;       // Minimaler Abstand zwischen Beats (erhöht)
+    float baseNoteWidth = 32.0f;        // Basis-Breite für Notenwerte (erhöht)
+    float topMargin = 40.0f;            // Platz oben für Bends, Vibrato, etc. (erhöht)
+    float bottomMargin = 45.0f;         // Platz unten für Rhythmik mit Beaming
     
     // Schrift
     float fretFontSize = 11.0f;         // Schriftgröße für Bundzahlen
@@ -259,6 +263,6 @@ struct TabLayoutConfig
     // Berechnet die Gesamthöhe für n Saiten
     float getTotalHeight(int stringCount) const
     {
-        return stringSpacing * (stringCount + 3); // Extra Platz für Rhythmik oben/unten
+        return topMargin + (stringCount - 1) * stringSpacing + bottomMargin;
     }
 };

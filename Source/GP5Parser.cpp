@@ -586,13 +586,36 @@ void GP5Parser::readNoteEffects(GP5Note& note)
         DBG("              -> reading bend");
         note.hasBend = true;
         // Read bend structure
-        readU8();  // type
-        readI32(); // value
+        note.bendType = readU8();  // type: 1=bend, 2=bend+release, 3=release, 4=pre-bend, 5=pre-bend+release
+        int maxBendValue = readI32(); // value in 1/100 semitones (100 = 1/2 tone, 200 = full tone)
+        note.bendValue = maxBendValue;
+        
+        // Release bend detection
+        if (note.bendType == 2 || note.bendType == 3 || note.bendType == 5)
+        {
+            note.hasReleaseBend = true;
+        }
+        
         int pointCount = readI32();
-        DBG("              -> bend pointCount=" << pointCount);
+        DBG("              -> bend type=" << note.bendType << " value=" << maxBendValue << " pointCount=" << pointCount);
+        
+        // Track max and final values from bend points
+        int finalValue = 0;
         for (int p = 0; p < pointCount; ++p)
         {
-            readI32(); readI32(); readU8();  // position, value, vibrato
+            readI32(); // position (0-60, 60 = full duration)
+            int pointValue = readI32(); // value in 1/100 semitones
+            readU8();  // vibrato
+            
+            if (pointValue > note.bendValue)
+                note.bendValue = pointValue;
+            finalValue = pointValue;
+        }
+        
+        // Wenn der finale Wert niedriger als der Max ist, ist es ein Release
+        if (finalValue < note.bendValue && finalValue < note.bendValue * 0.5)
+        {
+            note.hasReleaseBend = true;
         }
     }
     
@@ -856,6 +879,9 @@ TabTrack GP5Parser::convertToTabTrack(int trackIndex) const
     tabTrack.capo = gp5Track.capo;
     tabTrack.colour = gp5Track.colour;
     
+    // Tracker für letzten Fret pro Saite (für tied notes)
+    std::map<int, int> lastFretPerString;
+    
     // Convert each measure
     for (int m = 0; m < gp5Track.measures.size() && m < measureHeaders.size(); ++m)
     {
@@ -913,10 +939,25 @@ TabTrack GP5Parser::convertToTabTrack(int trackIndex) const
               for (const auto& [stringIndex, gp5Note] : gp5Beat.notes)
               {
                 TabNote tabNote;
-                tabNote.fret = gp5Note.fret;
                 tabNote.string = stringIndex;
                 tabNote.velocity = gp5Note.velocity;
                 tabNote.isTied = gp5Note.isTied;
+                
+                // Bei tied notes: Fret von der vorherigen Note auf dieser Saite übernehmen
+                if (gp5Note.isTied && lastFretPerString.count(stringIndex))
+                {
+                    tabNote.fret = lastFretPerString[stringIndex];
+                }
+                else
+                {
+                    tabNote.fret = gp5Note.fret;
+                }
+                
+                // Aktualisiere den letzten Fret für diese Saite
+                if (!gp5Note.isTied)
+                {
+                    lastFretPerString[stringIndex] = gp5Note.fret;
+                }
                 
                 // Effects
                 tabNote.effects.vibrato = gp5Note.hasVibrato;
@@ -926,7 +967,9 @@ TabTrack GP5Parser::convertToTabTrack(int trackIndex) const
                 tabNote.effects.heavyAccentuatedNote = gp5Note.hasHeavyAccent;
                 tabNote.effects.hammerOn = gp5Note.hasHammerOn;
                 tabNote.effects.bend = gp5Note.hasBend;
-                tabNote.effects.bendValue = gp5Note.bendValue;
+                tabNote.effects.bendValue = gp5Note.bendValue / 100.0f;  // Convert to semitones (100 = 0.5, 200 = 1.0)
+                tabNote.effects.bendType = gp5Note.bendType;
+                tabNote.effects.releaseBend = gp5Note.hasReleaseBend;
                 
                 if (gp5Note.hasSlide)
                     tabNote.effects.slideType = convertSlideType(gp5Note.slideType);

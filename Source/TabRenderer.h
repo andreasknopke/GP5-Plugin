@@ -43,8 +43,7 @@ public:
         this->bounds = bounds;
         
         const int stringCount = track.stringCount;
-        const float topMargin = 35.0f;  // Space for rhythm notation
-        const float firstStringY = bounds.getY() + topMargin;
+        const float firstStringY = bounds.getY() + config.topMargin;  // Verwende Config-Margin
         
         // Background
         g.setColour(config.backgroundColor);
@@ -111,6 +110,12 @@ public:
             // Get beat positions
             auto beatPositions = layoutEngine.calculateBeatPositions(measure, config);
             
+            // Calculate bottom of strings for rhythm notation position
+            float lastStringY = firstStringY + (stringCount - 1) * config.stringSpacing;
+            
+            // Draw rhythm notation with beaming ONCE per measure (outside beat loop)
+            drawRhythmNotationWithBeaming(g, measure, beatPositions, measureX, lastStringY + 15.0f);
+            
             // Draw beats
             for (int b = 0; b < measure.beats.size(); ++b)
             {
@@ -121,12 +126,6 @@ public:
                 float nextBeatX = measureEndX; // Default to end of measure
                 if (b + 1 < measure.beats.size() && b + 1 < beatPositions.size())
                     nextBeatX = measureX + beatPositions[b + 1];
-                
-                // Calculate bottom of strings for rhythm notation position
-                float lastStringY = firstStringY + (stringCount - 1) * config.stringSpacing;
-                
-                // Draw rhythm notation BELOW the staff
-                drawRhythmNotation(g, beat, beatX, lastStringY + 20.0f);
                 
                 // Draw beat text annotation (e.g., "Don't pick")
                 if (beat.text.isNotEmpty())
@@ -162,7 +161,18 @@ public:
                     }
                     
                     // Draw slurs (legato connections) - aber NICHT für Slides!
-                    drawSlurs(g, beat, beatX, firstStringY);
+                    // Prüfe ob die NÄCHSTE Note eine Tied-Note ist (für Haltebögen)
+                    if (b + 1 < measure.beats.size())
+                    {
+                        const auto& nextBeat = measure.beats[b + 1];
+                        drawSlurs(g, beat, nextBeat, beatX, nextBeatX, firstStringY);
+                    }
+                    else
+                    {
+                        // Kein nächster Beat - nur Hammer-on/Pull-off ohne Ziel zeichnen
+                        TabBeat emptyBeat;
+                        drawSlurs(g, beat, emptyBeat, beatX, nextBeatX, firstStringY);
+                    }
                     
                     // Draw slides to next beat
                     // Finde die nächste Note auf derselben Saite im nächsten Beat
@@ -278,6 +288,8 @@ private:
         juce::String fretText;
         if (note.effects.deadNote)
             fretText = "X";
+        else if (note.isTied)
+            fretText = "(" + juce::String(note.fret) + ")";  // Tied notes in Klammern
         else if (note.effects.ghostNote)
             fretText = "(" + juce::String(note.fret) + ")";
         else
@@ -459,50 +471,149 @@ private:
     {
         g.setColour(juce::Colours::black);
         
-        const float noteRadius = config.stringSpacing * 0.45f;
-        const float bendHeight = 20.0f;
-        const float bendWidth = 15.0f;
+        const float noteRadius = config.stringSpacing * 0.4f;
+        const float bendHeight = 26.0f;  // Höhe der Bend-Kurve
+        const float bendWidth = 16.0f;   // Horizontale Ausdehnung
         
-        // Draw curved bend arrow
-        juce::Path bendPath;
         float startX = x + noteRadius + 2.0f;
         float startY = y;
-        float endY = y - bendHeight;
+        float targetY = y - bendHeight;
+        float endX = startX + bendWidth;
         
-        bendPath.startNewSubPath(startX, startY);
-        bendPath.quadraticTo(startX + bendWidth * 0.3f, startY - bendHeight * 0.5f,
-                             startX + bendWidth * 0.5f, endY);
-        
-        g.strokePath(bendPath, juce::PathStrokeType(1.5f));
-        
-        // Draw arrowhead
-        juce::Path arrow;
-        float arrowX = startX + bendWidth * 0.5f;
-        float arrowY = endY;
-        arrow.startNewSubPath(arrowX - 3.0f, arrowY + 5.0f);
-        arrow.lineTo(arrowX, arrowY);
-        arrow.lineTo(arrowX + 3.0f, arrowY + 5.0f);
-        g.strokePath(arrow, juce::PathStrokeType(1.5f));
-        
-        // Draw bend value text (e.g., "full", "1/2")
+        // Bestimme Bend-Wert Text
         juce::String bendText;
-        float bendValue = note.effects.bendValue / 100.0f;  // GP5 stores as percentage of semitone
+        float bendValue = note.effects.bendValue;  // In Halbtönen
         
-        if (bendValue >= 0.9f && bendValue <= 1.1f)
+        if (bendValue >= 1.9f && bendValue <= 2.1f)
             bendText = "full";
-        else if (bendValue >= 0.45f && bendValue <= 0.55f)
-            bendText = juce::CharPointer_UTF8("\xC2\xBD");  // 1/2 symbol
-        else if (bendValue >= 0.2f && bendValue <= 0.3f)
-            bendText = juce::CharPointer_UTF8("\xC2\xBC");  // 1/4 symbol
-        else if (bendValue > 1.1f)
-            bendText = juce::String(bendValue, 1);
+        else if (bendValue >= 0.9f && bendValue <= 1.1f)
+            bendText = juce::CharPointer_UTF8("\xC2\xBD");  // ½
+        else if (bendValue >= 1.4f && bendValue <= 1.6f)
+            bendText = juce::CharPointer_UTF8("\xC2\xBE");  // ¾
+        else if (bendValue >= 0.4f && bendValue <= 0.6f)
+            bendText = juce::CharPointer_UTF8("\xC2\xBC");  // ¼
+        else if (bendValue >= 3.9f)
+            bendText = "2";
+        else if (bendValue > 2.1f && bendValue < 3.9f)
+            bendText = juce::String("1") + juce::String(juce::CharPointer_UTF8("\xC2\xBD"));
         else
-            bendText = juce::String(bendValue, 1);
+            bendText = juce::String(bendValue / 2.0f, 1);
         
-        g.setFont(9.0f);
-        g.drawText(bendText, 
-                   juce::Rectangle<float>(startX + bendWidth * 0.5f - 10.0f, endY - 12.0f, 20.0f, 10.0f),
-                   juce::Justification::centred, false);
+        bool isRelease = note.effects.releaseBend;
+        bool isBendRelease = (note.effects.bendType == 2 || note.effects.bendType == 5);
+        
+        float width = bendWidth;
+        float height = bendHeight;
+        
+        if (isBendRelease)
+        {
+            // Bend + Release: Erst hoch (Peitsche), dann runter (Haken)
+            float peakX = startX + width * 0.5f;
+            float releaseEndX = startX + width * 1.1f;
+            
+            // === BEND UP (Peitschenschlag) ===
+            // CP1: Weit rechts auf Starthöhe -> Kurve bleibt lange flach
+            // CP2: Fast direkt unter dem Ziel -> steiler Anstieg am Ende
+            juce::Path bendUp;
+            bendUp.startNewSubPath(startX, startY);
+            float cp1X = startX + (width * 0.5f * 0.7f);  // 70% der halben Breite
+            float cp1Y = startY;                          // Auf Starthöhe (horizontal)
+            float cp2X = peakX;                           // Direkt unter Ziel
+            float cp2Y = targetY + (height * 0.25f);      // Knapp unter Ziel
+            bendUp.cubicTo(cp1X, cp1Y, cp2X, cp2Y, peakX, targetY);
+            g.strokePath(bendUp, juce::PathStrokeType(1.5f));
+            
+            // Pfeilspitze oben (vertikal)
+            juce::Path arrowUp;
+            arrowUp.startNewSubPath(peakX - 3.0f, targetY + 5.0f);
+            arrowUp.lineTo(peakX, targetY);
+            arrowUp.lineTo(peakX + 3.0f, targetY + 5.0f);
+            g.strokePath(arrowUp, juce::PathStrokeType(1.5f));
+            
+            // === RELEASE (Haken) ===
+            float releaseWidth = releaseEndX - peakX;
+            juce::Path bendDown;
+            bendDown.startNewSubPath(peakX, targetY);
+            float cp1X_rel = peakX + (releaseWidth * 0.3f);
+            float cp1Y_rel = targetY;  // Horizontal starten
+            float cp2X_rel = releaseEndX - (releaseWidth * 0.2f);
+            float cp2Y_rel = startY - (height * 0.3f);
+            bendDown.cubicTo(cp1X_rel, cp1Y_rel, cp2X_rel, cp2Y_rel, releaseEndX, startY);
+            g.strokePath(bendDown, juce::PathStrokeType(1.5f));
+            
+            // Pfeilspitze unten
+            juce::Path arrowDown;
+            arrowDown.startNewSubPath(releaseEndX - 3.0f, startY - 5.0f);
+            arrowDown.lineTo(releaseEndX, startY);
+            arrowDown.lineTo(releaseEndX + 3.0f, startY - 5.0f);
+            g.strokePath(arrowDown, juce::PathStrokeType(1.5f));
+            
+            // Text zentriert über dem Peak
+            g.setFont(9.0f);
+            g.drawText(bendText, 
+                       juce::Rectangle<float>(peakX - 12.0f, targetY - 13.0f, 24.0f, 12.0f),
+                       juce::Justification::centred, false);
+        }
+        else if (isRelease)
+        {
+            // === NUR RELEASE (Haken von oben nach unten) ===
+            juce::Path releasePath;
+            releasePath.startNewSubPath(startX, targetY);  // Startet OBEN
+            
+            // CP1: Erst noch horizontal bleiben (der "Bogen")
+            float cp1X_rel = startX + (width * 0.3f);
+            float cp1Y_rel = targetY;  // Horizontal
+            // CP2: Weicher Einlauf zum Ziel
+            float cp2X_rel = endX - (width * 0.2f);
+            float cp2Y_rel = startY - (height * 0.4f);
+            
+            releasePath.cubicTo(cp1X_rel, cp1Y_rel, cp2X_rel, cp2Y_rel, endX, startY);
+            g.strokePath(releasePath, juce::PathStrokeType(1.5f));
+            
+            // Pfeilspitze unten
+            juce::Path arrow;
+            arrow.startNewSubPath(endX - 3.0f, startY - 5.0f);
+            arrow.lineTo(endX, startY);
+            arrow.lineTo(endX + 3.0f, startY - 5.0f);
+            g.strokePath(arrow, juce::PathStrokeType(1.5f));
+            
+            // Text über dem Startpunkt
+            g.setFont(9.0f);
+            g.drawText(bendText, 
+                       juce::Rectangle<float>(startX - 5.0f, targetY - 13.0f, 24.0f, 12.0f),
+                       juce::Justification::centred, false);
+        }
+        else
+        {
+            // === NORMALER BEND UP (Peitschenschlag) ===
+            // Die Kurve startet flach und schnellt am Ende steil nach oben
+            juce::Path bendPath;
+            bendPath.startNewSubPath(startX, startY);
+            
+            // CP1 (Start-Tangente): Weit rechts auf Starthöhe -> bleibt lange flach
+            float cp1X = startX + (width * 0.7f);
+            float cp1Y = startY;
+            
+            // CP2 (End-Tangente): Fast direkt unter dem Ziel -> steiler Anstieg
+            float cp2X = endX;
+            float cp2Y = targetY + (height * 0.25f);
+            
+            bendPath.cubicTo(cp1X, cp1Y, cp2X, cp2Y, endX, targetY);
+            g.strokePath(bendPath, juce::PathStrokeType(1.5f));
+            
+            // Pfeilspitze oben (zeigt senkrecht nach oben)
+            juce::Path arrow;
+            arrow.startNewSubPath(endX - 3.0f, targetY + 5.0f);
+            arrow.lineTo(endX, targetY);
+            arrow.lineTo(endX + 3.0f, targetY + 5.0f);
+            g.strokePath(arrow, juce::PathStrokeType(1.5f));
+            
+            // Text zentriert über dem Pfeil
+            g.setFont(9.0f);
+            g.drawText(bendText, 
+                       juce::Rectangle<float>(endX - 12.0f, targetY - 13.0f, 24.0f, 12.0f),
+                       juce::Justification::centred, false);
+        }
     }
     
     void drawBeatText(juce::Graphics& g, const juce::String& text, float x, float y)
@@ -538,7 +649,8 @@ private:
         }
     }
     
-    void drawSlurs(juce::Graphics& g, const TabBeat& beat, float beatX, float firstStringY)
+    void drawSlurs(juce::Graphics& g, const TabBeat& beat, const TabBeat& nextBeat, 
+                    float beatX, float nextBeatX, float firstStringY)
     {
         // WICHTIG: Keine Bögen zeichnen bei Pausen!
         if (beat.isRest)
@@ -551,23 +663,33 @@ private:
             float noteY = firstStringY + note.string * config.stringSpacing;
             float noteRadius = config.stringSpacing * 0.45f;
             
+            // Prüfe ob die nächste Note auf derselben Saite eine Tied-Note ist
+            bool nextIsTied = false;
+            for (const auto& nextNote : nextBeat.notes)
+            {
+                if (nextNote.string == note.string && nextNote.isTied)
+                {
+                    nextIsTied = true;
+                    break;
+                }
+            }
+            
             // NUR Bögen zeichnen wenn EXPLIZIT im GP5 definiert:
             // - Hammer-on (H)
             // - Pull-off (P)
-            // - Tied note (Haltebogen)
+            // - Tied note - ABER: Der Bogen geht VON dieser Note ZUR nächsten (tied) Note
             // NICHT für Slides - die haben eigene Symbole
             bool isHammerOn = note.effects.hammerOn;
             bool isPullOff = note.effects.pullOff;
-            bool isTied = note.isTied;
             
-            if (isHammerOn || isPullOff || isTied)
+            if (isHammerOn || isPullOff || nextIsTied)
             {
-                // Draw slur arc ABOVE the note
+                // Draw slur arc ABOVE the note - von dieser Note zur nächsten
                 juce::Path slur;
                 float slurStartX = beatX + noteRadius;
-                float slurEndX = beatX + noteRadius * 4;
+                float slurEndX = nextBeatX - noteRadius;  // Bis zur nächsten Beat-Position
                 float slurY = noteY - noteRadius - 3.0f;  // Above the note
-                float slurHeight = 4.0f;
+                float slurHeight = 6.0f;
                 
                 slur.startNewSubPath(slurStartX, slurY);
                 slur.quadraticTo((slurStartX + slurEndX) / 2, slurY - slurHeight, 
@@ -575,7 +697,7 @@ private:
                 
                 g.strokePath(slur, juce::PathStrokeType(1.0f));
                 
-                // Zeichne H oder P Kennzeichnung über dem Bogen
+                // Zeichne H oder P Kennzeichnung über dem Bogen (nicht für tied notes)
                 if (isHammerOn || isPullOff)
                 {
                     juce::String hpText = isHammerOn ? "H" : "P";
@@ -628,6 +750,172 @@ private:
         g.drawText(restSymbol, 
                    juce::Rectangle<float>(x - 10.0f, centerY - config.stringSpacing, 20.0f, config.stringSpacing * 2),
                    juce::Justification::centred, false);
+    }
+    
+    void drawRhythmNotationWithBeaming(juce::Graphics& g, const TabMeasure& measure,
+                                         const juce::Array<float>& beatPositions, 
+                                         float measureX, float y)
+    {
+        g.setColour(juce::Colours::black);
+        
+        const float stemHeight = 12.0f;
+        const float noteheadWidth = 6.0f;
+        const float beamThickness = 2.5f;
+        
+        // Gruppiere aufeinanderfolgende Achtel/Sechzehntel für Beaming
+        int beamStart = -1;
+        int beamEnd = -1;
+        NoteDuration beamDuration = NoteDuration::Quarter;
+        
+        for (int b = 0; b <= measure.beats.size(); ++b)
+        {
+            bool shouldBeam = false;
+            NoteDuration currentDuration = NoteDuration::Quarter;
+            
+            if (b < measure.beats.size())
+            {
+                const auto& beat = measure.beats[b];
+                currentDuration = beat.duration;
+                // Beam Achtel und kürzer, aber keine Pausen
+                shouldBeam = !beat.isRest && 
+                             (beat.duration == NoteDuration::Eighth || 
+                              beat.duration == NoteDuration::Sixteenth ||
+                              beat.duration == NoteDuration::ThirtySecond);
+            }
+            
+            if (shouldBeam)
+            {
+                if (beamStart < 0)
+                {
+                    beamStart = b;
+                    beamDuration = currentDuration;
+                }
+                beamEnd = b;
+            }
+            else
+            {
+                // Beam-Gruppe beenden und zeichnen
+                if (beamStart >= 0 && beamEnd > beamStart)
+                {
+                    // Zeichne verbundene Noten mit Balken
+                    float startX = measureX + beatPositions[beamStart];
+                    float endX = measureX + beatPositions[beamEnd];
+                    
+                    // Zeichne alle Stems in der Gruppe
+                    for (int i = beamStart; i <= beamEnd; ++i)
+                    {
+                        float x = measureX + beatPositions[i];
+                        const auto& beat = measure.beats[i];
+                        
+                        // Stem nach unten
+                        g.drawLine(x, y, x, y + stemHeight, 1.5f);
+                        
+                        // Notenkopf
+                        g.fillEllipse(x - noteheadWidth/2, y - 3.0f, noteheadWidth, 5.0f);
+                        
+                        // Dot für gepunktete Noten
+                        if (beat.isDotted)
+                            g.fillEllipse(x + noteheadWidth/2 + 2.0f, y - 1.0f, 3.0f, 3.0f);
+                    }
+                    
+                    // Zeichne Hauptbalken (für Achtel)
+                    float beamY = y + stemHeight;
+                    g.fillRect(startX, beamY - beamThickness/2, endX - startX, beamThickness);
+                    
+                    // Zeichne zweiten Balken für Sechzehntel
+                    for (int i = beamStart; i <= beamEnd; ++i)
+                    {
+                        const auto& beat = measure.beats[i];
+                        if (beat.duration >= NoteDuration::Sixteenth)
+                        {
+                            float x = measureX + beatPositions[i];
+                            float nextX = (i < beamEnd) ? measureX + beatPositions[i + 1] : x + 8.0f;
+                            
+                            // Kurzer Balken wenn nur diese Note Sechzehntel ist
+                            bool nextIsSixteenth = (i + 1 <= beamEnd && 
+                                                    measure.beats[i + 1].duration >= NoteDuration::Sixteenth);
+                            
+                            if (nextIsSixteenth)
+                                g.fillRect(x, beamY + 3.0f, nextX - x, beamThickness);
+                            else
+                                g.fillRect(x - 4.0f, beamY + 3.0f, 8.0f, beamThickness);
+                        }
+                    }
+                }
+                else if (beamStart >= 0)
+                {
+                    // Einzelne Note (kein Beaming möglich) - mit Fähnchen zeichnen
+                    float x = measureX + beatPositions[beamStart];
+                    const auto& beat = measure.beats[beamStart];
+                    drawSingleRhythmNote(g, beat, x, y);
+                }
+                
+                // Reset beam tracking
+                beamStart = -1;
+                beamEnd = -1;
+                
+                // Zeichne aktuelle Note (wenn keine Beam-Gruppe)
+                if (b < measure.beats.size())
+                {
+                    const auto& beat = measure.beats[b];
+                    float x = measureX + beatPositions[b];
+                    
+                    if (beat.isRest)
+                    {
+                        // Pausen nicht zeichnen (werden woanders gezeichnet)
+                    }
+                    else if (beat.duration < NoteDuration::Eighth)
+                    {
+                        // Viertel, Halbe, Ganze
+                        drawSingleRhythmNote(g, beat, x, y);
+                    }
+                }
+            }
+        }
+    }
+    
+    void drawSingleRhythmNote(juce::Graphics& g, const TabBeat& beat, float x, float y)
+    {
+        const float stemHeight = 12.0f;
+        const float noteheadWidth = 6.0f;
+        
+        if (beat.isRest)
+            return;
+        
+        // Draw stem (außer für Ganze Noten)
+        if (beat.duration != NoteDuration::Whole)
+            g.drawLine(x, y, x, y + stemHeight, 1.5f);
+        
+        // Draw notehead
+        bool filled = (beat.duration >= NoteDuration::Quarter);
+        if (filled)
+            g.fillEllipse(x - noteheadWidth/2, y - 3.0f, noteheadWidth, 5.0f);
+        else
+            g.drawEllipse(x - noteheadWidth/2, y - 3.0f, noteheadWidth, 5.0f, 1.0f);
+        
+        // Draw flags for eighth notes and shorter (nur für einzelne Noten)
+        if (beat.duration >= NoteDuration::Eighth)
+        {
+            int flagCount = 0;
+            if (beat.duration == NoteDuration::Eighth) flagCount = 1;
+            else if (beat.duration == NoteDuration::Sixteenth) flagCount = 2;
+            else if (beat.duration == NoteDuration::ThirtySecond) flagCount = 3;
+            
+            for (int f = 0; f < flagCount; ++f)
+            {
+                float flagY = y + stemHeight - f * 3.0f;
+                juce::Path flag;
+                flag.startNewSubPath(x, flagY);
+                flag.quadraticTo(x + 4.0f, flagY + 3.0f, x + 6.0f, flagY + 6.0f);
+                g.strokePath(flag, juce::PathStrokeType(1.5f));
+            }
+        }
+        
+        // Draw dot for dotted notes
+        if (beat.isDotted)
+        {
+            g.fillEllipse(x + noteheadWidth/2 + 2.0f, y - 1.0f, 3.0f, 3.0f);
+        }
     }
     
     void drawRhythmNotation(juce::Graphics& g, const TabBeat& beat, float x, float y)
