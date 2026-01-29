@@ -14,6 +14,7 @@
 #include <set>
 #include <map>
 #include <vector>
+#include <utility>
 
 //==============================================================================
 /**
@@ -83,6 +84,15 @@ public:
     
     // Position innerhalb des aktuellen Taktes (0.0 = Anfang, 1.0 = Ende)
     double getPositionInCurrentMeasure() const;
+    
+    // GP5 Taktart für einen bestimmten Takt (0-basiert)
+    std::pair<int, int> getGP5TimeSignature(int measureIndex) const;
+    
+    // GP5 Tempo aus dem Song
+    int getGP5Tempo() const;
+    
+    // Prüft ob DAW-Taktart mit GP5-Taktart übereinstimmt
+    bool isTimeSignatureMatching() const;
     
     //==============================================================================
     // Track Selection for MIDI Output

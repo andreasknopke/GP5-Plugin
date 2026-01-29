@@ -265,14 +265,20 @@ void NewProjectAudioProcessorEditor::updateTransportDisplay()
 {
     bool isPlaying = audioProcessor.isHostPlaying();
     double tempo = audioProcessor.getHostTempo();
-    double posBeats = audioProcessor.getHostPositionInBeats();
-    int timeSigNum = audioProcessor.getHostTimeSignatureNumerator();
-    int timeSigDen = audioProcessor.getHostTimeSignatureDenominator();
+    int dawTimeSigNum = audioProcessor.getHostTimeSignatureNumerator();
+    int dawTimeSigDen = audioProcessor.getHostTimeSignatureDenominator();
     
-    // Berechne Takt und Beat basierend auf PPQ-Position
-    double beatsPerMeasure = timeSigNum * (4.0 / timeSigDen);
-    int currentMeasure = static_cast<int>(posBeats / beatsPerMeasure) + 1;  // 1-basiert für Anzeige
-    int beatInMeasure = static_cast<int>(fmod(posBeats, beatsPerMeasure)) + 1;
+    // Hole GP5-basierte Position (synchronisiert mit MIDI-Ausgabe)
+    int currentMeasure = audioProcessor.getCurrentMeasureIndex() + 1;  // 1-basiert für Anzeige
+    double posInMeasure = audioProcessor.getPositionInCurrentMeasure();
+    
+    // Hole GP5-Taktart für aktuellen Takt
+    auto [gp5Num, gp5Den] = audioProcessor.getGP5TimeSignature(currentMeasure - 1);
+    int gp5Tempo = audioProcessor.getGP5Tempo();
+    
+    // Berechne Beat innerhalb des Taktes (1-basiert)
+    int beatInMeasure = static_cast<int>(posInMeasure * gp5Num) + 1;
+    beatInMeasure = juce::jlimit(1, gp5Num, beatInMeasure);
     
     juce::String statusText;
     
@@ -288,8 +294,14 @@ void NewProjectAudioProcessorEditor::updateTransportDisplay()
     }
     
     statusText += "Bar " + juce::String(currentMeasure) + "." + juce::String(beatInMeasure);
-    statusText += " | " + juce::String(tempo, 1) + " BPM";
-    statusText += " | " + juce::String(timeSigNum) + "/" + juce::String(timeSigDen);
+    statusText += " | DAW: " + juce::String(tempo, 1) + " BPM " + juce::String(dawTimeSigNum) + "/" + juce::String(dawTimeSigDen);
+    statusText += " | GP5: " + juce::String(gp5Tempo) + " BPM " + juce::String(gp5Num) + "/" + juce::String(gp5Den);
+    
+    // Warnung bei Taktart-Mismatch
+    if (!audioProcessor.isTimeSignatureMatching())
+    {
+        statusText += " " + juce::String::charToString(0x26A0);  // Warning-Symbol
+    }
     
     transportLabel.setText(statusText, juce::dontSendNotification);
 }

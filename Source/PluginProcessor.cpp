@@ -611,35 +611,93 @@ int NewProjectAudioProcessor::getCurrentMeasureIndex() const
     
     double positionInBeats = hostPositionBeats.load();
     
-    // Einfache Berechnung basierend auf der aktuellen DAW-Taktart
-    // Die meisten DAWs verwenden PPQ (Pulses Per Quarter note)
-    // Bei 4/4: 4 Beats pro Takt, bei 3/4: 3 Beats pro Takt
-    int timeSigNum = hostTimeSigNumerator.load();
-    int timeSigDen = hostTimeSigDenominator.load();
+    // Verwende GP5-Taktstruktur für konsistente Anzeige mit MIDI-Ausgabe
+    const auto& measureHeaders = gp5Parser.getMeasureHeaders();
     
-    // Beats pro Takt = Zähler * (4 / Nenner)
-    double beatsPerMeasure = timeSigNum * (4.0 / timeSigDen);
+    if (measureHeaders.isEmpty())
+        return 0;
     
-    // Takt-Index berechnen (0-basiert)
-    int measureIndex = static_cast<int>(positionInBeats / beatsPerMeasure);
+    // Iteriere durch alle Takte und finde den aktuellen basierend auf kumulativen Beats
+    double cumulativeBeat = 0.0;
     
-    // Begrenzen auf gültige Takte
-    int maxMeasure = gp5Parser.getMeasureCount() - 1;
-    return juce::jlimit(0, juce::jmax(0, maxMeasure), measureIndex);
+    for (int m = 0; m < (int)measureHeaders.size(); ++m)
+    {
+        // Taktlänge in Viertelnoten: numerator * (4.0 / denominator)
+        double measureLength = measureHeaders[m].numerator * (4.0 / measureHeaders[m].denominator);
+        
+        if (positionInBeats < cumulativeBeat + measureLength)
+        {
+            return m;
+        }
+        cumulativeBeat += measureLength;
+    }
+    
+    // Falls wir am Ende sind, letzten Takt zurückgeben
+    return juce::jmax(0, (int)measureHeaders.size() - 1);
 }
 
 double NewProjectAudioProcessor::getPositionInCurrentMeasure() const
 {
+    if (!fileLoaded)
+        return 0.0;
+    
     double positionInBeats = hostPositionBeats.load();
-    int timeSigNum = hostTimeSigNumerator.load();
-    int timeSigDen = hostTimeSigDenominator.load();
     
-    // Beats pro Takt
-    double beatsPerMeasure = timeSigNum * (4.0 / timeSigDen);
+    // Verwende GP5-Taktstruktur für konsistente Anzeige
+    const auto& measureHeaders = gp5Parser.getMeasureHeaders();
     
-    // Position innerhalb des Taktes (0.0 - 1.0)
-    double posInMeasure = fmod(positionInBeats, beatsPerMeasure) / beatsPerMeasure;
-    return juce::jlimit(0.0, 1.0, posInMeasure);
+    if (measureHeaders.isEmpty())
+        return 0.0;
+    
+    // Finde den aktuellen Takt und berechne Position darin
+    double cumulativeBeat = 0.0;
+    
+    for (int m = 0; m < (int)measureHeaders.size(); ++m)
+    {
+        double measureLength = measureHeaders[m].numerator * (4.0 / measureHeaders[m].denominator);
+        
+        if (positionInBeats < cumulativeBeat + measureLength)
+        {
+            // Position innerhalb dieses Taktes (0.0 - 1.0)
+            double beatInMeasure = positionInBeats - cumulativeBeat;
+            return juce::jlimit(0.0, 1.0, beatInMeasure / measureLength);
+        }
+        cumulativeBeat += measureLength;
+    }
+    
+    return 1.0;  // Am Ende
+}
+
+std::pair<int, int> NewProjectAudioProcessor::getGP5TimeSignature(int measureIndex) const
+{
+    const auto& measureHeaders = gp5Parser.getMeasureHeaders();
+    
+    if (measureIndex >= 0 && measureIndex < (int)measureHeaders.size())
+    {
+        return { measureHeaders[measureIndex].numerator, measureHeaders[measureIndex].denominator };
+    }
+    
+    // Default: 4/4
+    return { 4, 4 };
+}
+
+int NewProjectAudioProcessor::getGP5Tempo() const
+{
+    return gp5Parser.getSongInfo().tempo;
+}
+
+bool NewProjectAudioProcessor::isTimeSignatureMatching() const
+{
+    if (!fileLoaded)
+        return true;
+    
+    int currentMeasure = getCurrentMeasureIndex();
+    auto [gp5Num, gp5Den] = getGP5TimeSignature(currentMeasure);
+    
+    int dawNum = hostTimeSigNumerator.load();
+    int dawDen = hostTimeSigDenominator.load();
+    
+    return (gp5Num == dawNum && gp5Den == dawDen);
 }
 
 //==============================================================================
