@@ -875,9 +875,11 @@ TabTrack GP5Parser::convertToTabTrack(int trackIndex) const
                                             gp5Beat.tupletN - 1;
             }
             
-            // Convert notes
-            for (const auto& [stringIndex, gp5Note] : gp5Beat.notes)
+            // Convert notes - aber NICHT wenn es eine Pause ist!
+            if (!gp5Beat.isRest)
             {
+              for (const auto& [stringIndex, gp5Note] : gp5Beat.notes)
+              {
                 TabNote tabNote;
                 tabNote.fret = gp5Note.fret;
                 tabNote.string = stringIndex;
@@ -901,7 +903,8 @@ TabTrack GP5Parser::convertToTabTrack(int trackIndex) const
                     tabNote.effects.harmonic = static_cast<HarmonicType>(gp5Note.harmonicType);
                 
                 tabBeat.notes.add(tabNote);
-            }
+              }
+            } // Ende if (!gp5Beat.isRest)
             
             tabMeasure.beats.add(tabBeat);
         }

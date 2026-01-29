@@ -134,12 +134,13 @@ public:
                     drawBeatText(g, beat.text, beatX, firstStringY - 25.0f);
                 }
                 
-                // Draw notes or rest
+                // Draw notes or rest - NIEMALS beides!
                 if (beat.isRest)
                 {
+                    // Bei Pausen: NUR Pausensymbol zeichnen, KEINE Noten!
                     drawRest(g, beat, beatX, firstStringY, stringCount);
                 }
-                else
+                else if (!beat.notes.isEmpty())  // Nur zeichnen wenn Noten vorhanden
                 {
                     // Draw each note
                     for (const auto& note : beat.notes)
@@ -154,8 +155,94 @@ public:
                         }
                     }
                     
-                    // Draw slurs (legato connections)
+                    // Draw slurs (legato connections) - aber NICHT für Slides!
                     drawSlurs(g, beat, beatX, firstStringY);
+                    
+                    // Draw slides to next beat
+                    // Finde die nächste Note auf derselben Saite im nächsten Beat
+                    if (b + 1 < measure.beats.size())
+                    {
+                        const auto& nextBeat = measure.beats[b + 1];
+                        if (!nextBeat.isRest)
+                        {
+                            for (const auto& note : beat.notes)
+                            {
+                                if (note.effects.slideType == SlideType::ShiftSlide ||
+                                    note.effects.slideType == SlideType::LegatoSlide)
+                                {
+                                    // Finde die Zielnote im nächsten Beat
+                                    for (const auto& nextNote : nextBeat.notes)
+                                    {
+                                        // Slide geht typischerweise zur gleichen Saite
+                                        if (nextNote.string == note.string)
+                                        {
+                                            float noteY = firstStringY + note.string * config.stringSpacing;
+                                            float nextNoteY = firstStringY + nextNote.string * config.stringSpacing;
+                                            drawSlideLine(g, beatX, nextBeatX, noteY, nextNoteY,
+                                                         note.effects.slideType, note.fret, nextNote.fret);
+                                            break;
+                                        }
+                                    }
+                                    // Wenn keine Note auf derselben Saite, nimm die erste Note
+                                    if (!nextBeat.notes.isEmpty())
+                                    {
+                                        bool foundOnSameString = false;
+                                        for (const auto& nextNote : nextBeat.notes)
+                                        {
+                                            if (nextNote.string == note.string)
+                                            {
+                                                foundOnSameString = true;
+                                                break;
+                                            }
+                                        }
+                                        if (!foundOnSameString)
+                                        {
+                                            // Slide zur ersten Note des nächsten Beats
+                                            const auto& nextNote = nextBeat.notes[0];
+                                            float noteY = firstStringY + note.string * config.stringSpacing;
+                                            float nextNoteY = firstStringY + nextNote.string * config.stringSpacing;
+                                            drawSlideLine(g, beatX, nextBeatX, noteY, nextNoteY,
+                                                         note.effects.slideType, note.fret, nextNote.fret);
+                                        }
+                                    }
+                                }
+                                else if (note.effects.slideType == SlideType::SlideIntoFromBelow ||
+                                         note.effects.slideType == SlideType::SlideIntoFromAbove)
+                                {
+                                    float noteY = firstStringY + note.string * config.stringSpacing;
+                                    drawSlideInto(g, beatX, noteY, note.effects.slideType);
+                                }
+                                else if (note.effects.slideType == SlideType::SlideOutDownwards ||
+                                         note.effects.slideType == SlideType::SlideOutUpwards)
+                                {
+                                    float noteY = firstStringY + note.string * config.stringSpacing;
+                                    drawSlideOut(g, beatX, noteY, note.effects.slideType);
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Letzter Beat im Takt - zeichne Slides ohne Zielnote
+                        for (const auto& note : beat.notes)
+                        {
+                            float noteY = firstStringY + note.string * config.stringSpacing;
+                            
+                            if (note.effects.slideType == SlideType::SlideIntoFromBelow ||
+                                note.effects.slideType == SlideType::SlideIntoFromAbove)
+                            {
+                                drawSlideInto(g, beatX, noteY, note.effects.slideType);
+                            }
+                            else if (note.effects.slideType == SlideType::SlideOutDownwards ||
+                                     note.effects.slideType == SlideType::SlideOutUpwards ||
+                                     note.effects.slideType == SlideType::ShiftSlide ||
+                                     note.effects.slideType == SlideType::LegatoSlide)
+                            {
+                                // Slide nach rechts ohne definiertes Ziel
+                                drawSlideOut(g, beatX, noteY, SlideType::SlideOutUpwards);
+                            }
+                        }
+                    }
                 }
             }
             
@@ -216,11 +303,7 @@ private:
             drawVibrato(g, x, vibratoY, vibratoWidth);
         }
         
-        // Draw slide
-        if (note.effects.slideType != SlideType::None)
-        {
-            drawSlide(g, note, x, y, noteRadius);
-        }
+        // Slides werden separat in drawSlides() gezeichnet, nicht hier
     }
     
     void drawVibrato(juce::Graphics& g, float startX, float y, float width)
@@ -243,25 +326,117 @@ private:
     
     void drawSlide(juce::Graphics& g, const TabNote& note, float x, float y, float radius)
     {
+        // Diese Funktion wird nicht mehr verwendet - Slides werden in drawSlides() gezeichnet
+        juce::ignoreUnused(g, note, x, y, radius);
+    }
+    
+    /**
+     * Zeichnet Slides zwischen der aktuellen Note und der nächsten Note.
+     * Wird für jede Note aufgerufen die einen Slide zur nächsten Note hat.
+     * 
+     * @param fromX X-Position der Startnote
+     * @param toX X-Position der Zielnote  
+     * @param fromY Y-Position der Startnote (auf der Saite)
+     * @param toY Y-Position der Zielnote (kann gleiche oder andere Saite sein)
+     * @param slideType Art des Slides (Shift, Legato, etc.)
+     * @param fromFret Bund der Startnote (für Richtungsbestimmung)
+     * @param toFret Bund der Zielnote (für Richtungsbestimmung)
+     */
+    void drawSlideLine(juce::Graphics& g, float fromX, float toX, float fromY, float toY,
+                       SlideType slideType, int fromFret, int toFret)
+    {
         g.setColour(config.slideColour);
         
-        float lineLength = radius * 2.5f;
+        const float noteRadius = config.stringSpacing * 0.45f;
         
-        if (note.effects.slideType == SlideType::ShiftSlide || 
-            note.effects.slideType == SlideType::LegatoSlide)
+        // Start- und Endpunkte der Slide-Linie
+        // Die Linie beginnt rechts von der ersten Note und endet links von der zweiten
+        float startX = fromX + noteRadius + 2.0f;
+        float endX = toX - noteRadius - 2.0f;
+        
+        // Y-Offset für die schräge Linie
+        float yOffset = noteRadius * 0.5f;
+        float startY = fromY;
+        float endY = toY;
+        
+        // Slide-Richtung basierend auf Bundnummern:
+        // - Upslide (zu höherem Bund): Linie geht von UNTEN nach OBEN
+        // - Downslide (zu niedrigerem Bund): Linie geht von OBEN nach UNTEN
+        if (toFret > fromFret)
         {
-            // Slide to next note (diagonal line to the right)
-            g.drawLine(x + radius, y, x + lineLength, y - radius * 0.7f, 1.5f);
+            // Upslide: Start unten, Ende oben
+            startY = fromY + yOffset;
+            endY = toY - yOffset;
         }
-        else if (note.effects.slideType == SlideType::SlideIntoFromBelow)
+        else if (toFret < fromFret)
         {
-            // Slide in from below
-            g.drawLine(x - lineLength, y + radius * 0.7f, x - radius, y, 1.5f);
+            // Downslide: Start oben, Ende unten
+            startY = fromY - yOffset;
+            endY = toY + yOffset;
         }
-        else if (note.effects.slideType == SlideType::SlideIntoFromAbove)
+        // Bei gleichem Bund: horizontale Linie (selten, aber möglich)
+        
+        // Zeichne die diagonale Slide-Linie
+        g.drawLine(startX, startY, endX, endY, 1.5f);
+        
+        // Bei Legato-Slide: zusätzlich einen Bogen zeichnen
+        if (slideType == SlideType::LegatoSlide)
         {
-            // Slide in from above
-            g.drawLine(x - lineLength, y - radius * 0.7f, x - radius, y, 1.5f);
+            juce::Path slur;
+            float midX = (startX + endX) / 2.0f;
+            float slurY = juce::jmin(fromY, toY) - noteRadius - 5.0f;  // Über den Noten
+            float slurHeight = 6.0f;
+            
+            slur.startNewSubPath(fromX + noteRadius, fromY - noteRadius - 2.0f);
+            slur.quadraticTo(midX, slurY - slurHeight, toX - noteRadius, toY - noteRadius - 2.0f);
+            
+            g.strokePath(slur, juce::PathStrokeType(1.0f));
+        }
+    }
+    
+    /**
+     * Zeichnet Slide-Into Effekte (von außerhalb kommend)
+     */
+    void drawSlideInto(juce::Graphics& g, float x, float y, SlideType slideType)
+    {
+        g.setColour(config.slideColour);
+        
+        const float noteRadius = config.stringSpacing * 0.45f;
+        float lineLength = noteRadius * 2.0f;
+        float yOffset = noteRadius * 0.5f;
+        
+        if (slideType == SlideType::SlideIntoFromBelow)
+        {
+            // Diagonale Linie von unten-links nach oben-rechts zur Note
+            g.drawLine(x - lineLength, y + yOffset, x - noteRadius - 2.0f, y - yOffset * 0.3f, 1.5f);
+        }
+        else if (slideType == SlideType::SlideIntoFromAbove)
+        {
+            // Diagonale Linie von oben-links nach unten-rechts zur Note
+            g.drawLine(x - lineLength, y - yOffset, x - noteRadius - 2.0f, y + yOffset * 0.3f, 1.5f);
+        }
+    }
+    
+    /**
+     * Zeichnet Slide-Out Effekte (nach außen gehend)
+     */
+    void drawSlideOut(juce::Graphics& g, float x, float y, SlideType slideType)
+    {
+        g.setColour(config.slideColour);
+        
+        const float noteRadius = config.stringSpacing * 0.45f;
+        float lineLength = noteRadius * 2.0f;
+        float yOffset = noteRadius * 0.5f;
+        
+        if (slideType == SlideType::SlideOutDownwards)
+        {
+            // Diagonale Linie von der Note nach unten-rechts
+            g.drawLine(x + noteRadius + 2.0f, y + yOffset * 0.3f, x + lineLength + noteRadius, y + yOffset, 1.5f);
+        }
+        else if (slideType == SlideType::SlideOutUpwards)
+        {
+            // Diagonale Linie von der Note nach oben-rechts
+            g.drawLine(x + noteRadius + 2.0f, y - yOffset * 0.3f, x + lineLength + noteRadius, y - yOffset, 1.5f);
         }
     }
     
@@ -326,6 +501,10 @@ private:
     
     void drawSlurs(juce::Graphics& g, const TabBeat& beat, float beatX, float firstStringY)
     {
+        // WICHTIG: Keine Bögen zeichnen bei Pausen!
+        if (beat.isRest)
+            return;
+        
         g.setColour(juce::Colours::black);
         
         for (const auto& note : beat.notes)
@@ -333,11 +512,16 @@ private:
             float noteY = firstStringY + note.string * config.stringSpacing;
             float noteRadius = config.stringSpacing * 0.45f;
             
-            // Hammer-on / Pull-off / Legato Slide: draw arc above the note
-            if (note.effects.hammerOn || 
-                note.effects.slideType == SlideType::LegatoSlide ||
-                note.effects.slideType == SlideType::ShiftSlide ||
-                note.isTied)
+            // NUR Bögen zeichnen wenn EXPLIZIT im GP5 definiert:
+            // - Hammer-on (H)
+            // - Pull-off (P)
+            // - Tied note (Haltebogen)
+            // NICHT für Slides - die haben eigene Symbole
+            bool isHammerOn = note.effects.hammerOn;
+            bool isPullOff = note.effects.pullOff;
+            bool isTied = note.isTied;
+            
+            if (isHammerOn || isPullOff || isTied)
             {
                 // Draw slur arc ABOVE the note
                 juce::Path slur;
@@ -351,6 +535,19 @@ private:
                                  slurEndX, slurY);
                 
                 g.strokePath(slur, juce::PathStrokeType(1.0f));
+                
+                // Zeichne H oder P Kennzeichnung über dem Bogen
+                if (isHammerOn || isPullOff)
+                {
+                    juce::String hpText = isHammerOn ? "H" : "P";
+                    float textX = (slurStartX + slurEndX) / 2.0f;
+                    float textY = slurY - slurHeight - 10.0f;  // Über dem Bogen
+                    
+                    g.setFont(9.0f);
+                    g.drawText(hpText,
+                               juce::Rectangle<float>(textX - 5.0f, textY, 10.0f, 10.0f),
+                               juce::Justification::centred, false);
+                }
             }
         }
     }
