@@ -183,12 +183,36 @@ void NewProjectAudioProcessorEditor::refreshFromProcessor()
     // Track-Auswahl aktualisieren
     updateTrackSelector();
     
-    // Ersten Track laden, wenn vorhanden
+    // Bestimme welchen Track wir anzeigen sollen:
+    // 1. Aktuell ausgewählter Track im Processor (wenn Editor geschlossen/geöffnet wurde)
+    // 2. Gespeicherter Track aus dem State (wenn Projekt neu geladen wurde)
+    // 3. Erster Track (Fallback)
+    int trackToSelect = audioProcessor.getSelectedTrack();
+    
+    // Prüfe ob gespeicherter Track vorhanden (nach setStateInformation)
+    int savedTrack = audioProcessor.getSavedSelectedTrack();
+    if (savedTrack >= 0 && savedTrack < gp5Parser.getTrackCount())
+    {
+        trackToSelect = savedTrack;
+        audioProcessor.clearSavedSelectedTrack();  // Mark as consumed
+        DBG("Using saved track from state: " << savedTrack);
+    }
+    
+    // Validiere den Track-Index
+    if (trackToSelect < 0 || trackToSelect >= gp5Parser.getTrackCount())
+    {
+        trackToSelect = 0;  // Fallback auf ersten Track
+    }
+    
     if (gp5Parser.getTrackCount() > 0)
     {
-        trackSelector.setSelectedId(1, juce::dontSendNotification);
+        trackSelector.setSelectedId(trackToSelect + 1, juce::dontSendNotification);
         trackSelectionChanged();
+        DBG("Selected track: " << trackToSelect);
     }
+    
+    // Auto-Scroll Status wiederherstellen
+    autoScrollButton.setToggleState(audioProcessor.isAutoScrollEnabled(), juce::dontSendNotification);
 }
 
 void NewProjectAudioProcessorEditor::updateTrackSelector()
@@ -249,16 +273,37 @@ void NewProjectAudioProcessorEditor::timerCallback()
     // Aktuellen Takt und Position immer aktualisieren (auch wenn gestoppt)
     int currentMeasure = audioProcessor.getCurrentMeasureIndex();
     double positionInMeasure = audioProcessor.getPositionInCurrentMeasure();
+    double currentPositionInBeats = audioProcessor.getHostPositionInBeats();
+    bool isPlaying = audioProcessor.isHostPlaying();
     
     // Playhead-Position immer aktualisieren (für flüssige Bewegung)
     tabView.setPlayheadPosition(positionInMeasure);
     tabView.setCurrentMeasure(currentMeasure);
     
-    // Auto-Scroll nur wenn aktiviert UND DAW spielt
-    if (autoScrollButton.getToggleState() && audioProcessor.isHostPlaying())
+    // Auto-Scroll Status mit Processor synchronisieren
+    audioProcessor.setAutoScrollEnabled(autoScrollButton.getToggleState());
+    
+    // Erkennen von manuellen Positionssprüngen (auch wenn gestoppt)
+    bool positionJumped = false;
+    if (std::abs(currentPositionInBeats - lastPositionInBeats) > 0.5)
     {
-        tabView.scrollToMeasure(currentMeasure);
+        positionJumped = true;
     }
+    
+    // Auto-Scroll wenn:
+    // 1. Aktiviert UND DAW spielt, ODER
+    // 2. Aktiviert UND Position wurde manuell geändert (Sprung erkannt)
+    if (autoScrollButton.getToggleState())
+    {
+        if (isPlaying || positionJumped)
+        {
+            tabView.scrollToMeasure(currentMeasure);
+        }
+    }
+    
+    // Update tracking variables
+    lastPositionInBeats = currentPositionInBeats;
+    wasPlaying = isPlaying;
 }
 
 void NewProjectAudioProcessorEditor::updateTransportDisplay()

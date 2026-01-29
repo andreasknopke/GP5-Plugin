@@ -241,7 +241,7 @@ struct TabLayoutConfig
     float measurePadding = 15.0f;       // Padding am Taktanfang/-ende (erhöht)
     float minBeatSpacing = 35.0f;       // Minimaler Abstand zwischen Beats (erhöht)
     float baseNoteWidth = 32.0f;        // Basis-Breite für Notenwerte (erhöht)
-    float topMargin = 40.0f;            // Platz oben für Bends, Vibrato, etc. (erhöht)
+    float topMargin = 50.0f;            // Platz oben für Bends, Vibrato, etc. (erhöht)
     float bottomMargin = 45.0f;         // Platz unten für Rhythmik mit Beaming
     
     // Schrift

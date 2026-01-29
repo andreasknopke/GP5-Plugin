@@ -523,9 +523,11 @@ juce::AudioProcessorEditor* NewProjectAudioProcessor::createEditor()
 //==============================================================================
 void NewProjectAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    // Speichere den Dateipfad der geladenen GP5-Datei
+    // Speichere den Dateipfad der geladenen GP5-Datei und UI-Zustand
     juce::ValueTree state ("GP5PluginState");
     state.setProperty ("filePath", loadedFilePath, nullptr);
+    state.setProperty ("selectedTrack", selectedTrackIndex.load(), nullptr);
+    state.setProperty ("autoScroll", autoScrollEnabled.load(), nullptr);
     
     juce::MemoryOutputStream stream (destData, false);
     state.writeToStream (stream);
@@ -548,6 +550,10 @@ void NewProjectAudioProcessor::setStateInformation (const void* data, int sizeIn
                 loadGP5File (file);
             }
         }
+        
+        // Lade UI-Zustand
+        savedSelectedTrack = state.getProperty ("selectedTrack", 0);
+        autoScrollEnabled.store(state.getProperty ("autoScroll", true));
     }
 }
 

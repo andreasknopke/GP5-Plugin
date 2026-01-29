@@ -156,7 +156,7 @@ public:
                         // Draw bend symbol if note has bend
                         if (note.effects.bend)
                         {
-                            drawBend(g, note, beatX, noteY);
+                            drawBend(g, note, beatX, noteY, nextBeatX, firstStringY);
                         }
                     }
                     
@@ -467,18 +467,22 @@ private:
         }
     }
     
-    void drawBend(juce::Graphics& g, const TabNote& note, float x, float y)
+    void drawBend(juce::Graphics& g, const TabNote& note, float x, float y, float nextBeatX, float firstStringY)
     {
         g.setColour(juce::Colours::black);
         
         const float noteRadius = config.stringSpacing * 0.4f;
-        const float bendHeight = 26.0f;  // Höhe der Bend-Kurve
-        const float bendWidth = 16.0f;   // Horizontale Ausdehnung
+        const float bendHeight = 24.0f;  // FESTE Höhe für alle Bends
         
         float startX = x + noteRadius + 2.0f;
         float startY = y;
-        float targetY = y - bendHeight;
-        float endX = startX + bendWidth;
+        float targetY = y - bendHeight;  // Feste Höhe über der Note
+        
+        // Berechne die verfügbare Breite bis zur nächsten Note
+        float availableWidth = nextBeatX - startX - noteRadius - 4.0f;
+        availableWidth = juce::jmax(availableWidth, 20.0f);  // Minimum 20px
+        
+        float endX = startX + availableWidth;
         
         // Bestimme Bend-Wert Text
         juce::String bendText;
@@ -502,42 +506,39 @@ private:
         bool isRelease = note.effects.releaseBend;
         bool isBendRelease = (note.effects.bendType == 2 || note.effects.bendType == 5);
         
-        float width = bendWidth;
-        float height = bendHeight;
+        float width = availableWidth;
+        float height = bendHeight;  // Feste Höhe
         
         if (isBendRelease)
         {
-            // Bend + Release: Erst hoch (Peitsche), dann runter (Haken)
+            // Bend + Release: Peak in der Mitte, dann zurück
             float peakX = startX + width * 0.5f;
-            float releaseEndX = startX + width * 1.1f;
+            float releaseEndX = endX;
             
-            // === BEND UP (Peitschenschlag) ===
-            // CP1: Weit rechts auf Starthöhe -> Kurve bleibt lange flach
-            // CP2: Fast direkt unter dem Ziel -> steiler Anstieg am Ende
+            // === BEND UP (Peitschenschlag bis zur Mitte) ===
             juce::Path bendUp;
             bendUp.startNewSubPath(startX, startY);
-            float cp1X = startX + (width * 0.5f * 0.7f);  // 70% der halben Breite
-            float cp1Y = startY;                          // Auf Starthöhe (horizontal)
-            float cp2X = peakX;                           // Direkt unter Ziel
-            float cp2Y = targetY + (height * 0.25f);      // Knapp unter Ziel
+            float cp1X = startX + (width * 0.25f);  // 50% der ersten Hälfte
+            float cp1Y = startY;                     // Horizontal starten
+            float cp2X = peakX - (width * 0.1f);    // Kurz vor Peak
+            float cp2Y = targetY + (height * 0.2f); // Fast oben
             bendUp.cubicTo(cp1X, cp1Y, cp2X, cp2Y, peakX, targetY);
             g.strokePath(bendUp, juce::PathStrokeType(1.5f));
             
-            // Pfeilspitze oben (vertikal)
+            // Pfeilspitze oben
             juce::Path arrowUp;
             arrowUp.startNewSubPath(peakX - 3.0f, targetY + 5.0f);
             arrowUp.lineTo(peakX, targetY);
             arrowUp.lineTo(peakX + 3.0f, targetY + 5.0f);
             g.strokePath(arrowUp, juce::PathStrokeType(1.5f));
             
-            // === RELEASE (Haken) ===
-            float releaseWidth = releaseEndX - peakX;
+            // === RELEASE (von Peak zur nächsten Note) ===
             juce::Path bendDown;
             bendDown.startNewSubPath(peakX, targetY);
-            float cp1X_rel = peakX + (releaseWidth * 0.3f);
+            float cp1X_rel = peakX + (width * 0.1f);
             float cp1Y_rel = targetY;  // Horizontal starten
-            float cp2X_rel = releaseEndX - (releaseWidth * 0.2f);
-            float cp2Y_rel = startY - (height * 0.3f);
+            float cp2X_rel = releaseEndX - (width * 0.15f);
+            float cp2Y_rel = startY - (height * 0.2f);
             bendDown.cubicTo(cp1X_rel, cp1Y_rel, cp2X_rel, cp2Y_rel, releaseEndX, startY);
             g.strokePath(bendDown, juce::PathStrokeType(1.5f));
             
@@ -548,7 +549,7 @@ private:
             arrowDown.lineTo(releaseEndX + 3.0f, startY - 5.0f);
             g.strokePath(arrowDown, juce::PathStrokeType(1.5f));
             
-            // Text zentriert über dem Peak
+            // Text über dem Peak
             g.setFont(9.0f);
             g.drawText(bendText, 
                        juce::Rectangle<float>(peakX - 12.0f, targetY - 13.0f, 24.0f, 12.0f),
@@ -556,16 +557,15 @@ private:
         }
         else if (isRelease)
         {
-            // === NUR RELEASE (Haken von oben nach unten) ===
+            // === NUR RELEASE (von oben nach unten, volle Breite) ===
             juce::Path releasePath;
             releasePath.startNewSubPath(startX, targetY);  // Startet OBEN
             
-            // CP1: Erst noch horizontal bleiben (der "Bogen")
-            float cp1X_rel = startX + (width * 0.3f);
-            float cp1Y_rel = targetY;  // Horizontal
-            // CP2: Weicher Einlauf zum Ziel
-            float cp2X_rel = endX - (width * 0.2f);
-            float cp2Y_rel = startY - (height * 0.4f);
+            // Kubische Kurve für weichen Bogen
+            float cp1X_rel = startX + (width * 0.2f);
+            float cp1Y_rel = targetY;  // Erst horizontal
+            float cp2X_rel = endX - (width * 0.15f);
+            float cp2Y_rel = startY - (height * 0.3f);
             
             releasePath.cubicTo(cp1X_rel, cp1Y_rel, cp2X_rel, cp2Y_rel, endX, startY);
             g.strokePath(releasePath, juce::PathStrokeType(1.5f));
@@ -585,30 +585,29 @@ private:
         }
         else
         {
-            // === NORMALER BEND UP (Peitschenschlag) ===
-            // Die Kurve startet flach und schnellt am Ende steil nach oben
+            // === NORMALER BEND UP (volle Breite bis zur nächsten Note) ===
             juce::Path bendPath;
             bendPath.startNewSubPath(startX, startY);
             
-            // CP1 (Start-Tangente): Weit rechts auf Starthöhe -> bleibt lange flach
+            // CP1: Bleibt lange flach (70% der Breite auf Starthöhe)
             float cp1X = startX + (width * 0.7f);
             float cp1Y = startY;
             
-            // CP2 (End-Tangente): Fast direkt unter dem Ziel -> steiler Anstieg
+            // CP2: Steiler Anstieg am Ende
             float cp2X = endX;
-            float cp2Y = targetY + (height * 0.25f);
+            float cp2Y = targetY + (height * 0.2f);
             
             bendPath.cubicTo(cp1X, cp1Y, cp2X, cp2Y, endX, targetY);
             g.strokePath(bendPath, juce::PathStrokeType(1.5f));
             
-            // Pfeilspitze oben (zeigt senkrecht nach oben)
+            // Pfeilspitze oben
             juce::Path arrow;
             arrow.startNewSubPath(endX - 3.0f, targetY + 5.0f);
             arrow.lineTo(endX, targetY);
             arrow.lineTo(endX + 3.0f, targetY + 5.0f);
             g.strokePath(arrow, juce::PathStrokeType(1.5f));
             
-            // Text zentriert über dem Pfeil
+            // Text über dem Pfeil
             g.setFont(9.0f);
             g.drawText(bendText, 
                        juce::Rectangle<float>(endX - 12.0f, targetY - 13.0f, 24.0f, 12.0f),

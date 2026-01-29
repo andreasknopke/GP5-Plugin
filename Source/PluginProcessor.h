@@ -99,6 +99,13 @@ public:
     void setSelectedTrack(int trackIndex) { selectedTrackIndex.store(trackIndex); }
     int getSelectedTrack() const { return selectedTrackIndex.load(); }
     
+    // Saved UI state (for restoring after editor close/open)
+    int getSavedSelectedTrack() const { return savedSelectedTrack; }
+    void clearSavedSelectedTrack() { savedSelectedTrack = -1; }  // Mark as consumed
+    
+    bool isAutoScrollEnabled() const { return autoScrollEnabled.load(); }
+    void setAutoScrollEnabled(bool enabled) { autoScrollEnabled.store(enabled); }
+    
     // MIDI Output enable/disable
     void setMidiOutputEnabled(bool enabled) { midiOutputEnabled.store(enabled); }
     bool isMidiOutputEnabled() const { return midiOutputEnabled.load(); }
@@ -222,6 +229,10 @@ private:
     std::atomic<double> hostPositionSeconds { 0.0 };
     std::atomic<int> hostTimeSigNumerator { 4 };
     std::atomic<int> hostTimeSigDenominator { 4 };
+    
+    // Saved UI state (restored when editor opens)
+    int savedSelectedTrack = 0;
+    std::atomic<bool> autoScrollEnabled { true };
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NewProjectAudioProcessor)
 };
