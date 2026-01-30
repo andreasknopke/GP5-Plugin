@@ -3,7 +3,7 @@
 
     GP5Parser.cpp
     
-    Guitar Pro 5 (.gp5) File Parser - Extended Implementation
+    Guitar Pro 3-5 (.gp3/.gp4/.gp5) File Parser - Extended Implementation
     Ported from Python library pyguitarpro
 
   ==============================================================================
@@ -24,6 +24,8 @@ bool GP5Parser::parse(const juce::File& file)
     measureHeaders.clear();
     tracks.clear();
     lastError.clear();
+    fileVersion = GPFileVersion::Unknown;
+    tripletFeel = false;
     
     if (!file.existsAsFile())
     {
@@ -43,23 +45,226 @@ bool GP5Parser::parse(const juce::File& file)
         // 1. Read version
         readVersion();
         
-        if (!songInfo.version.startsWith("FICHIER GUITAR PRO v5"))
+        // Detect file version
+        if (songInfo.version.contains("v3."))
         {
-            lastError = "Invalid GP5 file. Version: " + songInfo.version;
+            fileVersion = GPFileVersion::GP3;
+            versionMajor = 3;
+            versionMinor = 0;
+            versionPatch = 0;
+            DBG("Detected GP3 file: " << songInfo.version);
+        }
+        else if (songInfo.version.contains("v4."))
+        {
+            fileVersion = GPFileVersion::GP4;
+            versionMajor = 4;
+            versionMinor = 0;
+            versionPatch = 0;
+            if (songInfo.version.contains("v4.06"))
+                versionPatch = 6;
+            DBG("Detected GP4 file: " << songInfo.version);
+        }
+        else if (songInfo.version.contains("v5."))
+        {
+            fileVersion = GPFileVersion::GP5;
+            versionMajor = 5;
+            if (songInfo.version.contains("v5.00"))
+                { versionMinor = 0; versionPatch = 0; }
+            else if (songInfo.version.contains("v5.10"))
+                { versionMinor = 1; versionPatch = 0; }
+            else
+                { versionMinor = 1; versionPatch = 0; }
+            DBG("Detected GP5 file: " << songInfo.version);
+        }
+        else
+        {
+            lastError = "Unknown Guitar Pro version: " + songInfo.version;
             return false;
         }
         
-        // Parse version tuple
-        if (songInfo.version.contains("v5.00"))
-            { versionMajor = 5; versionMinor = 0; versionPatch = 0; }
-        else if (songInfo.version.contains("v5.10"))
-            { versionMajor = 5; versionMinor = 1; versionPatch = 0; }
-        else
-            { versionMajor = 5; versionMinor = 1; versionPatch = 0; }
-        
-        DBG("GP5 Version: " << songInfo.version);
         DBG("Stream position after version: " << inputStream->getPosition());
         
+        // Branch based on file version
+        if (fileVersion == GPFileVersion::GP3)
+        {
+            return parseGP3();
+        }
+        else if (fileVersion == GPFileVersion::GP4)
+        {
+            return parseGP4();
+        }
+        else
+        {
+            return parseGP5();
+        }
+    }
+    catch (const std::exception& e)
+    {
+        lastError = juce::String("Parse error: ") + e.what();
+        return false;
+    }
+}
+
+//==============================================================================
+// GP3 PARSING
+//==============================================================================
+bool GP5Parser::parseGP3()
+{
+    try
+    {
+        // 2. Read song info (GP3 format)
+        readInfoGP3();
+        DBG("Title: " << songInfo.title << " | Artist: " << songInfo.artist);
+        DBG("Stream position after info: " << inputStream->getPosition());
+        
+        // 3. Triplet feel
+        tripletFeel = readBool();
+        DBG("Triplet feel: " << (tripletFeel ? "yes" : "no"));
+        
+        // 4. Tempo
+        songInfo.tempo = readI32();
+        currentTempo = songInfo.tempo;
+        DBG("Tempo: " << songInfo.tempo);
+        
+        // 5. Key signature
+        readI32();  // key
+        DBG("Stream position after key: " << inputStream->getPosition());
+        
+        // 6. MIDI channels
+        readMidiChannels();
+        DBG("Stream position after MIDI channels: " << inputStream->getPosition());
+        
+        // 7. Measure and track count
+        int measureCount = readI32();
+        int trackCount = readI32();
+        DBG("Measures: " << measureCount << " | Tracks: " << trackCount);
+        DBG("Stream position after counts: " << inputStream->getPosition());
+        
+        // 8. Measure headers (GP3 format)
+        readMeasureHeadersGP3(measureCount);
+        DBG("Stream position after measure headers: " << inputStream->getPosition());
+        
+        // 9. Tracks (GP3 format)
+        readTracksGP3(trackCount);
+        DBG("Stream position after tracks: " << inputStream->getPosition());
+        
+        // 10. Assign MIDI channels
+        for (int i = 0; i < tracks.size(); ++i)
+        {
+            auto& track = tracks.getReference(i);
+            int channelIdx = track.channelIndex;
+            
+            if (channelIdx >= 0 && channelIdx < midiChannels.size())
+            {
+                track.midiChannel = (channelIdx % 16) + 1;
+                track.volume = midiChannels[channelIdx].volume;
+                track.pan = midiChannels[channelIdx].balance;
+                
+                if (track.midiChannel == 10)
+                    track.isPercussion = true;
+            }
+            else
+            {
+                track.midiChannel = (i % 16) + 1;
+            }
+        }
+        
+        // 11. Read measures (the actual notes!)
+        readMeasuresGP3();
+        
+        DBG("GP3 parsing complete! Track count: " << tracks.size());
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        lastError = juce::String("GP3 parse error: ") + e.what();
+        return false;
+    }
+}
+
+//==============================================================================
+// GP4 PARSING (similar to GP3 but with some additions)
+//==============================================================================
+bool GP5Parser::parseGP4()
+{
+    try
+    {
+        // GP4 is similar to GP3 but has lyrics and octave field
+        
+        // 2. Read song info (GP3 format works for GP4)
+        readInfoGP3();
+        DBG("Title: " << songInfo.title << " | Artist: " << songInfo.artist);
+        
+        // 3. Triplet feel
+        tripletFeel = readBool();
+        
+        // 4. Lyrics (GP4 has lyrics)
+        readLyrics();
+        
+        // 5. Tempo
+        songInfo.tempo = readI32();
+        currentTempo = songInfo.tempo;
+        DBG("Tempo: " << songInfo.tempo);
+        
+        // 6. Key signature + octave
+        readI32();  // key
+        readI8();   // octave (GP4 only)
+        
+        // 7. MIDI channels
+        readMidiChannels();
+        
+        // 8. Measure and track count
+        int measureCount = readI32();
+        int trackCount = readI32();
+        DBG("Measures: " << measureCount << " | Tracks: " << trackCount);
+        
+        // 9. Measure headers (GP3 format works for GP4)
+        readMeasureHeadersGP3(measureCount);
+        
+        // 10. Tracks (GP3 format works for GP4)
+        readTracksGP3(trackCount);
+        
+        // 11. Assign MIDI channels
+        for (int i = 0; i < tracks.size(); ++i)
+        {
+            auto& track = tracks.getReference(i);
+            int channelIdx = track.channelIndex;
+            
+            if (channelIdx >= 0 && channelIdx < midiChannels.size())
+            {
+                track.midiChannel = (channelIdx % 16) + 1;
+                track.volume = midiChannels[channelIdx].volume;
+                track.pan = midiChannels[channelIdx].balance;
+                
+                if (track.midiChannel == 10)
+                    track.isPercussion = true;
+            }
+            else
+            {
+                track.midiChannel = (i % 16) + 1;
+            }
+        }
+        
+        // 12. Read measures
+        readMeasuresGP3();
+        
+        DBG("GP4 parsing complete! Track count: " << tracks.size());
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        lastError = juce::String("GP4 parse error: ") + e.what();
+        return false;
+    }
+}
+
+//==============================================================================
+// GP5 PARSING (original implementation)
+//==============================================================================
+bool GP5Parser::parseGP5()
+{
+    try
+    {
         // 2. Read song info
         readInfo();
         DBG("Title: " << songInfo.title << " | Artist: " << songInfo.artist);
@@ -221,52 +426,34 @@ bool GP5Parser::parse(const juce::File& file)
             track.capo = readI32();
             track.colour = readColor();
             
-            // GP5 Track Settings (from pyguitarpro gp5.py line 450-465)
-            // flags2 (16-bit) - Track settings flags
-            readI16();
+            // GP5 Track Settings
+            readI16();  // flags2
+            readU8();   // autoAccentuation
+            readU8();   // MIDI bank
             
-            // autoAccentuation (byte)
-            readU8();
+            // Track RSE
+            readU8();   // humanize
+            readI32(); readI32(); readI32();  // Unknown 3 ints
+            skip(12);   // Unknown 12 bytes
             
-            // MIDI bank (byte)
-            readU8();
-            
-            // Track RSE (from pyguitarpro gp5.py line 467-490)
-            // humanize (byte)
-            readU8();
-            
-            // Unknown 3 ints
-            readI32();
-            readI32();
-            readI32();
-            
-            // Unknown 12 bytes
-            skip(12);
-            
-            // RSE Instrument (from pyguitarpro gp5.py line 491-512)
+            // RSE Instrument
             readI32();  // instrument
-            readI32();  // unknown (mostly 1)
+            readI32();  // unknown
             readI32();  // soundBank
             
             // Version-specific: effectNumber
             if (versionMinor == 0)
             {
-                // GP5.0: effectNumber is short + 1 byte skip
                 readI16();
                 skip(1);
             }
             else
             {
-                // GP5.1+: effectNumber is int
                 readI32();
-                
-                // 3-band equalizer (4 bytes including gain)
                 for (int eq = 0; eq < 4; ++eq)
                     readI8();
-                
-                // RSE Instrument Effect strings (GP5.1+ only)
-                readIntByteSizeString();  // effect
-                readIntByteSizeString();  // effectCategory
+                readIntByteSizeString();
+                readIntByteSizeString();
             }
             
             // Initialize measures
@@ -282,50 +469,38 @@ bool GP5Parser::parse(const juce::File& file)
         // Blank bytes after tracks
         skip(versionMinor == 0 ? 2 : 1);
         
-        // Assign MIDI channels from midiChannels list to tracks
+        // Assign MIDI channels
         for (int i = 0; i < tracks.size(); ++i)
         {
             auto& track = tracks.getReference(i);
             int channelIdx = track.channelIndex;
             
-            // channelIndex is the index into the midiChannels array
-            // midiChannels has 64 entries (4 ports x 16 channels)
             if (channelIdx >= 0 && channelIdx < midiChannels.size())
             {
-                // GP uses 0-based channels, MIDI uses 1-based (1-16)
-                // The channel within the 16-channel block is the MIDI channel
                 track.midiChannel = (channelIdx % 16) + 1;
                 track.volume = midiChannels[channelIdx].volume;
                 track.pan = midiChannels[channelIdx].balance;
                 
-                // Channel 10 is typically drums
                 if (track.midiChannel == 10)
                     track.isPercussion = true;
-                    
-                DBG("Track " << (i+1) << " (" << track.name << "): MIDI Channel " << track.midiChannel 
-                    << ", Volume " << track.volume << ", Pan " << track.pan
-                    << (track.isPercussion ? " [DRUMS]" : ""));
             }
             else
             {
-                // Fallback: assign sequential channels
                 track.midiChannel = (i % 16) + 1;
-                DBG("Track " << (i+1) << " (" << track.name << "): MIDI Channel " << track.midiChannel << " (fallback)");
             }
         }
         
-        DBG("Tracks array size after parsing tracks: " << tracks.size());
         DBG("Stream position before measures: " << inputStream->getPosition() << " / " << inputStream->getTotalLength());
         
         // 15. Read measures (the actual notes!)
         readMeasures();
         
-        DBG("GP5 parsing complete! Final track count: " << tracks.size());
+        DBG("GP5 parsing complete! Track count: " << tracks.size());
         return true;
     }
     catch (const std::exception& e)
     {
-        lastError = juce::String("Parse error: ") + e.what();
+        lastError = juce::String("GP5 parse error: ") + e.what();
         return false;
     }
 }
@@ -1235,4 +1410,535 @@ void GP5Parser::readMidiChannels()
             midiChannels.add(channel);
         }
     }
+}
+
+//==============================================================================
+// GP3/GP4 SPECIFIC METHODS
+//==============================================================================
+
+void GP5Parser::readInfoGP3()
+{
+    // GP3 info format is simpler than GP5
+    // Per pyguitarpro gp3.py readInfo()
+    DBG("readInfoGP3() starting at pos " << inputStream->getPosition());
+    
+    songInfo.title = readIntByteSizeString();
+    DBG("  title: " << songInfo.title);
+    
+    songInfo.subtitle = readIntByteSizeString();
+    DBG("  subtitle: " << songInfo.subtitle);
+    
+    songInfo.artist = readIntByteSizeString();
+    DBG("  artist: " << songInfo.artist);
+    
+    songInfo.album = readIntByteSizeString();
+    DBG("  album: " << songInfo.album);
+    
+    // GP3: 'words' is author/composer, music is same as words
+    songInfo.words = readIntByteSizeString();
+    songInfo.music = songInfo.words;
+    DBG("  words/music: " << songInfo.words);
+    
+    songInfo.copyright = readIntByteSizeString();
+    DBG("  copyright: " << songInfo.copyright);
+    
+    songInfo.tab = readIntByteSizeString();
+    DBG("  tab: " << songInfo.tab);
+    
+    songInfo.instructions = readIntByteSizeString();
+    DBG("  instructions: " << songInfo.instructions);
+    
+    // Notice lines
+    int noticeCount = readI32();
+    DBG("  noticeCount: " << noticeCount);
+    for (int i = 0; i < noticeCount; ++i)
+        songInfo.notice.add(readIntByteSizeString());
+}
+
+void GP5Parser::readMeasureHeadersGP3(int measureCount)
+{
+    // Per pyguitarpro gp3.py readMeasureHeaders()
+    DBG("Reading " << measureCount << " measure headers (GP3 format)");
+    
+    for (int i = 0; i < measureCount; ++i)
+    {
+        GP5MeasureHeader header;
+        header.number = i + 1;
+        
+        juce::uint8 flags = readU8();
+        
+        // Time signature numerator
+        if (flags & 0x01)
+            header.numerator = readI8();
+        else if (i > 0)
+            header.numerator = measureHeaders[i-1].numerator;
+        
+        // Time signature denominator
+        if (flags & 0x02)
+            header.denominator = readI8();
+        else if (i > 0)
+            header.denominator = measureHeaders[i-1].denominator;
+        
+        // Repeat open
+        header.isRepeatOpen = (flags & 0x04) != 0;
+        
+        // Repeat close
+        if (flags & 0x08)
+            header.repeatClose = readI8();
+        
+        // Repeat alternative
+        if (flags & 0x10)
+            header.repeatAlternative = readU8();
+        
+        // Marker
+        if (flags & 0x20)
+        {
+            header.marker = readIntByteSizeString();
+            readColor();  // Marker color
+        }
+        
+        // Key signature
+        if (flags & 0x40)
+        {
+            readI8();  // root
+            readI8();  // type
+        }
+        
+        // Double bar
+        header.hasDoubleBar = (flags & 0x80) != 0;
+        
+        measureHeaders.add(header);
+    }
+}
+
+void GP5Parser::readTracksGP3(int trackCount)
+{
+    // Per pyguitarpro gp3.py readTracks() and readTrack()
+    DBG("Reading " << trackCount << " tracks (GP3 format)");
+    
+    int measureCount = measureHeaders.size();
+    
+    for (int i = 0; i < trackCount; ++i)
+    {
+        GP5Track track;
+        
+        // Track flags
+        juce::uint8 flags = readU8();
+        track.isPercussion = (flags & 0x01) != 0;
+        track.is12String = (flags & 0x02) != 0;
+        track.isBanjo = (flags & 0x04) != 0;
+        
+        // Name (byte-size string, 40 bytes)
+        track.name = readByteSizeString(40);
+        
+        // String count
+        track.stringCount = readI32();
+        
+        // Tuning (7 ints, but only stringCount are used)
+        track.tuning.clear();
+        for (int s = 0; s < 7; ++s)
+        {
+            int tuning = readI32();
+            if (s < track.stringCount)
+                track.tuning.add(tuning);
+        }
+        
+        // Port
+        track.port = readI32();
+        
+        // Channel (2 ints: channel index, effect channel)
+        track.channelIndex = readI32() - 1;  // 1-based to 0-based
+        readI32();  // effect channel (ignored)
+        
+        // Check for percussion channel (channel 9 = drums)
+        if (track.channelIndex >= 0 && (track.channelIndex % 16) == 9)
+            track.isPercussion = true;
+        
+        // Fret count
+        track.fretCount = readI32();
+        
+        // Capo (offset in GP3 terminology)
+        track.capo = readI32();
+        
+        // Color
+        track.colour = readColor();
+        
+        // Initialize measures
+        for (int m = 0; m < measureCount; ++m)
+        {
+            track.measures.add(GP5TrackMeasure());
+        }
+        
+        tracks.add(track);
+        DBG("Track " << (i+1) << ": " << track.name << " (" << track.stringCount << " strings)");
+    }
+}
+
+void GP5Parser::readMeasuresGP3()
+{
+    // Per pyguitarpro gp3.py readMeasures()
+    // Measures are read: measure1/track1, measure1/track2, ..., measure2/track1, ...
+    DBG("Reading measures (GP3 format)");
+    
+    for (int m = 0; m < measureHeaders.size(); ++m)
+    {
+        if (inputStream == nullptr || inputStream->isExhausted())
+        {
+            DBG("Warning: Stream exhausted at measure " << m);
+            return;
+        }
+        
+        for (int t = 0; t < tracks.size(); ++t)
+        {
+            try 
+            {
+                readMeasureGP3(tracks.getReference(t), m);
+            }
+            catch (const std::exception& e)
+            {
+                DBG("Exception in readMeasureGP3(" << m << ", " << t << "): " << e.what());
+                return;
+            }
+        }
+    }
+}
+
+void GP5Parser::readMeasureGP3(GP5Track& track, int measureIndex)
+{
+    // Per pyguitarpro gp3.py readMeasure()
+    // GP3 has only 1 voice per measure
+    if (measureIndex < 0 || measureIndex >= track.measures.size() || measureIndex >= measureHeaders.size())
+        return;
+    
+    auto& measure = track.measures.getReference(measureIndex);
+    
+    // Read beat count
+    int beatCount = readI32();
+    DBG("  Measure " << measureIndex << ": " << beatCount << " beats");
+    
+    if (beatCount < 0 || beatCount > 128)
+    {
+        DBG("Warning: Invalid beatCount: " << beatCount);
+        return;
+    }
+    
+    // Read beats
+    for (int i = 0; i < beatCount; ++i)
+    {
+        if (inputStream == nullptr || inputStream->isExhausted())
+            break;
+            
+        GP5Beat beat;
+        readBeatGP3(beat);
+        measure.voice1.add(beat);
+    }
+}
+
+void GP5Parser::readBeatGP3(GP5Beat& beat)
+{
+    // Per pyguitarpro gp3.py readBeat()
+    if (inputStream == nullptr || inputStream->isExhausted())
+        return;
+    
+    juce::uint8 flags = readU8();
+    DBG("        beat flags=0x" << juce::String::toHexString(flags));
+    
+    // Dotted note (flags & 0x01)
+    beat.isDotted = (flags & 0x01) != 0;
+    
+    // Status byte (flags & 0x40) - REST indicator
+    if (flags & 0x40)
+    {
+        juce::uint8 status = readU8();
+        beat.isRest = (status == 0x02);  // 0x00 = empty, 0x02 = rest
+    }
+    
+    // Duration - ALWAYS present
+    beat.duration = readI8();
+    
+    // Tuplet (flags & 0x20)
+    if (flags & 0x20)
+    {
+        beat.tupletN = readI32();
+    }
+    
+    // Chord diagram (flags & 0x02)
+    if (flags & 0x02)
+    {
+        // TODO: Get string count from current track
+        readChordGP3(6);  // Default to 6 strings
+    }
+    
+    // Text (flags & 0x04)
+    if (flags & 0x04)
+    {
+        beat.text = readIntByteSizeString();
+    }
+    
+    // Beat effects (flags & 0x08)
+    if (flags & 0x08)
+    {
+        readBeatEffectsGP3(beat);
+    }
+    
+    // Mix table change (flags & 0x10)
+    if (flags & 0x10)
+    {
+        readMixTableChangeGP3();
+    }
+    
+    // String flags - ALWAYS present
+    int stringFlags = readU8();
+    
+    // Read notes (from highest to lowest string, bit 6 = string 1, bit 0 = string 7)
+    for (int s = 6; s >= 0; --s)
+    {
+        if (stringFlags & (1 << s))
+        {
+            int stringNum = 6 - s;
+            GP5Note note;
+            readNoteGP3(note);
+            beat.notes[stringNum] = note;
+        }
+    }
+    
+    // GP3 has no flags2 or breakSecondary
+}
+
+void GP5Parser::readNoteGP3(GP5Note& note)
+{
+    // Per pyguitarpro gp3.py readNote()
+    juce::uint8 flags = readU8();
+    
+    // Ghost note (flags & 0x04)
+    note.isGhost = (flags & 0x04) != 0;
+    
+    // Heavy accent (flags & 0x02)
+    note.hasHeavyAccent = (flags & 0x02) != 0;
+    
+    // Accent (flags & 0x40) - GP3 uses this as accentuated note
+    note.hasAccent = (flags & 0x40) != 0;
+    
+    // Note type and fret (flags & 0x20)
+    if (flags & 0x20)
+    {
+        juce::uint8 noteType = readU8();
+        note.isTied = (noteType == 0x02);  // 1 = normal, 2 = tied, 3 = dead
+        note.isDead = (noteType == 0x03);
+    }
+    
+    // Time-independent duration (flags & 0x01)
+    if (flags & 0x01)
+    {
+        readI8();  // duration
+        readI8();  // tuplet
+    }
+    
+    // Dynamics (flags & 0x10)
+    if (flags & 0x10)
+    {
+        // GP3 velocity encoding: value * 8 + 1
+        juce::int8 dyn = readI8();
+        note.velocity = (dyn * 8) + 1;
+    }
+    
+    // Fret (flags & 0x20)
+    if (flags & 0x20)
+    {
+        note.fret = readI8();
+    }
+    
+    // Fingering (flags & 0x80)
+    if (flags & 0x80)
+    {
+        readI8();  // left hand finger
+        readI8();  // right hand finger
+    }
+    
+    // Note effects (flags & 0x08)
+    if (flags & 0x08)
+    {
+        readNoteEffectsGP3(note);
+    }
+    
+    // GP3 has no flags2 byte for notes
+}
+
+void GP5Parser::readNoteEffectsGP3(GP5Note& note)
+{
+    // Per pyguitarpro gp3.py readNoteEffects()
+    // GP3 has only 1 byte of flags
+    juce::uint8 flags = readU8();
+    
+    // Hammer-on / Pull-off (flags & 0x02)
+    note.hasHammerOn = (flags & 0x02) != 0;
+    
+    // Let ring (flags & 0x08) - not stored in our model
+    // bool letRing = (flags & 0x08) != 0;
+    
+    // Bend (flags & 0x01)
+    if (flags & 0x01)
+    {
+        note.hasBend = true;
+        note.bendType = readI8();  // type
+        note.bendValue = readI32();  // value
+        int pointCount = readI32();
+        
+        int maxValue = note.bendValue;
+        int finalValue = 0;
+        for (int p = 0; p < pointCount; ++p)
+        {
+            readI32(); // position
+            int pointValue = readI32(); // value
+            readBool();  // vibrato
+            
+            if (pointValue > maxValue)
+                maxValue = pointValue;
+            finalValue = pointValue;
+        }
+        note.bendValue = maxValue;
+        
+        // Detect release bend
+        if (note.bendType == 2 || note.bendType == 3 || note.bendType == 5 ||
+            (finalValue < maxValue * 0.5))
+        {
+            note.hasReleaseBend = true;
+        }
+    }
+    
+    // Grace note (flags & 0x10)
+    if (flags & 0x10)
+    {
+        readI8();  // fret
+        readU8();  // velocity
+        readU8();  // duration
+        readI8();  // transition
+    }
+    
+    // Slide (flags & 0x04)
+    if (flags & 0x04)
+    {
+        note.hasSlide = true;
+        note.slideType = 1;  // GP3 only has shift slide
+    }
+}
+
+void GP5Parser::readBeatEffectsGP3(GP5Beat& beat)
+{
+    // Per pyguitarpro gp3.py readBeatEffects()
+    // GP3 has only 1 byte of flags (GP4+ has 2)
+    juce::uint8 flags1 = readU8();
+    
+    // Vibrato (flags1 & 0x01 or 0x02)
+    // These set vibrato on the note effect
+    
+    // Fade in (flags1 & 0x10) - not stored
+    
+    // Tremolo bar or slap effect (flags1 & 0x20)
+    if (flags1 & 0x20)
+    {
+        juce::uint8 slapEffect = readU8();
+        if (slapEffect == 0)
+        {
+            // Tremolo bar: read dip value
+            readI32();  // dip value
+        }
+        else
+        {
+            // Slap effect: value was already read
+            readI32();  // unknown
+        }
+    }
+    
+    // Stroke direction (flags1 & 0x40)
+    if (flags1 & 0x40)
+    {
+        int down = readI8();  // downstroke duration
+        int up = readI8();    // upstroke duration
+        beat.hasDownstroke = (down > 0);
+        beat.hasUpstroke = (up > 0);
+    }
+    
+    // Natural harmonic (flags1 & 0x04) - sets harmonic on notes
+    // Artificial harmonic (flags1 & 0x08) - sets harmonic on notes
+}
+
+void GP5Parser::readChordGP3(int stringCount)
+{
+    // Per pyguitarpro gp3.py readChord()
+    bool newFormat = readBool();
+    
+    if (!newFormat)
+    {
+        // Old format (GP3) - readOldChord
+        juce::String name = readIntByteSizeString();
+        juce::int32 firstFret = readI32();
+        if (firstFret > 0)
+        {
+            for (int i = 0; i < 6; ++i) 
+                readI32();  // fret values
+        }
+    }
+    else
+    {
+        // New format (GP4) - readNewChord
+        readBool();  // sharp
+        skip(3);     // blank
+        readI32();   // root
+        readI32();   // type
+        readI32();   // extension
+        readI32();   // bass
+        readI32();   // tonality
+        readBool();  // add
+        readByteSizeString(22);  // name (GP3/GP4 uses 22)
+        
+        // Alterations
+        readI32();   // fifth
+        readI32();   // ninth
+        readI32();   // eleventh
+        
+        readI32();   // firstFret (baseFret)
+        
+        // Frets for 6 strings (ints)
+        for (int i = 0; i < 6; ++i) 
+            readI32();
+        
+        // Barres
+        juce::int32 barreCount = readI32();
+        for (int b = 0; b < 2; ++b) readI32();  // barre frets
+        for (int b = 0; b < 2; ++b) readI32();  // barre starts
+        for (int b = 0; b < 2; ++b) readI32();  // barre ends
+        
+        // Omissions (7 bools)
+        for (int o = 0; o < 7; ++o)
+            readBool();
+        
+        skip(1);  // blank
+    }
+}
+
+void GP5Parser::readMixTableChangeGP3()
+{
+    // Per pyguitarpro gp3.py readMixTableChange()
+    
+    // Read values
+    juce::int8 instrument = readI8();
+    juce::int8 volume = readI8();
+    juce::int8 balance = readI8();
+    juce::int8 chorus = readI8();
+    juce::int8 reverb = readI8();
+    juce::int8 phaser = readI8();
+    juce::int8 tremolo = readI8();
+    juce::int32 tempo = readI32();
+    
+    if (tempo > 0) currentTempo = tempo;
+    
+    // Read durations (only if value was >= 0)
+    if (volume >= 0) readI8();
+    if (balance >= 0) readI8();
+    if (chorus >= 0) readI8();
+    if (reverb >= 0) readI8();
+    if (phaser >= 0) readI8();
+    if (tremolo >= 0) readI8();
+    if (tempo >= 0) readI8();
 }

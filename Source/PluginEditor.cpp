@@ -132,9 +132,9 @@ void NewProjectAudioProcessorEditor::resized()
 void NewProjectAudioProcessorEditor::loadButtonClicked()
 {
     fileChooser = std::make_unique<juce::FileChooser> (
-        "Wähle eine Guitar Pro 5 Datei...",
+        "Wähle eine Guitar Pro Datei...",
         juce::File::getSpecialLocation (juce::File::userHomeDirectory),
-        "*.gp5");
+        "*.gp3;*.gp4;*.gp5");
 
     auto chooserFlags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
 

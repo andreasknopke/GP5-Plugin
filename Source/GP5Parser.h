@@ -3,7 +3,7 @@
 
     GP5Parser.h
     
-    Guitar Pro 5 (.gp5) File Parser
+    Guitar Pro 3-5 (.gp3/.gp4/.gp5) File Parser
     Ported from Python library pyguitarpro
 
   ==============================================================================
@@ -15,6 +15,15 @@
 #include <juce_graphics/juce_graphics.h>
 #include "TabModels.h"
 #include <map>
+
+// Supported Guitar Pro versions
+enum class GPFileVersion
+{
+    Unknown = 0,
+    GP3 = 3,
+    GP4 = 4,
+    GP5 = 5
+};
 
 //==============================================================================
 // GP5 Data Structures
@@ -130,7 +139,7 @@ public:
     GP5Parser();
     ~GP5Parser();
     
-    // Parse a GP5 file
+    // Parse a GP3/GP4/GP5 file
     bool parse(const juce::File& file);
     
     // Get parsed data
@@ -140,6 +149,7 @@ public:
     juce::String getLastError() const { return lastError; }
     int getTrackCount() const { return tracks.size(); }
     int getMeasureCount() const { return measureHeaders.size(); }
+    GPFileVersion getFileVersion() const { return fileVersion; }
     
     // Convert to tab model
     TabTrack convertToTabTrack(int trackIndex) const;
@@ -154,12 +164,17 @@ private:
     // State
     std::unique_ptr<juce::FileInputStream> inputStream;
     juce::String lastError;
+    GPFileVersion fileVersion = GPFileVersion::Unknown;
     int versionMajor = 5;
     int versionMinor = 0;
     int versionPatch = 0;
     int currentTempo = 120;
+    bool tripletFeel = false;
     
-    // High-level reading
+    // High-level reading - GP5 specific
+    bool parseGP3();
+    bool parseGP4();
+    bool parseGP5();
     void readVersion();
     void readInfo();
     void readLyrics();
@@ -176,6 +191,19 @@ private:
     void readBeatEffects(GP5Beat& beat);
     void readMixTableChange();
     void readChord();
+    
+    // GP3/GP4 specific reading methods
+    void readInfoGP3();
+    void readMeasureHeadersGP3(int measureCount);
+    void readTracksGP3(int trackCount);
+    void readMeasuresGP3();
+    void readMeasureGP3(GP5Track& track, int measureIndex);
+    void readBeatGP3(GP5Beat& beat);
+    void readNoteGP3(GP5Note& note);
+    void readNoteEffectsGP3(GP5Note& note);
+    void readBeatEffectsGP3(GP5Beat& beat);
+    void readMixTableChangeGP3();
+    void readChordGP3(int stringCount);
     
     // Low-level reading
     juce::uint8 readU8();
