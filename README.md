@@ -44,7 +44,7 @@ cd GP5_VST_Editor
 Edit the `CMakeLists.txt` and adjust the JUCE path:
 
 ```cmake
-set(JUCE_PATH "D:/GitHub/JUCE" CACHE PATH "Path to JUCE")
+set(JUCE_PATH "C:/GitHub/JUCE" CACHE PATH "Path to JUCE")
 ```
 
 ### 3. Build with CMake
