@@ -70,6 +70,21 @@ struct GP5MeasureHeader
     bool hasDoubleBar = false;
 };
 
+// Bend point structure for storing bend curve points
+struct GP5BendPoint
+{
+    int position = 0;    // Position in note duration (0-60, 60 = full duration = 100%)
+    int value = 0;       // Bend value in 1/100 semitones (100 = 1/2 tone, 200 = full tone, 400 = 2 full tones)
+    int vibrato = 0;     // Vibrato type at this point
+};
+
+// Bend types:
+// 1 = Bend: Start at original, bend up to target
+// 2 = Bend and Release: Bend up, then release back to original  
+// 3 = Release: Start bent, release to original (Pre-bend release)
+// 4 = Pre-Bend: Start already at target pitch (no actual bend motion shown)
+// 5 = Pre-Bend and Release: Start bent, release to original
+
 struct GP5Note
 {
     int fret = 0;
@@ -85,6 +100,7 @@ struct GP5Note
     int bendValue = 0;        // Max bend value in 1/100 semitones (100 = 1/2 tone, 200 = full tone)
     int bendType = 0;         // 0=none, 1=bend, 2=bend+release, 3=release, 4=pre-bend, 5=pre-bend+release
     bool hasReleaseBend = false;
+    std::vector<GP5BendPoint> bendPoints;  // Curve points for bend automation
     bool hasSlide = false;
     int slideType = 0;
     bool hasHarmonic = false;

@@ -60,6 +60,17 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     tabView.onMeasureClicked = [this](int measureIndex) {
         DBG("Takt " << (measureIndex + 1) << " angeklickt");
     };
+    
+    // Position-Klick Callback - springt zur geklickten Position
+    tabView.onPositionClicked = [this](int measureIndex, double positionInMeasure) {
+        DBG("Position angeklickt: Takt " << (measureIndex + 1) << ", Position " << positionInMeasure);
+        
+        // Seek-Position im Processor setzen
+        audioProcessor.setSeekPosition(measureIndex, positionInMeasure);
+        
+        // Transport-Anzeige aktualisieren
+        updateTransportDisplay();
+    };
 
     // Fenstergröße setzen (größer für die Tab-Ansicht)
     setSize (900, 450);
@@ -270,11 +281,34 @@ void NewProjectAudioProcessorEditor::timerCallback()
 {
     updateTransportDisplay();
     
-    // Aktuellen Takt und Position immer aktualisieren (auch wenn gestoppt)
-    int currentMeasure = audioProcessor.getCurrentMeasureIndex();
-    double positionInMeasure = audioProcessor.getPositionInCurrentMeasure();
-    double currentPositionInBeats = audioProcessor.getHostPositionInBeats();
     bool isPlaying = audioProcessor.isHostPlaying();
+    
+    int currentMeasure;
+    double positionInMeasure;
+    
+    // Wenn DAW spielt, verwende DAW-Position; sonst verwende Seek-Position
+    if (isPlaying)
+    {
+        currentMeasure = audioProcessor.getCurrentMeasureIndex();
+        positionInMeasure = audioProcessor.getPositionInCurrentMeasure();
+        
+        // Seek-Position löschen wenn DAW spielt
+        audioProcessor.clearSeekPosition();
+    }
+    else if (audioProcessor.hasSeekPosition())
+    {
+        // Verwende die geklickte Seek-Position
+        currentMeasure = audioProcessor.getSeekMeasureIndex();
+        positionInMeasure = audioProcessor.getSeekPositionInMeasure();
+    }
+    else
+    {
+        // Keine Seek-Position, verwende DAW-Position (gestoppt)
+        currentMeasure = audioProcessor.getCurrentMeasureIndex();
+        positionInMeasure = audioProcessor.getPositionInCurrentMeasure();
+    }
+    
+    double currentPositionInBeats = audioProcessor.getHostPositionInBeats();
     
     // Playhead-Position immer aktualisieren (für flüssige Bewegung)
     tabView.setPlayheadPosition(positionInMeasure);
@@ -313,9 +347,20 @@ void NewProjectAudioProcessorEditor::updateTransportDisplay()
     int dawTimeSigNum = audioProcessor.getHostTimeSignatureNumerator();
     int dawTimeSigDen = audioProcessor.getHostTimeSignatureDenominator();
     
-    // Hole GP5-basierte Position (synchronisiert mit MIDI-Ausgabe)
-    int currentMeasure = audioProcessor.getCurrentMeasureIndex() + 1;  // 1-basiert für Anzeige
-    double posInMeasure = audioProcessor.getPositionInCurrentMeasure();
+    int currentMeasure;
+    double posInMeasure;
+    
+    // Verwende Seek-Position wenn verfügbar und DAW nicht spielt
+    if (!isPlaying && audioProcessor.hasSeekPosition())
+    {
+        currentMeasure = audioProcessor.getSeekMeasureIndex() + 1;  // 1-basiert
+        posInMeasure = audioProcessor.getSeekPositionInMeasure();
+    }
+    else
+    {
+        currentMeasure = audioProcessor.getCurrentMeasureIndex() + 1;  // 1-basiert
+        posInMeasure = audioProcessor.getPositionInCurrentMeasure();
+    }
     
     // Hole GP5-Taktart für aktuellen Takt
     auto [gp5Num, gp5Den] = audioProcessor.getGP5TimeSignature(currentMeasure - 1);
@@ -332,6 +377,11 @@ void NewProjectAudioProcessorEditor::updateTransportDisplay()
         statusText = juce::String::charToString(0x25B6) + " ";  // Play-Symbol
         transportLabel.setColour(juce::Label::textColourId, juce::Colours::lightgreen);
     }
+    else if (audioProcessor.hasSeekPosition())
+    {
+        statusText = juce::String::charToString(0x2316) + " ";  // Position-Symbol (target)
+        transportLabel.setColour(juce::Label::textColourId, juce::Colours::cyan);
+    }
     else
     {
         statusText = juce::String::charToString(0x25A0) + " ";  // Stop-Symbol
@@ -340,7 +390,7 @@ void NewProjectAudioProcessorEditor::updateTransportDisplay()
     
     statusText += "Bar " + juce::String(currentMeasure) + "." + juce::String(beatInMeasure);
     statusText += " | DAW: " + juce::String(tempo, 1) + " BPM " + juce::String(dawTimeSigNum) + "/" + juce::String(dawTimeSigDen);
-    statusText += " | GP5: " + juce::String(gp5Tempo) + " BPM " + juce::String(gp5Num) + "/" + juce::String(gp5Den);
+    statusText += " | GP: " + juce::String(gp5Tempo) + " BPM " + juce::String(gp5Num) + "/" + juce::String(gp5Den);
     
     // Warnung bei Taktart-Mismatch
     if (!audioProcessor.isTimeSignatureMatching())

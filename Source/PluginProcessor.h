@@ -10,6 +10,8 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "GP5Parser.h"
+// MidiExpressionEngine deaktiviert - crasht bei erster Note
+// #include "MidiExpressionEngine.h"
 #include <atomic>
 #include <set>
 #include <map>
@@ -93,6 +95,15 @@ public:
     
     // Prüft ob DAW-Taktart mit GP5-Taktart übereinstimmt
     bool isTimeSignatureMatching() const;
+    
+    //==============================================================================
+    // Seek Position - für Klick auf Tabulatur
+    void setSeekPosition(int measureIndex, double positionInMeasure);
+    double getSeekPositionInBeats() const { return seekPositionInBeats.load(); }
+    int getSeekMeasureIndex() const { return seekMeasureIndex.load(); }
+    double getSeekPositionInMeasure() const { return seekPositionInMeasure.load(); }
+    bool hasSeekPosition() const { return seekPositionValid.load(); }
+    void clearSeekPosition() { seekPositionValid.store(false); }
     
     //==============================================================================
     // Track Selection for MIDI Output
@@ -211,12 +222,36 @@ private:
     // Per-track active notes (for proper note-off per channel)
     std::map<int, std::set<int>> activeNotesPerChannel;  // channel -> active MIDI notes
     
+    // Active bend tracking for real-time pitch bend interpolation
+    struct ActiveBend {
+        int midiChannel = 0;
+        int midiNote = 0;
+        double startBeat = 0.0;       // When the note started
+        double durationBeats = 0.0;   // Total note duration in beats
+        int bendType = 0;             // 1=bend, 2=bend+release, 3=release, 4=pre-bend, 5=pre-bend+release
+        int maxBendValue = 0;         // Maximum bend value in 1/100 semitones
+        std::vector<GP5BendPoint> points;
+        int lastSentPitchBend = 8192; // Track last sent value to avoid redundant messages
+    };
+    static constexpr int maxActiveBends = 32;
+    ActiveBend activeBends[maxActiveBends];
+    int activeBendCount = 0;
+    
+    // MidiExpressionEngine deaktiviert - crasht bei erster Note
+    // MidiExpressionEngine expressionEngines[maxTracks];
+    
     // MIDI note tracking - which notes are currently playing
     std::set<int> activeNotes;  // MIDI note numbers currently playing (legacy, single track)
     double lastProcessedBeat = -1.0;
     int lastProcessedMeasure = -1;
     int lastProcessedBeatIndex = -1;
     bool wasPlaying = false;
+    
+    // Seek position (for click-to-seek functionality)
+    std::atomic<double> seekPositionInBeats { 0.0 };
+    std::atomic<int> seekMeasureIndex { 0 };
+    std::atomic<double> seekPositionInMeasure { 0.0 };
+    std::atomic<bool> seekPositionValid { false };
     
     // Per-track beat tracking
     std::vector<int> lastProcessedBeatPerTrack;

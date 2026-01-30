@@ -774,17 +774,24 @@ void GP5Parser::readNoteEffects(GP5Note& note)
         int pointCount = readI32();
         DBG("              -> bend type=" << note.bendType << " value=" << maxBendValue << " pointCount=" << pointCount);
         
-        // Track max and final values from bend points
+        // Store all bend points for proper bend curve interpolation
+        note.bendPoints.reserve(pointCount);
         int finalValue = 0;
+        
         for (int p = 0; p < pointCount; ++p)
         {
-            readI32(); // position (0-60, 60 = full duration)
-            int pointValue = readI32(); // value in 1/100 semitones
-            readU8();  // vibrato
+            GP5BendPoint bp;
+            bp.position = readI32(); // position (0-60, 60 = full duration)
+            bp.value = readI32();    // value in 1/100 semitones
+            bp.vibrato = readU8();   // vibrato type
             
-            if (pointValue > note.bendValue)
-                note.bendValue = pointValue;
-            finalValue = pointValue;
+            note.bendPoints.push_back(bp);
+            
+            if (bp.value > note.bendValue)
+                note.bendValue = bp.value;
+            finalValue = bp.value;
+            
+            DBG("                 point " << p << ": pos=" << bp.position << " val=" << bp.value << " vib=" << bp.vibrato);
         }
         
         // Wenn der finale Wert niedriger als der Max ist, ist es ein Release

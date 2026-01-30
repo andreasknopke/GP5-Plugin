@@ -177,6 +177,9 @@ public:
     // Callback when a measure is clicked
     std::function<void(int)> onMeasureClicked;
     
+    // Callback when a specific position is clicked (measure index, position within measure 0.0-1.0)
+    std::function<void(int, double)> onPositionClicked;
+    
     void paint(juce::Graphics& g) override
     {
         // Apply zoom to config
@@ -241,19 +244,34 @@ public:
     
     void mouseDown(const juce::MouseEvent& event) override
     {
-        // Find clicked measure
-        float clickX = event.position.x + scrollOffset;
+        // Find clicked measure and position within it
+        float clickX = event.position.x + scrollOffset - 25.0f;  // Account for clef offset
         
         for (int m = 0; m < track.measures.size(); ++m)
         {
             const auto& measure = track.measures[m];
-            float measureStart = measure.xPosition + 25.0f;  // Account for clef offset
-            float measureEnd = measureStart + measure.calculatedWidth;
+            float measureStart = measure.xPosition * zoom;
+            float measureWidth = measure.calculatedWidth * zoom;
+            float measureEnd = measureStart + measureWidth;
             
             if (clickX >= measureStart && clickX < measureEnd)
             {
+                // Calculate position within measure (0.0 - 1.0)
+                double positionInMeasure = (clickX - measureStart) / measureWidth;
+                positionInMeasure = juce::jlimit(0.0, 1.0, positionInMeasure);
+                
+                // Update visual playhead immediately
+                currentPlayingMeasure = m;
+                playheadPositionInMeasure = positionInMeasure;
+                repaint();
+                
+                // Fire callbacks
                 if (onMeasureClicked)
                     onMeasureClicked(m);
+                    
+                if (onPositionClicked)
+                    onPositionClicked(m, positionInMeasure);
+                    
                 break;
             }
         }
