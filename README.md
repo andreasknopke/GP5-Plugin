@@ -1,53 +1,53 @@
 # GP5 VST Editor
 
-Ein VST3-Plugin zum Laden, Anzeigen und Abspielen von Guitar Pro 5 (.gp5) Dateien direkt in deiner DAW.
+A VST3 plugin for loading, displaying, and playing Guitar Pro 5 (.gp5) files directly in your DAW.
 
 ---
 
-## Beschreibung
+## Description
 
-Der GP5 VST Editor ist ein JUCE-basiertes VST3-Instrument-Plugin, das Guitar Pro 5 Dateien einlesen und als interaktive Tabulatur darstellen kann. Das Plugin synchronisiert sich mit dem Transport deiner DAW und scrollt automatisch zur aktuellen Position im Song.
+The GP5 VST Editor is a JUCE-based VST3 instrument plugin that can read Guitar Pro 5 files and display them as interactive tablature. The plugin synchronizes with your DAW's transport for playback.
 
-### Hauptfunktionen
+### Main Features
 
-- **GP5-Datei laden**: Öffne beliebige Guitar Pro 5 Dateien direkt im Plugin
-- **Tabulatur-Darstellung**: Professionelle Darstellung der Noten als Gitarren-Tabulatur
-- **DAW-Synchronisation**: Automatisches Mitscrollen mit der Wiedergabe
-- **Multi-Track Unterstützung**: Wechsle zwischen verschiedenen Spuren (Gitarre, Bass, etc.)
-- **Zoom-Funktion**: Passe die Darstellungsgrösse an deine Bedürfnisse an
-- **MIDI-Output**: Das Plugin kann MIDI-Noten ausgeben
-
----
-
-## Voraussetzungen
-
-- **JUCE Framework** (Version 7.x oder höher)
-- **CMake** (Version 3.22 oder höher)
-- **C++17 kompatibler Compiler**
-  - Windows: Visual Studio 2019 oder neuer
-  - macOS: Xcode 12 oder neuer
-  - Linux: GCC 9 oder neuer
+- **Load GP5 Files**: Open any Guitar Pro 5 file directly in the plugin
+- **Tablature Display**: Professional display of notes as guitar tablature
+- **DAW Synchronization**: Automatic scrolling during playback
+- **Multi-Track Support**: Switch between different tracks (guitar, bass, etc.)
+- **Zoom Function**: Adjust the display size to your needs
+- **MIDI Output**: The plugin can output MIDI notes
 
 ---
 
-## Build-Anleitung
+## Requirements
 
-### 1. Repository klonen
+- **JUCE Framework** (Version 7.x or higher)
+- **CMake** (Version 3.22 or higher)
+- **C++17 compatible compiler**  
+  - Windows: Visual Studio 2019 or newer  
+  - macOS: Xcode 12 or newer  
+  - Linux: GCC 9 or newer
+
+---
+
+## Build Instructions
+
+### 1. Clone Repository
 
 ```bash
 git clone https://github.com/yourusername/GP5_VST_Editor.git
 cd GP5_VST_Editor
 ```
 
-### 2. JUCE-Pfad konfigurieren
+### 2. Configure JUCE Path
 
-Bearbeite die `CMakeLists.txt` und passe den JUCE-Pfad an:
+Edit the `CMakeLists.txt` and adjust the JUCE path:
 
 ```cmake
 set(JUCE_PATH "D:/GitHub/JUCE" CACHE PATH "Path to JUCE")
 ```
 
-### 3. Build mit CMake
+### 3. Build with CMake
 
 ```bash
 mkdir build
@@ -56,85 +56,85 @@ cmake ..
 cmake --build . --config Release
 ```
 
-Das fertige VST3-Plugin wird automatisch in den VST3-Ordner deines Systems kopiert.
+The completed VST3 plugin will be automatically copied to your system's VST3 folder.
 
 ---
 
-## Verwendung
+## Usage
 
-1. Lade das Plugin in deiner DAW als Instrument
-2. Klicke auf "Load GP5 File" und wähle eine .gp5 Datei
-3. Wähle die gewünschte Spur aus der Dropdown-Liste
-4. Aktiviere "Auto-Scroll" für automatisches Mitscrollen bei der Wiedergabe
-5. Nutze die +/- Buttons zum Zoomen der Tabulatur
+1. Load the plugin in your DAW as an instrument
+2. Click on "Load GP5 File" and select a .gp5 file
+3. Select the desired track from the dropdown list
+4. Enable "Auto-Scroll" for automatic scrolling during playback
+5. Use the +/- buttons to zoom the tablature
 
 ---
 
-## Projektstruktur
+## Project Structure
 
 ```
 GP5_VST_Editor/
 ├── Source/
-│   ├── PluginProcessor.cpp/h    # Audio-Processor (DAW-Integration)
-│   ├── PluginEditor.cpp/h       # GUI des Plugins
-│   ├── GP5Parser.cpp/h          # Guitar Pro 5 Datei-Parser
-│   ├── TabModels.h              # Datenmodelle für Tabulaturen
-│   ├── TabLayoutEngine.h        # Layout-Berechnung
-│   ├── TabRenderer.h            # Tabulatur-Rendering
-│   └── TabViewComponent.h       # Tabulatur-Ansicht Komponente
-├── CMakeLists.txt               # CMake Build-Konfiguration
+│   ├── PluginProcessor.cpp/h    # Audio processor (DAW integration)
+│   ├── PluginEditor.cpp/h       # Plugin GUI
+│   ├── GP5Parser.cpp/h          # Guitar Pro 5 file parser
+│   ├── TabModels.h              # Data models for tablature
+│   ├── TabLayoutEngine.h        # Layout calculation
+│   ├── TabRenderer.h            # Tablature rendering
+│   └── TabViewComponent.h       # Tablature view component
+├── CMakeLists.txt               # CMake build configuration
 └── README.md
 ```
 
 ---
 
-## Technische Details
+## Technical Details
 
-### Unterstützte Guitar Pro Features
+### Supported Guitar Pro Features
 
-- Song-Informationen (Titel, Artist, Album, etc.)
-- Mehrere Spuren mit individuellen Einstellungen
-- Standard-Noten und Pausenzeichen
-- Punktierte Noten
-- Triolen und andere Tuplets
-- Spieltechniken:
+- Song information (title, artist, album, etc.)
+- Multiple tracks with individual settings
+- Standard notes and rests
+- Dotted notes
+- Triplets and other tuplets
+- Playing techniques:
   - Hammer-On / Pull-Off
   - Slide
   - Bend
   - Vibrato
   - Palm Mute
   - Ghost Notes
-  - Akzente
+  - Accents
   - Harmonics
-- Wiederholungen und Wiederholungsklammern
-- Taktartänderungen
-- Marker
+- Repeats and repeat brackets
+- Time signature changes
+- Markers
 
 ### Parser
 
-Der GP5-Parser basiert auf der Spezifikation von [PyGuitarPro](https://github.com/Perlence/PyGuitarPro) und wurde für C++/JUCE portiert.
+The GP5 parser is based on the specification from [PyGuitarPro](https://github.com/Perlence/PyGuitarPro) and was ported for C++/JUCE.
 
 ---
 
-## Lizenz
+## License
 
-Dieses Projekt steht unter der MIT-Lizenz.
-
----
-
-## Mitwirken
-
-Beiträge sind willkommen! Bitte erstelle einen Pull Request oder öffne ein Issue für Vorschläge und Fehlermeldungen.
+This project is licensed under the MIT License.
 
 ---
 
-## Autor
+## Contributing
+
+Contributions are welcome! Please create a pull request or open an issue for suggestions and bug reports.
+
+---
+
+## Author
 
 AR-Sounds
 
 ---
 
-## Danksagung
+## Acknowledgements
 
 - [JUCE Framework](https://juce.com/) - Cross-Platform Audio Framework
-- [PyGuitarPro](https://github.com/Perlence/PyGuitarPro) - Referenz für das GP5-Dateiformat
+- [PyGuitarPro](https://github.com/Perlence/PyGuitarPro) - Reference for the GP5 file format
