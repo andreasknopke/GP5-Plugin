@@ -53,17 +53,21 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     saveMidiButton.onClick = [this] { saveMidiButtonClicked(); };
     saveMidiButton.setVisible(false);  // Nur im Player-Modus mit geladenem File sichtbar
     
-    // Info Label
+    // Info Label (Header links - Song-Infos)
     addAndMakeVisible (infoLabel);
-    infoLabel.setFont (juce::FontOptions(12.0f));
+    infoLabel.setFont (juce::FontOptions(13.0f, juce::Font::bold));
     infoLabel.setColour (juce::Label::textColourId, juce::Colours::white);
-    infoLabel.setText ("Load a GP5 file to see the tablature", juce::dontSendNotification);
+    infoLabel.setColour (juce::Label::backgroundColourId, juce::Colour(0xFF3C3C3C));
+    infoLabel.setText ("Load a GuitarPro file to see the tablature", juce::dontSendNotification);
+    infoLabel.setJustificationType(juce::Justification::centredLeft);
     
-    // Transport Label
+    // Transport Label (Header rechts - Transport-Infos)
     addAndMakeVisible (transportLabel);
-    transportLabel.setFont (juce::FontOptions(11.0f));
+    transportLabel.setFont (juce::FontOptions(12.0f));
     transportLabel.setColour (juce::Label::textColourId, juce::Colours::lightgreen);
+    transportLabel.setColour (juce::Label::backgroundColourId, juce::Colour(0xFF3C3C3C));
     transportLabel.setText ("Stopped", juce::dontSendNotification);
+    transportLabel.setJustificationType(juce::Justification::centredRight);
     
     // Auto-Scroll Toggle
     addAndMakeVisible (autoScrollButton);
@@ -128,10 +132,10 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
         updateTransportDisplay();
     };
 
-    // Fenstergröße setzen (größer für die Tab-Ansicht)
-    setSize (900, 450);
+    // Fenstergröße setzen (größer für die Tab-Ansicht + Header)
+    setSize (900, 480);
     setResizable (true, true);
-    setResizeLimits (700, 350, 1920, 1080);
+    setResizeLimits (700, 380, 1920, 1080);
     
     // Wenn bereits eine Datei geladen ist, UI aktualisieren
     refreshFromProcessor();
@@ -156,8 +160,18 @@ void NewProjectAudioProcessorEditor::resized()
 {
     auto bounds = getLocalBounds();
     
-    // Toolbar oben (50px hoch)
-    auto toolbar = bounds.removeFromTop(50);
+    // Header-Bereich oben (25px hoch) - Song-Info und Transport
+    auto header = bounds.removeFromTop(25);
+    header = header.reduced(5, 2);
+    
+    // Info Label (Song-Titel, Artist, BPM, Tracks) - linke Hälfte
+    infoLabel.setBounds (header.removeFromLeft(header.getWidth() / 2));
+    
+    // Transport Label (Position, Tempo, Taktart-Warnung) - rechte Hälfte
+    transportLabel.setBounds (header);
+    
+    // Toolbar (45px hoch) - Buttons
+    auto toolbar = bounds.removeFromTop(45);
     toolbar = toolbar.reduced(5);
     
     // Load Button
@@ -176,17 +190,22 @@ void NewProjectAudioProcessorEditor::resized()
     zoomInButton.setBounds (toolbar.removeFromLeft(30));
     toolbar.removeFromLeft(15); // Spacer
     
-    // Track Selector
+    // Im Player-Modus: Track Selector und Settings
+    // Im Editor-Modus: Fret Position Selector (nutzt denselben Platz)
     trackLabel.setBounds (toolbar.removeFromLeft(40));
-    trackSelector.setBounds (toolbar.removeFromLeft(160));
+    auto trackSelectorArea = toolbar.removeFromLeft(160);
+    trackSelector.setBounds (trackSelectorArea);
+    
+    // Fret Position Selector im Editor-Modus (nutzt Track-Selector Bereich)
+    fretPositionLabel.setBounds (trackLabel.getBounds());
+    fretPositionSelector.setBounds (trackSelectorArea);
+    
     toolbar.removeFromLeft(5); // Spacer
     
-    // Settings Button
-    settingsButton.setBounds (toolbar.removeFromLeft(70));
-    toolbar.removeFromLeft(5); // Spacer
-    
-    // Save MIDI Button
-    saveMidiButton.setBounds (toolbar.removeFromLeft(70));
+    // Settings Button / Save MIDI Button (teilen sich den Platz)
+    auto settingsArea = toolbar.removeFromLeft(70);
+    settingsButton.setBounds (settingsArea);
+    saveMidiButton.setBounds (settingsArea);  // Gleiche Position, nur einer sichtbar
     toolbar.removeFromLeft(10); // Spacer
     
     // Auto-Scroll Toggle
@@ -197,19 +216,6 @@ void NewProjectAudioProcessorEditor::resized()
     recordButton.setBounds (toolbar.removeFromLeft(55));
     toolbar.removeFromLeft(5);
     clearRecordingButton.setBounds (toolbar.removeFromLeft(45));
-    toolbar.removeFromLeft(5);
-    
-    // Fret Position Selector (nur im Editor-Modus sichtbar)
-    fretPositionLabel.setBounds (toolbar.removeFromLeft(30));
-    fretPositionSelector.setBounds (toolbar.removeFromLeft(90));
-    toolbar.removeFromLeft(10); // Spacer
-    
-    // Transport Label
-    transportLabel.setBounds (toolbar.removeFromLeft(200));
-    toolbar.removeFromLeft(10); // Spacer
-    
-    // Info Label (Rest der Toolbar)
-    infoLabel.setBounds (toolbar);
     
     // Tabulatur-Ansicht (Rest des Fensters)
     bounds = bounds.reduced(5);
@@ -270,6 +276,11 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         unloadButton.setVisible(true);
         saveMidiButton.setVisible(true);  // Save MIDI nur im Player-Modus
         
+        // Track-Auswahl und Settings nur im Player-Modus
+        trackLabel.setVisible(true);
+        trackSelector.setVisible(true);
+        settingsButton.setVisible(true);
+        
         // Recording und Fret-Selector nur im Editor-Modus
         recordButton.setVisible(false);
         clearRecordingButton.setVisible(false);
@@ -284,6 +295,11 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         modeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF5C3D00));
         unloadButton.setVisible(false);
         saveMidiButton.setVisible(false);  // Keine MIDI-Export im Editor-Modus
+        
+        // Track-Auswahl und Settings nicht im Editor-Modus
+        trackLabel.setVisible(false);
+        trackSelector.setVisible(false);
+        settingsButton.setVisible(false);
         
         // Recording und Fret-Selector im Editor-Modus verfügbar
         recordButton.setVisible(true);

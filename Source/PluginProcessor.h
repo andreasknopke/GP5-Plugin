@@ -376,6 +376,8 @@ private:
     mutable std::mutex recordingMutex;
     std::vector<RecordedNote> recordedNotes;
     std::map<int, size_t> activeRecordingNotes;  // midiNote -> index in recordedNotes
+    double recordingStartBeat = 0.0;  // PPQ position when first note was recorded (for bar sync)
+    bool recordingStartSet = false;   // Whether recordingStartBeat has been set
     
     // Fret position preference (0=Low, 1=Mid, 2=High)
     std::atomic<int> fretPosition { 0 };  // Default: Low
@@ -383,7 +385,26 @@ private:
     // Standard guitar tuning for MIDI to Tab conversion (E2, A2, D3, G3, B3, E4)
     const std::array<int, 6> standardTuning = { 40, 45, 50, 55, 59, 64 };
     
-    // Convert MIDI note to string/fret (standard position)
+    // Last played position for cost-based note placement
+    mutable int lastPlayedString = -1;  // -1 = no previous note
+    mutable int lastPlayedFret = -1;
+    
+    // Structure for possible guitar positions
+    struct GuitarPosition {
+        int stringIndex;  // 0 = lowest string (E2), 5 = highest string (E4)
+        int fret;
+    };
+    
+    // Get all possible positions for a MIDI note
+    std::vector<GuitarPosition> getPossiblePositions(int midiNote) const;
+    
+    // Calculate cost for a position change (lower is better)
+    float calculatePositionCost(const GuitarPosition& current, const GuitarPosition& previous) const;
+    
+    // Find best position using cost function
+    GuitarPosition findBestPosition(int midiNote, int previousString, int previousFret) const;
+    
+    // Convert MIDI note to string/fret (uses cost function)
     LiveMidiNote midiNoteToTab(int midiNote, int velocity) const;
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NewProjectAudioProcessor)

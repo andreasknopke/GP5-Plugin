@@ -8,6 +8,9 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <limits>
+#include <algorithm>
+#include <map>
 
 //==============================================================================
 // Helper: Berechnet die Dauer eines GP5-Beats in Viertelnoten (Quarter Notes)
@@ -269,6 +272,8 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         double currentBeat = hostPositionBeats.load();
         bool isPlaying = hostIsPlaying.load();
         bool shouldRecord = recordingEnabled.load() && isPlaying && currentBeat >= 0.0;
+        int numerator = hostTimeSigNumerator.load();
+        int denominator = hostTimeSigDenominator.load();
         
         for (const auto metadata : midiMessages)
         {
@@ -285,13 +290,29 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                 if (shouldRecord)
                 {
                     std::lock_guard<std::mutex> recLock(recordingMutex);
+                    
+                    // Beim ersten Note speichern wir den Start-Beat für die Bar-Synchronisation
+                    // Wir runden auf den Anfang des aktuellen Takts
+                    if (!recordingStartSet)
+                    {
+                        double beatsPerMeasure = numerator * (4.0 / denominator);
+                        // Finde den Anfang des aktuellen Takts
+                        int currentMeasure = static_cast<int>(currentBeat / beatsPerMeasure);
+                        recordingStartBeat = currentMeasure * beatsPerMeasure;
+                        recordingStartSet = true;
+                        DBG("Recording started at beat " << currentBeat << ", measure start: " << recordingStartBeat);
+                    }
+                    
                     RecordedNote recNote;
                     recNote.midiNote = midiNote;
                     recNote.velocity = velocity;
                     recNote.string = tabNote.string;
                     recNote.fret = tabNote.fret;
-                    recNote.startBeat = currentBeat;
-                    recNote.endBeat = currentBeat;  // Wird beim Note-Off aktualisiert
+                    // Quantisiere startBeat auf 1/64-Noten (0.0625 Beats) um Floating-Point-Fehler zu beheben
+                    // 7.99887 wird zu 8.0, 8.51234 bleibt ca. 8.5
+                    double quantizeGrid = 0.0625;  // 1/64 Note
+                    recNote.startBeat = std::round(currentBeat / quantizeGrid) * quantizeGrid;
+                    recNote.endBeat = recNote.startBeat;  // Wird beim Note-Off aktualisiert
                     recNote.isActive = true;
                     
                     recordedNotes.push_back(recNote);
@@ -302,6 +323,13 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             {
                 int midiNote = msg.getNoteNumber();
                 liveMidiNotes.erase(midiNote);
+                
+                // Reset last played position wenn keine Noten mehr gehalten werden
+                if (liveMidiNotes.empty())
+                {
+                    lastPlayedString = -1;
+                    lastPlayedFret = -1;
+                }
                 
                 // Recording: Note beenden
                 if (recordingEnabled.load())
@@ -322,6 +350,10 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             else if (msg.isAllNotesOff() || msg.isAllSoundOff())
             {
                 liveMidiNotes.clear();
+                
+                // Reset last played position für Kostenfunktion
+                lastPlayedString = -1;
+                lastPlayedFret = -1;
                 
                 // Recording: Alle aktiven Noten beenden
                 if (recordingEnabled.load())
@@ -1094,96 +1126,158 @@ void NewProjectAudioProcessor::setSeekPosition(int measureIndex, double position
 // MIDI Input -> Tab Display (Editor Mode)
 //==============================================================================
 
+std::vector<NewProjectAudioProcessor::GuitarPosition> NewProjectAudioProcessor::getPossiblePositions(int midiNote) const
+{
+    std::vector<GuitarPosition> positions;
+    for (int str = 0; str < 6; ++str)
+    {
+        int fret = midiNote - standardTuning[str];
+        // Prüfen ob im spielbaren Bereich (0 bis 24 Bünde)
+        if (fret >= 0 && fret <= 24)
+        {
+            positions.push_back({str, fret});
+        }
+    }
+    return positions;
+}
+
+float NewProjectAudioProcessor::calculatePositionCost(const GuitarPosition& current, const GuitarPosition& previous) const
+{
+    float cost = 0.0f;
+
+    // 1. Fret-Distanz (Horizontal) - Bewegung entlang des Halses
+    int fretDiff = std::abs(current.fret - previous.fret);
+    cost += fretDiff * 1.0f; 
+
+    // 2. String-Distanz (Vertikal) - Saitenwechsel
+    int stringDiff = std::abs(current.stringIndex - previous.stringIndex);
+    cost += stringDiff * 0.5f; 
+
+    // 3. Hand-Spanne (Stretch Penalty)
+    // Wenn wir nicht rutschen, können wir ca. 4 Bünde greifen
+    // Alles darüber hinaus erfordert eine Handbewegung (teuer!)
+    if (fretDiff > 4 && current.fret != 0 && previous.fret != 0)
+    {
+        cost += 5.0f; // Hohe Strafe für Positionswechsel
+    }
+
+    // 4. Bevorzugung offener Saiten (Open String Bonus)
+    if (current.fret == 0)
+    {
+        // Wenn wir vorher hoch am Hals waren (>5), ist 0 eher schlecht (Klangunterschied)
+        if (previous.fret > 5)
+            cost += 2.0f; 
+        else
+            cost -= 2.0f; // Bonus! Macht es attraktiv
+    }
+    
+    // 5. Kleine Präferenz für höhere Saiten bei Melodien (dünnere Saiten)
+    cost -= current.stringIndex * 0.1f;
+
+    return cost;
+}
+
+NewProjectAudioProcessor::GuitarPosition NewProjectAudioProcessor::findBestPosition(int midiNote, int previousString, int previousFret) const
+{
+    auto candidates = getPossiblePositions(midiNote);
+    
+    if (candidates.empty())
+    {
+        // Fallback: Note nicht spielbar
+        return {0, juce::jmax(0, midiNote - standardTuning[5])}; 
+    }
+
+    // Wenn keine vorherige Position, nutze Fret-Position-Präferenz
+    if (previousString < 0 || previousFret < 0)
+    {
+        FretPosition pos = getFretPosition();
+        int preferredMinFret, preferredMaxFret;
+        switch (pos)
+        {
+            case FretPosition::Mid:
+                preferredMinFret = 5;
+                preferredMaxFret = 8;
+                break;
+            case FretPosition::High:
+                preferredMinFret = 9;
+                preferredMaxFret = 12;
+                break;
+            case FretPosition::Low:
+            default:
+                preferredMinFret = 0;
+                preferredMaxFret = 4;
+                break;
+        }
+        
+        // Finde beste Position im bevorzugten Bereich
+        GuitarPosition bestPos = candidates[0];
+        int bestScore = -1000;
+        
+        for (const auto& cand : candidates)
+        {
+            int score = 0;
+            
+            if (cand.fret >= preferredMinFret && cand.fret <= preferredMaxFret)
+            {
+                score += 100;
+            }
+            else
+            {
+                int distFromRange = 0;
+                if (cand.fret < preferredMinFret)
+                    distFromRange = preferredMinFret - cand.fret;
+                else
+                    distFromRange = cand.fret - preferredMaxFret;
+                score -= distFromRange * 5;
+            }
+            
+            // Präferenz für höhere Saiten
+            score += cand.stringIndex * 2;
+            
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestPos = cand;
+            }
+        }
+        return bestPos;
+    }
+
+    // Mit vorheriger Position: Nutze Kostenfunktion
+    GuitarPosition previousPos = {previousString, previousFret};
+    GuitarPosition bestPos = candidates[0];
+    float minCost = std::numeric_limits<float>::max();
+
+    for (const auto& cand : candidates)
+    {
+        float currentCost = calculatePositionCost(cand, previousPos);
+        if (currentCost < minCost)
+        {
+            minCost = currentCost;
+            bestPos = cand;
+        }
+    }
+    return bestPos;
+}
+
 NewProjectAudioProcessor::LiveMidiNote NewProjectAudioProcessor::midiNoteToTab(int midiNote, int velocity) const
 {
     LiveMidiNote result;
     result.midiNote = midiNote;
     result.velocity = velocity;
     
-    // Fret position preferences
-    // Low: 0-4, Mid: 5-8, High: 9-12
-    FretPosition pos = getFretPosition();
-    int preferredMinFret, preferredMaxFret;
-    switch (pos)
-    {
-        case FretPosition::Mid:
-            preferredMinFret = 5;
-            preferredMaxFret = 8;
-            break;
-        case FretPosition::High:
-            preferredMinFret = 9;
-            preferredMaxFret = 12;
-            break;
-        case FretPosition::Low:
-        default:
-            preferredMinFret = 0;
-            preferredMaxFret = 4;
-            break;
-    }
+    // Finde beste Position mit Kostenfunktion
+    GuitarPosition bestPos = findBestPosition(midiNote, lastPlayedString, lastPlayedFret);
     
-    // Standard guitar range: E2 (40) to approximately E6 (88)
-    // Find the best string/fret combination based on preferred fret range
+    // Update last played position für nächste Note
+    lastPlayedString = bestPos.stringIndex;
+    lastPlayedFret = bestPos.fret;
     
-    int bestString = -1;
-    int bestFret = -1;
-    int bestScore = -1000;
-    
-    for (int s = 0; s < 6; ++s)
-    {
-        int openStringNote = standardTuning[s];
-        int fret = midiNote - openStringNote;
-        
-        // Valid fret range: 0-24
-        if (fret >= 0 && fret <= 24)
-        {
-            // Calculate score - higher is better
-            int score = 0;
-            
-            // Prefer frets within the selected range
-            if (fret >= preferredMinFret && fret <= preferredMaxFret)
-            {
-                score += 100;  // Big bonus for being in preferred range
-            }
-            else
-            {
-                // Penalty based on distance from preferred range
-                int distFromRange = 0;
-                if (fret < preferredMinFret)
-                    distFromRange = preferredMinFret - fret;
-                else
-                    distFromRange = fret - preferredMaxFret;
-                score -= distFromRange * 5;
-            }
-            
-            // Small preference for higher strings (thinner, more typical for melodies)
-            score += (5 - s) * 2;
-            
-            // Slight preference for lower frets within the range
-            score -= (fret / 5);
-            
-            if (score > bestScore)
-            {
-                bestScore = score;
-                bestString = s;
-                bestFret = fret;
-            }
-        }
-    }
-    
-    if (bestString >= 0)
-    {
-        // Tuning array is index 0=E2 (lowest), 5=E4 (highest)
-        // Display expects index 0=top line (highest), 5=bottom line (lowest)
-        // So we need to invert: display_string = 5 - tuning_string
-        result.string = 5 - bestString;
-        result.fret = bestFret;
-    }
-    else
-    {
-        // Note is out of guitar range - show on first string as high fret
-        result.string = 0;
-        result.fret = juce::jmax(0, midiNote - standardTuning[5]);  // E4 is highest
-    }
+    // Tuning array is index 0=E2 (lowest), 5=E4 (highest)
+    // Display expects index 0=top line (highest), 5=bottom line (lowest)
+    // So we need to invert: display_string = 5 - tuning_string
+    result.string = 5 - bestPos.stringIndex;
+    result.fret = bestPos.fret;
     
     return result;
 }
@@ -1390,11 +1484,11 @@ TabTrack NewProjectAudioProcessor::getEmptyTabTrack() const
     int numerator = hostTimeSigNumerator.load();
     int denominator = hostTimeSigDenominator.load();
     
-    // Create a few empty measures for display (truly empty - no rests shown)
-    for (int m = 0; m < 4; ++m)
+    // Create empty measures for display - mehr Takte für bessere Übersicht
+    for (int m = 0; m < 16; ++m)
     {
         TabMeasure measure;
-        measure.measureNumber = m + 1;
+        measure.measureNumber = m + 1;  // 1-basierte Anzeige (entspricht DAW Takt 1, 2, 3, ...)
         measure.timeSignatureNumerator = numerator;
         measure.timeSignatureDenominator = denominator;
         
@@ -1420,6 +1514,8 @@ void NewProjectAudioProcessor::clearRecording()
     std::lock_guard<std::mutex> lock(recordingMutex);
     recordedNotes.clear();
     activeRecordingNotes.clear();
+    recordingStartBeat = 0.0;
+    recordingStartSet = false;
     DBG("Recording cleared");
 }
 
@@ -1439,19 +1535,27 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
     
     int numerator = hostTimeSigNumerator.load();
     int denominator = hostTimeSigDenominator.load();
+    
+    // Bei 4/4: beatsPerMeasure = 4 (jeder Takt hat 4 Quarter Notes)
     double beatsPerMeasure = numerator * (4.0 / denominator);
     
     // Hole aufgezeichnete Noten
     std::vector<RecordedNote> notes;
+    double startBeatRef = 0.0;
     {
         std::lock_guard<std::mutex> lock(recordingMutex);
         notes = recordedNotes;
+        startBeatRef = recordingStartBeat;  // Taktanfang der ersten Note
     }
+    
+    // Berechne, in welchem DAW-Takt die Aufnahme begann (1-basiert)
+    // ppqPosition 0-3.99 = Takt 1, 4-7.99 = Takt 2, etc.
+    int firstMeasureNumber = (int)(startBeatRef / beatsPerMeasure) + 1;
     
     if (notes.empty())
     {
         // Leere Takte zurückgeben
-        for (int m = 0; m < 4; ++m)
+        for (int m = 0; m < 16; ++m)
         {
             TabMeasure measure;
             measure.measureNumber = m + 1;
@@ -1462,6 +1566,11 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
         return track;
     }
     
+    // Sortiere Noten nach Startzeit
+    std::sort(notes.begin(), notes.end(), [](const RecordedNote& a, const RecordedNote& b) {
+        return a.startBeat < b.startBeat;
+    });
+    
     // Finde den letzten Beat
     double maxBeat = 0.0;
     for (const auto& note : notes)
@@ -1469,68 +1578,91 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
         maxBeat = std::max(maxBeat, note.endBeat);
     }
     
-    // Anzahl der benötigten Takte
-    int numMeasures = std::max(4, (int)std::ceil(maxBeat / beatsPerMeasure) + 1);
+    // Berechne Anzahl der Takte ab dem Start-Takt
+    // Takte werden relativ zum Aufnahme-Start erstellt
+    int lastMeasureNumber = (int)(maxBeat / beatsPerMeasure) + 1;
+    int numMeasures = std::max(16, lastMeasureNumber + 2);
     
-    // Erstelle Takte
-    for (int m = 0; m < numMeasures; ++m)
+    // Erstelle Takte - die measureNumber entspricht direkt der DAW-Taktnummer
+    // ppqPosition 0-3.99 = Takt 1, ppqPosition 4-7.99 = Takt 2, etc.
+    // Wir iterieren über Taktnummern (1-basiert wie im DAW)
+    for (int barNum = 1; barNum <= numMeasures; ++barNum)
     {
         TabMeasure measure;
-        measure.measureNumber = m + 1;
+        measure.measureNumber = barNum;
         measure.timeSignatureNumerator = numerator;
         measure.timeSignatureDenominator = denominator;
         
-        double measureStartBeat = m * beatsPerMeasure;
-        double measureEndBeat = measureStartBeat + beatsPerMeasure;
+        // Der Takt barNum entspricht ppqPosition [(barNum-1)*beatsPerMeasure, barNum*beatsPerMeasure)
+        double measureStartBeat = (barNum - 1) * beatsPerMeasure;
         
-        // Finde alle Noten die in diesem Takt starten
+        // Sammle alle Noten in diesem Takt
+        // Runde ppq auf 1000stel um Floating-Point-Präzisionsprobleme zu beheben
+        std::vector<const RecordedNote*> notesInMeasure;
         for (const auto& note : notes)
         {
-            if (note.startBeat >= measureStartBeat && note.startBeat < measureEndBeat)
+            double roundedPPQ = std::round(note.startBeat * 1000.0) / 1000.0;
+            int noteBar = static_cast<int>(roundedPPQ / beatsPerMeasure) + 1;
+            if (noteBar == barNum)
             {
-                // Berechne Position im Takt (0.0 - 1.0)
-                double positionInMeasure = (note.startBeat - measureStartBeat) / beatsPerMeasure;
-                
-                // Finde oder erstelle einen Beat an dieser Position
-                // Quantisiere auf 16tel-Noten
-                int quantizedPos = (int)(positionInMeasure * 16.0 + 0.5);
-                quantizedPos = juce::jlimit(0, 15, quantizedPos);
-                
-                // Suche existierenden Beat oder erstelle neuen
-                bool found = false;
-                for (auto& beat : measure.beats)
-                {
-                    // Einfache Implementierung: füge Note zum ersten Beat hinzu
-                    // In einer erweiterten Version würde man die genaue Position berücksichtigen
-                }
-                
-                if (!found)
-                {
-                    TabBeat beat;
-                    beat.isRest = false;
-                    
-                    // Berechne Notendauer basierend auf Note-Länge
-                    double noteDuration = note.endBeat - note.startBeat;
-                    if (noteDuration >= beatsPerMeasure)
-                        beat.duration = NoteDuration::Whole;
-                    else if (noteDuration >= beatsPerMeasure / 2)
-                        beat.duration = NoteDuration::Half;
-                    else if (noteDuration >= beatsPerMeasure / 4)
-                        beat.duration = NoteDuration::Quarter;
-                    else if (noteDuration >= beatsPerMeasure / 8)
-                        beat.duration = NoteDuration::Eighth;
-                    else
-                        beat.duration = NoteDuration::Sixteenth;
-                    
-                    TabNote tabNote;
-                    tabNote.string = note.string;
-                    tabNote.fret = note.fret;
-                    tabNote.velocity = note.velocity;
-                    beat.notes.add(tabNote);
-                    
-                    measure.beats.add(beat);
-                }
+                notesInMeasure.push_back(&note);
             }
+        }
+        
+        if (notesInMeasure.empty())
+        {
+            track.measures.add(measure);
+            continue;
+        }
+        
+        // Gruppiere Noten nach quantisierter Startzeit (für Akkorde)
+        std::map<int, std::vector<const RecordedNote*>> noteGroups;
+        for (const auto* note : notesInMeasure)
+        {
+            // Quantisiere auf 16tel-Grid innerhalb des Takts
+            double posInMeasure = note->startBeat - measureStartBeat;
+            int quantizedSlot = (int)(posInMeasure / (beatsPerMeasure / 16.0) + 0.5);
+            quantizedSlot = juce::jlimit(0, 15, quantizedSlot);
+            noteGroups[quantizedSlot].push_back(note);
+        }
+        
+        // Erstelle Beats für jede Notengruppe
+        for (const auto& [slot, group] : noteGroups)
+        {
+            TabBeat beat;
+            beat.isRest = false;
+            
+            // Finde die kürzeste Notendauer in der Gruppe
+            double shortestDuration = std::numeric_limits<double>::max();
+            for (const auto* note : group)
+            {
+                double dur = note->endBeat - note->startBeat;
+                shortestDuration = std::min(shortestDuration, dur);
+            }
+            
+            // Konvertiere zu NoteDuration
+            if (shortestDuration >= 3.5)
+                beat.duration = NoteDuration::Whole;
+            else if (shortestDuration >= 1.75)
+                beat.duration = NoteDuration::Half;
+            else if (shortestDuration >= 0.875)
+                beat.duration = NoteDuration::Quarter;
+            else if (shortestDuration >= 0.4375)
+                beat.duration = NoteDuration::Eighth;
+            else
+                beat.duration = NoteDuration::Sixteenth;
+            
+            // Füge alle Noten der Gruppe zum Beat hinzu (Akkord)
+            for (const auto* note : group)
+            {
+                TabNote tabNote;
+                tabNote.string = note->string;
+                tabNote.fret = note->fret;
+                tabNote.velocity = note->velocity;
+                beat.notes.add(tabNote);
+            }
+            
+            measure.beats.add(beat);
         }
         
         track.measures.add(measure);
