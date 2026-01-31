@@ -115,6 +115,7 @@ struct GP5Beat
     bool isRest = false;
     int tupletN = 0;
     juce::String text;
+    juce::String chordName;        // Chord name (e.g., "Am7", "C", "D/F#")
     bool isPalmMute = false;
     bool hasDownstroke = false;
     bool hasUpstroke = false;
@@ -206,7 +207,7 @@ private:
     void readNoteEffects(GP5Note& note);
     void readBeatEffects(GP5Beat& beat);
     void readMixTableChange();
-    void readChord();
+    juce::String readChord();
     
     // GP3/GP4 specific reading methods
     void readInfoGP3();
@@ -219,7 +220,7 @@ private:
     void readNoteEffectsGP3(GP5Note& note);
     void readBeatEffectsGP3(GP5Beat& beat);
     void readMixTableChangeGP3();
-    void readChordGP3(int stringCount);
+    juce::String readChordGP3(int stringCount);
     
     // Low-level reading
     juce::uint8 readU8();

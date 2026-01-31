@@ -10,6 +10,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "GP5Parser.h"
+#include "GP7Parser.h"
 // MidiExpressionEngine deaktiviert - crasht bei erster Note
 // #include "MidiExpressionEngine.h"
 #include <atomic>
@@ -62,9 +63,28 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     //==============================================================================
-    // GP5 Parser - persistent data
+    // GP5/GP7 Parser - persistent data
     GP5Parser& getGP5Parser() { return gp5Parser; }
     const GP5Parser& getGP5Parser() const { return gp5Parser; }
+    GP7Parser& getGP7Parser() { return gp7Parser; }
+    const GP7Parser& getGP7Parser() const { return gp7Parser; }
+    bool isUsingGP7Parser() const { return usingGP7Parser; }
+    
+    // Convenience methods that work with whichever parser is active
+    const juce::Array<GP5Track>& getActiveTracks() const 
+    {
+        return usingGP7Parser ? gp7Parser.getTracks() : gp5Parser.getTracks();
+    }
+    
+    const juce::Array<GP5MeasureHeader>& getActiveMeasureHeaders() const
+    {
+        return usingGP7Parser ? gp7Parser.getMeasureHeaders() : gp5Parser.getMeasureHeaders();
+    }
+    
+    const GP5SongInfo& getActiveSongInfo() const
+    {
+        return usingGP7Parser ? gp7Parser.getSongInfo() : gp5Parser.getSongInfo();
+    }
     
     juce::String getLoadedFilePath() const { return loadedFilePath; }
     void setLoadedFilePath(const juce::String& path) { loadedFilePath = path; }
@@ -204,6 +224,8 @@ public:
 private:
     //==============================================================================
     GP5Parser gp5Parser;
+    GP7Parser gp7Parser;
+    bool usingGP7Parser = false;  // Which parser was used for current file
     juce::String loadedFilePath;
     bool fileLoaded = false;
     

@@ -133,6 +133,13 @@ public:
                     drawBeatText(g, beat.text, beatX, firstStringY - 25.0f);
                 }
                 
+                // Draw chord name above the beat (e.g., "Am7", "C")
+                if (beat.chordName.isNotEmpty())
+                {
+                    DBG("Drawing chord: " << beat.chordName << " at x=" << beatX);
+                    drawChordName(g, beat.chordName, beatX, firstStringY - 40.0f);
+                }
+                
                 // Draw Palm Mute indicator (P.M.)
                 if (beat.isPalmMuted)
                 {
@@ -621,6 +628,18 @@ private:
         g.setFont(juce::Font(10.0f).italicised());
         g.drawText(text, 
                    juce::Rectangle<float>(x - 30.0f, y, 100.0f, 14.0f),
+                   juce::Justification::left, false);
+    }
+    
+    /**
+     * Zeichnet Akkordname über dem Beat (z.B. "Am7", "C", "D/F#")
+     */
+    void drawChordName(juce::Graphics& g, const juce::String& chordName, float x, float y)
+    {
+        g.setColour(config.fretTextColour);
+        g.setFont(juce::Font(12.0f).boldened());
+        g.drawText(chordName, 
+                   juce::Rectangle<float>(x - 5.0f, y, 60.0f, 16.0f),
                    juce::Justification::left, false);
     }
     

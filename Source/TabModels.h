@@ -128,6 +128,9 @@ struct TabBeat
     // Text annotation (e.g., "Don't pick", "let ring", etc.)
     juce::String text;
     
+    // Chord name (e.g., "Am7", "C", "D/F#")
+    juce::String chordName;
+    
     // Rest (Pause)
     bool isRest = false;
     

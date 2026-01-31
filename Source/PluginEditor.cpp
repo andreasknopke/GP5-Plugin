@@ -143,9 +143,9 @@ void NewProjectAudioProcessorEditor::resized()
 void NewProjectAudioProcessorEditor::loadButtonClicked()
 {
     fileChooser = std::make_unique<juce::FileChooser> (
-        "Wähle eine Guitar Pro Datei...",
+        "Select a Guitar Pro file...",
         juce::File::getSpecialLocation (juce::File::userHomeDirectory),
-        "*.gp3;*.gp4;*.gp5");
+        "*.gp;*.gp3;*.gp4;*.gp5");
 
     auto chooserFlags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
 
@@ -177,18 +177,19 @@ void NewProjectAudioProcessorEditor::refreshFromProcessor()
     if (!audioProcessor.isFileLoaded())
         return;
     
-    const auto& gp5Parser = audioProcessor.getGP5Parser();
-    const auto& info = gp5Parser.getSongInfo();
+    const auto& info = audioProcessor.getActiveSongInfo();
+    int trackCount = audioProcessor.getActiveTracks().size();
+    int measureCount = audioProcessor.getActiveMeasureHeaders().size();
     
-    DBG("Refreshing UI from processor. Track count: " << gp5Parser.getTrackCount());
+    DBG("Refreshing UI from processor. Track count: " << trackCount);
     
     // Info-Label aktualisieren
     juce::String infoText = info.title;
     if (info.artist.isNotEmpty())
         infoText += " - " + info.artist;
     infoText += " | " + juce::String(info.tempo) + " BPM";
-    infoText += " | " + juce::String(gp5Parser.getTrackCount()) + " Tracks";
-    infoText += " | " + juce::String(gp5Parser.getMeasureCount()) + " Measures";
+    infoText += " | " + juce::String(trackCount) + " Tracks";
+    infoText += " | " + juce::String(measureCount) + " Measures";
     infoLabel.setText(infoText, juce::dontSendNotification);
     
     // Track-Auswahl aktualisieren
@@ -202,7 +203,7 @@ void NewProjectAudioProcessorEditor::refreshFromProcessor()
     
     // Prüfe ob gespeicherter Track vorhanden (nach setStateInformation)
     int savedTrack = audioProcessor.getSavedSelectedTrack();
-    if (savedTrack >= 0 && savedTrack < gp5Parser.getTrackCount())
+    if (savedTrack >= 0 && savedTrack < trackCount)
     {
         trackToSelect = savedTrack;
         audioProcessor.clearSavedSelectedTrack();  // Mark as consumed
@@ -210,12 +211,12 @@ void NewProjectAudioProcessorEditor::refreshFromProcessor()
     }
     
     // Validiere den Track-Index
-    if (trackToSelect < 0 || trackToSelect >= gp5Parser.getTrackCount())
+    if (trackToSelect < 0 || trackToSelect >= trackCount)
     {
         trackToSelect = 0;  // Fallback auf ersten Track
     }
     
-    if (gp5Parser.getTrackCount() > 0)
+    if (trackCount > 0)
     {
         trackSelector.setSelectedId(trackToSelect + 1, juce::dontSendNotification);
         trackSelectionChanged();
@@ -230,7 +231,7 @@ void NewProjectAudioProcessorEditor::updateTrackSelector()
 {
     trackSelector.clear(juce::dontSendNotification);
     
-    const auto& tracks = audioProcessor.getGP5Parser().getTracks();
+    const auto& tracks = audioProcessor.getActiveTracks();
     
     DBG("updateTrackSelector: " << tracks.size() << " tracks found");
     
@@ -260,18 +261,32 @@ void NewProjectAudioProcessorEditor::trackSelectionChanged()
     
     int trackIndex = selectedId - 1;  // Zurück zu 0-basiert
     
-    const auto& gp5Parser = audioProcessor.getGP5Parser();
+    const auto& tracks = audioProcessor.getActiveTracks();
+    int trackCount = (int)tracks.size();
     
-    if (trackIndex >= 0 && trackIndex < gp5Parser.getTrackCount())
+    if (trackIndex >= 0 && trackIndex < trackCount)
     {
-        // Tab-Ansicht aktualisieren
-        TabTrack track = gp5Parser.convertToTabTrack(trackIndex);
+        // Tab-Ansicht aktualisieren mit dem richtigen Parser
+        TabTrack track;
+        if (audioProcessor.isUsingGP7Parser())
+        {
+            const auto& gp7Tracks = audioProcessor.getGP7Parser().getTracks();
+            juce::Array<TabMeasure> measures = audioProcessor.getGP7Parser().convertToTabMeasures(trackIndex);
+            track.name = gp7Tracks[trackIndex].name;
+            track.stringCount = gp7Tracks[trackIndex].stringCount;
+            track.tuning = gp7Tracks[trackIndex].tuning;
+            track.measures = measures;
+        }
+        else
+        {
+            track = audioProcessor.getGP5Parser().convertToTabTrack(trackIndex);
+        }
         tabView.setTrack(track);
         
         // MIDI-Output auf diesen Track setzen
         audioProcessor.setSelectedTrack(trackIndex);
         
-        const auto& gp5Track = gp5Parser.getTracks()[trackIndex];
+        const auto& gp5Track = tracks[trackIndex];
         DBG("Track " << (trackIndex + 1) << " geladen: " << gp5Track.name 
             << " mit " << track.measures.size() << " Takten (MIDI Output aktiviert)");
     }
@@ -415,10 +430,10 @@ void NewProjectAudioProcessorEditor::toggleSettingsPanel()
         trackSettingsPanel = std::make_unique<TrackSettingsComponent>(audioProcessor);
         trackSettingsPanel->onClose = [this]() { toggleSettingsPanel(); };
         
-        // Position the panel (overlay on right side)
-        int panelWidth = 480;
-        int panelHeight = juce::jmin(400, getHeight() - 60);
-        trackSettingsPanel->setBounds(getWidth() - panelWidth - 10, 55, panelWidth, panelHeight);
+        // Position the panel (centered, nearly full width)
+        int panelWidth = getWidth() - 40;
+        int panelHeight = juce::jmin(420, getHeight() - 70);
+        trackSettingsPanel->setBounds(20, 55, panelWidth, panelHeight);
         
         addAndMakeVisible(trackSettingsPanel.get());
         settingsPanelVisible = true;

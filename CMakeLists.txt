@@ -51,6 +51,8 @@ target_sources(GP5_VST_Editor
         Source/PluginEditor.h
         Source/GP5Parser.cpp
         Source/GP5Parser.h
+        Source/GP7Parser.cpp
+        Source/GP7Parser.h
         Source/TabModels.h
         Source/TabLayoutEngine.h
         Source/TabRenderer.h

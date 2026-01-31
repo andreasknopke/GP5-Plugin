@@ -32,7 +32,7 @@ private:
     void timerCallback() override;
     
     // 1. Der Button
-    juce::TextButton loadButton { "Load GP5 File" };
+    juce::TextButton loadButton { "Load GuitarPro File" };
     
     // 2. Zoom Buttons
     juce::TextButton zoomInButton { "+" };

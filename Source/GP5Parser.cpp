@@ -618,8 +618,8 @@ void GP5Parser::readBeat(GP5Beat& beat)
     if (flags & 0x02)
     {
         DBG("        -> reading chord diagram at pos " << inputStream->getPosition());
-        readChord();
-        DBG("        -> chord diagram done, pos=" << inputStream->getPosition());
+        beat.chordName = readChord();
+        DBG("        -> chord diagram done, name='" << beat.chordName << "' pos=" << inputStream->getPosition());
     }
     
     // Text (flags & 0x04)
@@ -912,17 +912,18 @@ void GP5Parser::readBeatEffects(GP5Beat& beat)
     }
 }
 
-void GP5Parser::readChord()
+juce::String GP5Parser::readChord()
 {
     // Chord diagram structure based on PyGuitarPro gp4.py readNewChord
     juce::uint8 newFormat = readU8();  // 0 = old format, 1 = new format
+    juce::String chordName;
     
     DBG("          chord newFormat=" << (int)newFormat);
     
     if (newFormat == 0)
     {
         // Old format (GP3) - readOldChord
-        juce::String name = readIntByteSizeString();  // chord name
+        chordName = readIntByteSizeString();  // chord name
         juce::int32 firstFret = readI32();
         if (firstFret > 0)
         {
@@ -941,7 +942,7 @@ void GP5Parser::readChord()
         readI32();   // bass
         readI32();   // tonality
         readBool();  // add
-        readByteSizeString(22);  // name: 1 byte length + 22 bytes content (GP4 uses 22)
+        chordName = readByteSizeString(22);  // name: 1 byte length + 22 bytes content (GP4 uses 22)
         
         // Alterations (bytes, not ints!)
         readU8();    // fifth
@@ -973,7 +974,8 @@ void GP5Parser::readChord()
         readBool();  // show fingering
     }
     
-    DBG("          chord done at pos " << inputStream->getPosition());
+    DBG("          chord name='" << chordName << "' done at pos " << inputStream->getPosition());
+    return chordName;
 }
 
 void GP5Parser::readMixTableChange()
@@ -1106,6 +1108,12 @@ TabTrack GP5Parser::convertToTabTrack(int trackIndex) const
             tabBeat.hasDownstroke = gp5Beat.hasDownstroke;
             tabBeat.hasUpstroke = gp5Beat.hasUpstroke;
             tabBeat.text = gp5Beat.text;
+            tabBeat.chordName = gp5Beat.chordName;
+            
+            if (gp5Beat.chordName.isNotEmpty())
+            {
+                DBG("Converted chord to TabBeat: " << gp5Beat.chordName << " in measure " << m);
+            }
             
             if (gp5Beat.tupletN > 0)
             {
@@ -1673,7 +1681,7 @@ void GP5Parser::readBeatGP3(GP5Beat& beat)
     if (flags & 0x02)
     {
         // TODO: Get string count from current track
-        readChordGP3(6);  // Default to 6 strings
+        beat.chordName = readChordGP3(6);  // Default to 6 strings
     }
     
     // Text (flags & 0x04)
@@ -1870,15 +1878,16 @@ void GP5Parser::readBeatEffectsGP3(GP5Beat& beat)
     // Artificial harmonic (flags1 & 0x08) - sets harmonic on notes
 }
 
-void GP5Parser::readChordGP3(int stringCount)
+juce::String GP5Parser::readChordGP3(int stringCount)
 {
     // Per pyguitarpro gp3.py readChord()
     bool newFormat = readBool();
+    juce::String chordName;
     
     if (!newFormat)
     {
         // Old format (GP3) - readOldChord
-        juce::String name = readIntByteSizeString();
+        chordName = readIntByteSizeString();
         juce::int32 firstFret = readI32();
         if (firstFret > 0)
         {
@@ -1897,7 +1906,7 @@ void GP5Parser::readChordGP3(int stringCount)
         readI32();   // bass
         readI32();   // tonality
         readBool();  // add
-        readByteSizeString(22);  // name (GP3/GP4 uses 22)
+        chordName = readByteSizeString(22);  // name (GP3/GP4 uses 22)
         
         // Alterations
         readI32();   // fifth
@@ -1922,6 +1931,8 @@ void GP5Parser::readChordGP3(int stringCount)
         
         skip(1);  // blank
     }
+    
+    return chordName;
 }
 
 void GP5Parser::readMixTableChangeGP3()

@@ -32,17 +32,6 @@ public:
         nameLabel.setFont(juce::FontOptions(12.0f));
         nameLabel.setColour(juce::Label::textColourId, juce::Colours::white);
         
-        // MIDI Channel ComboBox
-        addAndMakeVisible(channelSelector);
-        for (int ch = 1; ch <= 16; ++ch)
-        {
-            juce::String label = juce::String(ch);
-            if (ch == 10) label += " (D)";
-            channelSelector.addItem(label, ch);
-        }
-        channelSelector.setSelectedId(currentChannel, juce::dontSendNotification);
-        channelSelector.setTooltip("MIDI Channel");
-        
         // Solo Button
         addAndMakeVisible(soloButton);
         soloButton.setButtonText("S");
@@ -91,17 +80,16 @@ public:
             if (onPanChanged) onPanChanged(trackIdx, static_cast<int>(panSlider.getValue()));
         };
         
-        // Volume Label
-        addAndMakeVisible(volLabel);
-        volLabel.setText("Vol", juce::dontSendNotification);
-        volLabel.setFont(juce::FontOptions(10.0f));
-        volLabel.setColour(juce::Label::textColourId, juce::Colours::grey);
-        
-        // Pan Label
-        addAndMakeVisible(panLabel);
-        panLabel.setText("Pan", juce::dontSendNotification);
-        panLabel.setFont(juce::FontOptions(10.0f));
-        panLabel.setColour(juce::Label::textColourId, juce::Colours::grey);
+        // MIDI Channel ComboBox (rightmost, clearly labeled)
+        addAndMakeVisible(channelSelector);
+        for (int ch = 1; ch <= 16; ++ch)
+        {
+            juce::String label = juce::String(ch);
+            if (ch == 10) label += " (D)";
+            channelSelector.addItem(label, ch);
+        }
+        channelSelector.setSelectedId(currentChannel, juce::dontSendNotification);
+        channelSelector.setTooltip("MIDI Channel (10 = Drums)");
     }
     
     void updateMuteButtonColor()
@@ -137,31 +125,24 @@ public:
     void resized() override
     {
         auto bounds = getLocalBounds().reduced(2);
-        int rowHeight = bounds.getHeight();
+        bounds.removeFromLeft(5);  // padding
         
-        // Top row: Name, Channel, Solo, Mute
-        auto topRow = bounds.removeFromTop(rowHeight / 2);
+        // Single row layout matching headers: Track | Solo | Mute | Volume | Pan | MIDI Ch
+        nameLabel.setBounds(bounds.removeFromLeft(180));
+        bounds.removeFromLeft(10);
         
-        nameLabel.setBounds(topRow.removeFromLeft(140));
-        topRow.removeFromLeft(5);
+        soloButton.setBounds(bounds.removeFromLeft(40).reduced(6, 2));
+        bounds.removeFromLeft(5);
+        muteButton.setBounds(bounds.removeFromLeft(40).reduced(6, 2));
+        bounds.removeFromLeft(20);
         
-        channelSelector.setBounds(topRow.removeFromLeft(70));
-        topRow.removeFromLeft(5);
+        volumeSlider.setBounds(bounds.removeFromLeft(180));
+        bounds.removeFromLeft(20);
         
-        soloButton.setBounds(topRow.removeFromLeft(25));
-        topRow.removeFromLeft(3);
-        muteButton.setBounds(topRow.removeFromLeft(25));
+        panSlider.setBounds(bounds.removeFromLeft(180));
+        bounds.removeFromLeft(20);
         
-        // Bottom row: Volume and Pan sliders
-        auto bottomRow = bounds;
-        bottomRow.removeFromLeft(5);
-        
-        volLabel.setBounds(bottomRow.removeFromLeft(25));
-        volumeSlider.setBounds(bottomRow.removeFromLeft(130));
-        bottomRow.removeFromLeft(10);
-        
-        panLabel.setBounds(bottomRow.removeFromLeft(25));
-        panSlider.setBounds(bottomRow.removeFromLeft(130));
+        channelSelector.setBounds(bounds.removeFromLeft(70));
     }
     
     // Callbacks
@@ -179,13 +160,11 @@ private:
     bool impliedMute = false;  // True when another track is solo (visual indication)
     
     juce::Label nameLabel;
-    juce::ComboBox channelSelector;
     juce::TextButton soloButton;
     juce::TextButton muteButton;
     juce::Slider volumeSlider;
     juce::Slider panSlider;
-    juce::Label volLabel;
-    juce::Label panLabel;
+    juce::ComboBox channelSelector;
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TrackSettingsRow)
 };
@@ -206,11 +185,41 @@ public:
         titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
         titleLabel.setJustificationType(juce::Justification::centred);
         
-        // Column Headers
-        addAndMakeVisible(headerLabel);
-        headerLabel.setText("Track                        Ch     S  M       Volume              Pan", juce::dontSendNotification);
-        headerLabel.setFont(juce::FontOptions(10.0f));
-        headerLabel.setColour(juce::Label::textColourId, juce::Colours::grey);
+        // Column Headers - individual labels for proper alignment
+        addAndMakeVisible(headerTrack);
+        headerTrack.setText("Track", juce::dontSendNotification);
+        headerTrack.setFont(juce::FontOptions(11.0f, juce::Font::bold));
+        headerTrack.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+        
+        addAndMakeVisible(headerSolo);
+        headerSolo.setText("Solo", juce::dontSendNotification);
+        headerSolo.setFont(juce::FontOptions(11.0f, juce::Font::bold));
+        headerSolo.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+        headerSolo.setJustificationType(juce::Justification::centred);
+        
+        addAndMakeVisible(headerMute);
+        headerMute.setText("Mute", juce::dontSendNotification);
+        headerMute.setFont(juce::FontOptions(11.0f, juce::Font::bold));
+        headerMute.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+        headerMute.setJustificationType(juce::Justification::centred);
+        
+        addAndMakeVisible(headerVolume);
+        headerVolume.setText("Volume", juce::dontSendNotification);
+        headerVolume.setFont(juce::FontOptions(11.0f, juce::Font::bold));
+        headerVolume.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+        headerVolume.setJustificationType(juce::Justification::centred);
+        
+        addAndMakeVisible(headerPan);
+        headerPan.setText("Pan", juce::dontSendNotification);
+        headerPan.setFont(juce::FontOptions(11.0f, juce::Font::bold));
+        headerPan.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+        headerPan.setJustificationType(juce::Justification::centred);
+        
+        addAndMakeVisible(headerChannel);
+        headerChannel.setText("MIDI Ch", juce::dontSendNotification);
+        headerChannel.setFont(juce::FontOptions(11.0f, juce::Font::bold));
+        headerChannel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+        headerChannel.setJustificationType(juce::Justification::centred);
         
         // Close Button
         addAndMakeVisible(closeButton);
@@ -232,10 +241,10 @@ public:
         trackRows.clear();
         trackListContainer.removeAllChildren();
         
-        const auto& tracks = audioProcessor.getGP5Parser().getTracks();
+        const auto& tracks = audioProcessor.getActiveTracks();
         
         int yPos = 0;
-        const int rowHeight = 50;  // Taller rows for two-row layout
+        const int rowHeight = 28;  // Compact single-row layout
         
         for (int i = 0; i < tracks.size(); ++i)
         {
@@ -252,7 +261,7 @@ public:
                 audioProcessor.getTrackPan(i)
             ));
             
-            row->setBounds(0, yPos, 450, rowHeight);
+            row->setBounds(0, yPos, 800, rowHeight);
             trackListContainer.addAndMakeVisible(row);
             
             // Connect callbacks
@@ -281,7 +290,7 @@ public:
             yPos += rowHeight;
         }
         
-        trackListContainer.setSize(450, yPos);
+        trackListContainer.setSize(800, yPos);
         
         // Initialize implied mute visuals based on current solo state
         updateAllMuteVisuals();
@@ -308,9 +317,22 @@ public:
         
         bounds.removeFromTop(5);
         
-        // Header
-        headerLabel.setBounds(bounds.removeFromTop(18));
-        bounds.removeFromTop(3);
+        // Header row with individual column labels
+        auto headerRow = bounds.removeFromTop(20);
+        headerRow.removeFromLeft(5);  // padding
+        headerTrack.setBounds(headerRow.removeFromLeft(180));
+        headerRow.removeFromLeft(10);
+        headerSolo.setBounds(headerRow.removeFromLeft(40));
+        headerRow.removeFromLeft(5);
+        headerMute.setBounds(headerRow.removeFromLeft(40));
+        headerRow.removeFromLeft(20);
+        headerVolume.setBounds(headerRow.removeFromLeft(180));
+        headerRow.removeFromLeft(20);
+        headerPan.setBounds(headerRow.removeFromLeft(180));
+        headerRow.removeFromLeft(20);
+        headerChannel.setBounds(headerRow.removeFromLeft(70));
+        
+        bounds.removeFromTop(5);
         
         // Track list viewport
         viewport.setBounds(bounds);
@@ -350,7 +372,12 @@ private:
     NewProjectAudioProcessor& audioProcessor;
     
     juce::Label titleLabel;
-    juce::Label headerLabel;
+    juce::Label headerTrack;
+    juce::Label headerSolo;
+    juce::Label headerMute;
+    juce::Label headerVolume;
+    juce::Label headerPan;
+    juce::Label headerChannel;
     juce::TextButton closeButton;
     
     juce::Viewport viewport;
