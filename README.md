@@ -1,6 +1,6 @@
 # GP5 VST Editor
 
-A VST3 plugin for loading, displaying, and playing Guitar Pro files (.gp3, .gp4, .gp5) directly in your DAW with realistic MIDI output for guitar samplers like HALion.
+A VST3 plugin for loading, displaying, and playing Guitar Pro files (.gp3, .gp4, .gp5, .gp, .gpx) directly in your DAW with realistic MIDI output for guitar samplers like HALion.
 
 ---
 
@@ -10,8 +10,10 @@ The GP5 VST Editor is a JUCE-based VST3 instrument plugin that reads Guitar Pro 
 
 ### Main Features
 
-- **Load GP3/GP4/GP5 Files**: Open Guitar Pro 3, 4, and 5 files directly in the plugin
+- **Load GP3/GP4/GP5/GP7/GP8 Files**: Open Guitar Pro 3, 4, 5, 7, and 8 files directly in the plugin
+- **Chord Name Display**: Shows chord names above the tablature (Am, E5+/G#, FM7, etc.)
 - **Tablature Display**: Professional rendering of notes as guitar tablature with effects notation
+- **Rhythm Notation**: Proper beam grouping by metric position (4 eighths per half-measure in 4/4)
 - **DAW Synchronization**: Automatic scrolling and position sync during playback
 - **Click-to-Seek**: Click anywhere on the tablature to jump to that position
 - **Multi-Track Support**: Switch between different tracks with per-track MIDI channel, volume, pan, mute, and solo
@@ -71,7 +73,7 @@ The completed VST3 plugin will be automatically copied to your system's VST3 fol
 
 1. Load the plugin in your DAW as an instrument
 2. Route the MIDI output to a guitar sampler (HALion, Kontakt, etc.)
-3. Click on "Load GP5 File" and select a .gp3, .gp4, or .gp5 file
+3. Click on "Load GuitarPro File" and select a .gp3, .gp4, .gp5, or .gp file
 4. Select the desired track from the dropdown list
 5. Configure per-track settings (MIDI channel, volume, pan, mute/solo)
 6. Enable "Auto-Scroll" for automatic scrolling during playback
@@ -95,6 +97,7 @@ GP5_VST_Editor/
 │   ├── PluginProcessor.cpp/h    # Audio processor with MIDI generation
 │   ├── PluginEditor.cpp/h       # Plugin GUI
 │   ├── GP5Parser.cpp/h          # Guitar Pro 3/4/5 file parser
+│   ├── GP7Parser.h              # Guitar Pro 7/8 (.gp) file parser
 │   ├── TabModels.h              # Data models for tablature
 │   ├── TabLayoutEngine.h        # Layout calculation
 │   ├── TabRenderer.h            # Tablature rendering with effects
@@ -112,14 +115,21 @@ GP5_VST_Editor/
 - **Guitar Pro 3** (.gp3)
 - **Guitar Pro 4** (.gp4)
 - **Guitar Pro 5** (.gp5)
+- **Guitar Pro 7** (.gp) - via embedded GPIF XML
+- **Guitar Pro 8** (.gp) - via embedded GPIF XML
 
 ### Supported Guitar Pro Features
 
 - Song information (title, artist, album, tempo, etc.)
+- **Chord names** displayed above measures
 - Multiple tracks with individual settings
 - Standard notes and rests
 - Dotted notes
 - Triplets and other tuplets
+- **Rhythm notation with proper beam grouping:**
+  - 4/4: 4 eighths per beam group (half-measure)
+  - 6/8, 9/8, 12/8: 3 eighths per beam group (dotted quarter)
+  - 3/4, 5/4, 7/4: 2 eighths per beam group (per quarter beat)
 - **Pitch Bends with real-time interpolation:**
   - Normal Bend (pitch up during note)
   - Bend + Release (pitch up, then back down)
@@ -156,6 +166,8 @@ GP5_VST_Editor/
 ### Parser
 
 The GP5 parser is based on the specification from [PyGuitarPro](https://github.com/Perlence/PyGuitarPro) and was implemented in C++/JUCE with extensions for GP3 and GP4 formats.
+
+The GP7/GP8 parser extracts the embedded GPIF XML from the .gp archive format (ZIP container with Content/score.gpif) and parses notes, chords, tracks, and effects.
 
 ---
 
