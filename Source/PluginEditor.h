@@ -48,9 +48,13 @@ private:
     
     // 3b. Track Settings Button
     juce::TextButton settingsButton { "Settings" };
+    
+    // 3c. Save MIDI Button (Player Mode only)
+    juce::TextButton saveMidiButton { "Save MIDI" };
 
     // 4. Der FileChooser (smart pointer, um Speicherlecks zu vermeiden)
     std::unique_ptr<juce::FileChooser> fileChooser;
+    std::unique_ptr<juce::FileChooser> midiFileChooser;
     
     // 5. Die Tabulatur-Ansicht
     TabViewComponent tabView;
@@ -85,6 +89,7 @@ private:
     void updateTransportDisplay();
     void toggleSettingsPanel();
     void updateModeDisplay();
+    void saveMidiButtonClicked();
     
     // 11. State
     int lastDisplayedMeasure = -1;

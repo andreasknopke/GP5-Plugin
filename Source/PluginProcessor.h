@@ -283,6 +283,16 @@ public:
     void clearRecording();
     std::vector<RecordedNote> getRecordedNotes() const;
     TabTrack getRecordedTabTrack() const;  // Convert recorded notes to TabTrack for display
+    
+    //==============================================================================
+    // MIDI Export Functionality
+    //==============================================================================
+    
+    // Export single track to MIDI file (single channel)
+    bool exportTrackToMidi(int trackIndex, const juce::File& outputFile);
+    
+    // Export all tracks to MIDI file (multi-channel)
+    bool exportAllTracksToMidi(const juce::File& outputFile);
 
 private:
     //==============================================================================

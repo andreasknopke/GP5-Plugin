@@ -1,0 +1,68 @@
+GP5 VST Editor - Alpha 0.5
+===========================
+
+Release Date: January 31, 2026
+
+NEW FEATURES:
+-------------
+* Activity LED in Track Settings
+  - Red LED indicator shows which track is currently playing notes
+  - LED lights up for exactly the duration of each note
+  - Real-time visual feedback during playback
+
+* Persistent MIDI Settings
+  - Track MIDI channel assignments saved with DAW project
+  - Solo/Mute status per track saved
+  - Volume and Pan settings per track saved
+  - Fret position preference (Low/Mid/High) saved
+  - All settings restored when reopening project
+
+* Improved Count-In Handling
+  - Notes no longer display during pre-roll/count-in
+  - MIDI output suppressed during negative beat positions
+  - Scroll jumps to first measure when playback starts
+
+* String Index Mapping Fix
+  - Fixed string mapping for MIDI-to-Tab conversion
+  - Tuning array (E2 lowest) now correctly maps to display (bottom line)
+
+PREVIOUS FEATURES (from Alpha 0.4):
+------------------------------------
+* Guitar Pro 7/8 (.gp) file support
+* Chord Name Display above tablature
+* Improved Rhythm Notation Beaming
+* Fixed MIDI Channel Settings parsing
+
+SUPPORTED FORMATS:
+------------------
+* Guitar Pro 3 (.gp3)
+* Guitar Pro 4 (.gp4)
+* Guitar Pro 5 (.gp5)
+* Guitar Pro 7 (.gp)
+* Guitar Pro 8 (.gp)
+
+INSTALLATION:
+-------------
+1. Extract GP5_VST_Editor.vst3 folder to your VST3 directory:
+   - Windows: C:\Program Files\Common Files\VST3\
+2. Rescan plugins in your DAW
+3. Load GP5 VST Editor as an instrument
+
+REQUIREMENTS:
+-------------
+* Windows 10/11 (64-bit)
+* VST3-compatible DAW (Cubase, Reaper, FL Studio, etc.)
+* Guitar sampler for MIDI output (HALion, Kontakt, etc.)
+
+KNOWN ISSUES:
+-------------
+* Some GP7/8 files with complex automation may not parse correctly
+* Bend effects work but timing may vary with complex bends
+
+CHANGELOG FROM ALPHA 0.4:
+-------------------------
++ Added Activity LED for track playback visualization
++ Added persistent storage of all MIDI track settings
++ Fixed count-in handling (no notes during pre-roll)
++ Fixed string index mapping for MIDI input
++ Improved LED timing accuracy based on note duration

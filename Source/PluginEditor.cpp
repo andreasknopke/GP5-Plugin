@@ -48,6 +48,11 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     addAndMakeVisible (settingsButton);
     settingsButton.onClick = [this] { toggleSettingsPanel(); };
     
+    // Save MIDI Button (Player Mode only)
+    addAndMakeVisible (saveMidiButton);
+    saveMidiButton.onClick = [this] { saveMidiButtonClicked(); };
+    saveMidiButton.setVisible(false);  // Nur im Player-Modus mit geladenem File sichtbar
+    
     // Info Label
     addAndMakeVisible (infoLabel);
     infoLabel.setFont (juce::FontOptions(12.0f));
@@ -178,6 +183,10 @@ void NewProjectAudioProcessorEditor::resized()
     
     // Settings Button
     settingsButton.setBounds (toolbar.removeFromLeft(70));
+    toolbar.removeFromLeft(5); // Spacer
+    
+    // Save MIDI Button
+    saveMidiButton.setBounds (toolbar.removeFromLeft(70));
     toolbar.removeFromLeft(10); // Spacer
     
     // Auto-Scroll Toggle
@@ -259,6 +268,7 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         modeLabel.setColour(juce::Label::textColourId, juce::Colours::lightgreen);
         modeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF1E5631));
         unloadButton.setVisible(true);
+        saveMidiButton.setVisible(true);  // Save MIDI nur im Player-Modus
         
         // Recording und Fret-Selector nur im Editor-Modus
         recordButton.setVisible(false);
@@ -273,6 +283,7 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         modeLabel.setColour(juce::Label::textColourId, juce::Colours::orange);
         modeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF5C3D00));
         unloadButton.setVisible(false);
+        saveMidiButton.setVisible(false);  // Keine MIDI-Export im Editor-Modus
         
         // Recording und Fret-Selector im Editor-Modus verfügbar
         recordButton.setVisible(true);
@@ -654,4 +665,82 @@ void NewProjectAudioProcessorEditor::toggleSettingsPanel()
         addAndMakeVisible(trackSettingsPanel.get());
         settingsPanelVisible = true;
     }
+}
+
+void NewProjectAudioProcessorEditor::saveMidiButtonClicked()
+{
+    if (!audioProcessor.isFileLoaded())
+        return;
+    
+    // Erstelle Auswahl-Dialog: Aktuelle Spur oder alle Spuren
+    juce::PopupMenu menu;
+    
+    // Option 1: Nur aktuelle Spur als Einkanal-MIDI
+    int currentTrack = audioProcessor.getSelectedTrack();
+    const auto& tracks = audioProcessor.getActiveTracks();
+    juce::String currentTrackName = (currentTrack >= 0 && currentTrack < tracks.size()) 
+        ? tracks[currentTrack].name 
+        : "Current Track";
+    
+    menu.addItem(1, "Current Track: " + currentTrackName + " (Single Channel)");
+    menu.addSeparator();
+    menu.addItem(2, "All Tracks (Multi-Channel MIDI)");
+    
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&saveMidiButton),
+        [this, currentTrack](int result)
+        {
+            if (result == 0)
+                return;  // Menu was dismissed
+            
+            bool exportAllTracks = (result == 2);
+            
+            // Bestimme Standard-Dateiname basierend auf Song-Info
+            const auto& info = audioProcessor.getActiveSongInfo();
+            juce::String defaultFileName = info.title.isNotEmpty() ? info.title : "Exported";
+            if (exportAllTracks)
+                defaultFileName += "_AllTracks";
+            else
+                defaultFileName += "_Track" + juce::String(currentTrack + 1);
+            defaultFileName += ".mid";
+            
+            // Datei-Auswahl-Dialog
+            midiFileChooser = std::make_unique<juce::FileChooser>(
+                exportAllTracks ? "Save All Tracks as MIDI..." : "Save Track as MIDI...",
+                juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile(defaultFileName),
+                "*.mid");
+            
+            auto chooserFlags = juce::FileBrowserComponent::saveMode 
+                              | juce::FileBrowserComponent::canSelectFiles
+                              | juce::FileBrowserComponent::warnAboutOverwriting;
+            
+            midiFileChooser->launchAsync(chooserFlags, 
+                [this, exportAllTracks, currentTrack](const juce::FileChooser& fc)
+                {
+                    auto file = fc.getResult();
+                    
+                    if (file != juce::File{})
+                    {
+                        // Stelle sicher, dass die Datei mit .mid endet
+                        if (!file.hasFileExtension(".mid"))
+                            file = file.withFileExtension(".mid");
+                        
+                        bool success;
+                        if (exportAllTracks)
+                            success = audioProcessor.exportAllTracksToMidi(file);
+                        else
+                            success = audioProcessor.exportTrackToMidi(currentTrack, file);
+                        
+                        if (success)
+                        {
+                            infoLabel.setText("MIDI exported: " + file.getFileName(), juce::dontSendNotification);
+                            DBG("MIDI exported successfully to: " << file.getFullPathName());
+                        }
+                        else
+                        {
+                            infoLabel.setText("Error exporting MIDI file!", juce::dontSendNotification);
+                            DBG("Error exporting MIDI file");
+                        }
+                    }
+                });
+        });
 }
