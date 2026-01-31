@@ -122,13 +122,33 @@ public:
     bool isSolo() const { return soloButton.getToggleState(); }
     bool isMuted() const { return muteButton.getToggleState(); }
     
+    // Update activity LED (track is playing notes)
+    void setPlaying(bool playing)
+    {
+        isPlaying = playing;
+        repaint();
+    }
+    
+    void paint(juce::Graphics& g) override
+    {
+        // Draw activity LED
+        auto ledBounds = getLocalBounds().reduced(2);
+        ledBounds = ledBounds.removeFromLeft(12).reduced(2, 6);
+        
+        g.setColour(isPlaying ? juce::Colours::red : juce::Colours::darkgrey);
+        g.fillEllipse(ledBounds.toFloat());
+        
+        g.setColour(juce::Colours::grey);
+        g.drawEllipse(ledBounds.toFloat(), 1.0f);
+    }
+    
     void resized() override
     {
         auto bounds = getLocalBounds().reduced(2);
-        bounds.removeFromLeft(5);  // padding
+        bounds.removeFromLeft(15);  // LED space + padding
         
         // Single row layout matching headers: Track | Solo | Mute | Volume | Pan | MIDI Ch
-        nameLabel.setBounds(bounds.removeFromLeft(180));
+        nameLabel.setBounds(bounds.removeFromLeft(170));
         bounds.removeFromLeft(10);
         
         soloButton.setBounds(bounds.removeFromLeft(40).reduced(6, 2));
@@ -158,6 +178,7 @@ private:
     int trackIdx;
     bool isDrumTrack;
     bool impliedMute = false;  // True when another track is solo (visual indication)
+    bool isPlaying = false;    // True when track has active notes
     
     juce::Label nameLabel;
     juce::TextButton soloButton;
@@ -172,7 +193,8 @@ private:
 //==============================================================================
 // Main Settings Panel
 //==============================================================================
-class TrackSettingsComponent : public juce::Component
+class TrackSettingsComponent : public juce::Component,
+                               private juce::Timer
 {
 public:
     TrackSettingsComponent(NewProjectAudioProcessor& processor)
@@ -184,6 +206,9 @@ public:
         titleLabel.setFont(juce::FontOptions(16.0f, juce::Font::bold));
         titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
         titleLabel.setJustificationType(juce::Justification::centred);
+        
+        // Start timer for activity LED updates
+        startTimerHz(15);  // 15 Hz update rate for activity LEDs
         
         // Column Headers - individual labels for proper alignment
         addAndMakeVisible(headerTrack);
@@ -234,6 +259,11 @@ public:
         viewport.setScrollBarsShown(true, false);
         
         refreshTrackList();
+    }
+    
+    ~TrackSettingsComponent()
+    {
+        stopTimer();
     }
     
     void refreshTrackList()
@@ -369,6 +399,18 @@ public:
     }
     
 private:
+    void timerCallback() override
+    {
+        // Update activity LEDs for all tracks
+        bool isPlaying = audioProcessor.isHostPlaying();
+        
+        for (int i = 0; i < trackRows.size(); ++i)
+        {
+            bool playing = isPlaying && audioProcessor.isTrackPlaying(i);
+            trackRows[i]->setPlaying(playing);
+        }
+    }
+    
     NewProjectAudioProcessor& audioProcessor;
     
     juce::Label titleLabel;

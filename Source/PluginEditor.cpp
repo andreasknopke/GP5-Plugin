@@ -17,6 +17,17 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     addAndMakeVisible (loadButton);
     loadButton.onClick = [this] { loadButtonClicked(); };
     
+    // Unload Button (nur sichtbar wenn File geladen)
+    addAndMakeVisible (unloadButton);
+    unloadButton.onClick = [this] { unloadButtonClicked(); };
+    unloadButton.setVisible(false);
+    
+    // Mode Label
+    addAndMakeVisible (modeLabel);
+    modeLabel.setFont (juce::FontOptions(12.0f, juce::Font::bold));
+    modeLabel.setJustificationType(juce::Justification::centred);
+    updateModeDisplay();
+    
     // Zoom Buttons
     addAndMakeVisible (zoomInButton);
     addAndMakeVisible (zoomOutButton);
@@ -54,6 +65,46 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     autoScrollButton.setToggleState (true, juce::dontSendNotification);
     autoScrollButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
     autoScrollButton.setColour (juce::ToggleButton::tickColourId, juce::Colours::lightgreen);
+    
+    // Recording Button (Editor Mode only)
+    addAndMakeVisible (recordButton);
+    recordButton.setColour (juce::ToggleButton::textColourId, juce::Colours::red);
+    recordButton.setColour (juce::ToggleButton::tickColourId, juce::Colours::red);
+    recordButton.onClick = [this] { 
+        audioProcessor.setRecordingEnabled(recordButton.getToggleState());
+    };
+    recordButton.setVisible(false);  // Nur im Editor-Modus sichtbar
+    
+    // Clear Recording Button
+    addAndMakeVisible (clearRecordingButton);
+    clearRecordingButton.onClick = [this] { 
+        audioProcessor.clearRecording();
+        refreshFromProcessor();
+    };
+    clearRecordingButton.setVisible(false);  // Nur im Editor-Modus sichtbar
+    
+    // Fret Position Selector (Editor Mode only)
+    addAndMakeVisible (fretPositionLabel);
+    fretPositionLabel.setText("Fret:", juce::dontSendNotification);
+    fretPositionLabel.setFont(juce::FontOptions(11.0f));
+    fretPositionLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+    fretPositionLabel.setVisible(false);
+    
+    addAndMakeVisible (fretPositionSelector);
+    fretPositionSelector.addItem("Low (0-4)", 1);
+    fretPositionSelector.addItem("Mid (5-8)", 2);
+    fretPositionSelector.addItem("High (9-12)", 3);
+    fretPositionSelector.setSelectedId(1, juce::dontSendNotification);  // Default: Low
+    fretPositionSelector.onChange = [this] {
+        int selectedId = fretPositionSelector.getSelectedId();
+        if (selectedId == 1)
+            audioProcessor.setFretPosition(NewProjectAudioProcessor::FretPosition::Low);
+        else if (selectedId == 2)
+            audioProcessor.setFretPosition(NewProjectAudioProcessor::FretPosition::Mid);
+        else if (selectedId == 3)
+            audioProcessor.setFretPosition(NewProjectAudioProcessor::FretPosition::High);
+    };
+    fretPositionSelector.setVisible(false);  // Nur im Editor-Modus sichtbar
     
     // Tabulatur-Ansicht
     addAndMakeVisible (tabView);
@@ -106,7 +157,13 @@ void NewProjectAudioProcessorEditor::resized()
     
     // Load Button
     loadButton.setBounds (toolbar.removeFromLeft(100));
-    toolbar.removeFromLeft(10); // Spacer
+    // Unload Button (direkt neben Load Button)
+    unloadButton.setBounds (toolbar.removeFromLeft(25));
+    toolbar.removeFromLeft(5); // Spacer
+    
+    // Mode Label
+    modeLabel.setBounds (toolbar.removeFromLeft(60));
+    toolbar.removeFromLeft(5); // Spacer
     
     // Zoom Buttons
     zoomOutButton.setBounds (toolbar.removeFromLeft(30));
@@ -125,7 +182,18 @@ void NewProjectAudioProcessorEditor::resized()
     
     // Auto-Scroll Toggle
     autoScrollButton.setBounds (toolbar.removeFromLeft(100));
-    toolbar.removeFromLeft(15); // Spacer
+    toolbar.removeFromLeft(10); // Spacer
+    
+    // Recording Controls (nur im Editor-Modus sichtbar)
+    recordButton.setBounds (toolbar.removeFromLeft(55));
+    toolbar.removeFromLeft(5);
+    clearRecordingButton.setBounds (toolbar.removeFromLeft(45));
+    toolbar.removeFromLeft(5);
+    
+    // Fret Position Selector (nur im Editor-Modus sichtbar)
+    fretPositionLabel.setBounds (toolbar.removeFromLeft(30));
+    fretPositionSelector.setBounds (toolbar.removeFromLeft(90));
+    toolbar.removeFromLeft(10); // Spacer
     
     // Transport Label
     transportLabel.setBounds (toolbar.removeFromLeft(200));
@@ -161,6 +229,7 @@ void NewProjectAudioProcessorEditor::loadButtonClicked()
             if (audioProcessor.loadGP5File(file))
             {
                 refreshFromProcessor();
+                updateModeDisplay();
                 DBG("GP5 erfolgreich geladen!");
             }
             else
@@ -172,8 +241,52 @@ void NewProjectAudioProcessorEditor::loadButtonClicked()
     });
 }
 
+void NewProjectAudioProcessorEditor::unloadButtonClicked()
+{
+    audioProcessor.unloadFile();
+    refreshFromProcessor();
+    updateModeDisplay();
+    tabView.resetScrollPosition();
+    DBG("File unloaded");
+}
+
+void NewProjectAudioProcessorEditor::updateModeDisplay()
+{
+    if (audioProcessor.isFileLoaded())
+    {
+        // Player-Modus
+        modeLabel.setText("Player", juce::dontSendNotification);
+        modeLabel.setColour(juce::Label::textColourId, juce::Colours::lightgreen);
+        modeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF1E5631));
+        unloadButton.setVisible(true);
+        
+        // Recording und Fret-Selector nur im Editor-Modus
+        recordButton.setVisible(false);
+        clearRecordingButton.setVisible(false);
+        fretPositionLabel.setVisible(false);
+        fretPositionSelector.setVisible(false);
+    }
+    else
+    {
+        // Editor-Modus
+        modeLabel.setText("Editor", juce::dontSendNotification);
+        modeLabel.setColour(juce::Label::textColourId, juce::Colours::orange);
+        modeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF5C3D00));
+        unloadButton.setVisible(false);
+        
+        // Recording und Fret-Selector im Editor-Modus verfügbar
+        recordButton.setVisible(true);
+        clearRecordingButton.setVisible(true);
+        fretPositionLabel.setVisible(true);
+        fretPositionSelector.setVisible(true);
+    }
+}
+
 void NewProjectAudioProcessorEditor::refreshFromProcessor()
 {
+    // Modus-Anzeige aktualisieren
+    updateModeDisplay();
+    
     if (!audioProcessor.isFileLoaded())
     {
         // Zeige Editor-Modus Info
@@ -310,17 +423,43 @@ void NewProjectAudioProcessorEditor::timerCallback()
     // ===========================================================================
     if (!audioProcessor.isFileLoaded())
     {
-        // Setze leeren Track mit DAW-Taktart
-        static bool emptyTrackSet = false;
-        if (!emptyTrackSet || tabView.isEditorMode() == false)
+        bool isPlaying = audioProcessor.isHostPlaying();
+        bool isRecording = audioProcessor.isRecording();
+        
+        // Update Recording-Button Farbe basierend auf Status
+        if (isRecording)
         {
-            TabTrack emptyTrack = audioProcessor.getEmptyTabTrack();
-            tabView.setTrack(emptyTrack);
-            tabView.setEditorMode(true);
-            emptyTrackSet = true;
+            recordButton.setColour(juce::ToggleButton::textColourId, juce::Colours::red);
+            recordButton.setColour(juce::ToggleButton::tickDisabledColourId, juce::Colours::darkred);
+        }
+        else
+        {
+            recordButton.setColour(juce::ToggleButton::textColourId, juce::Colours::grey);
         }
         
-        // Live-MIDI-Noten aktualisieren
+        // Zeige aufgezeichnete Noten wenn Recording aktiv oder Aufnahmen vorhanden
+        auto recordedNotes = audioProcessor.getRecordedNotes();
+        if (!recordedNotes.empty())
+        {
+            // Zeige aufgezeichnete Noten als Track
+            TabTrack recordedTrack = audioProcessor.getRecordedTabTrack();
+            tabView.setTrack(recordedTrack);
+            tabView.setEditorMode(true);
+        }
+        else
+        {
+            // Setze leeren Track mit DAW-Taktart
+            static bool emptyTrackSet = false;
+            if (!emptyTrackSet || tabView.isEditorMode() == false)
+            {
+                TabTrack emptyTrack = audioProcessor.getEmptyTabTrack();
+                tabView.setTrack(emptyTrack);
+                tabView.setEditorMode(true);
+                emptyTrackSet = true;
+            }
+        }
+        
+        // Live-MIDI-Noten aktualisieren (werden über den aufgezeichneten Noten angezeigt)
         auto midiNotes = audioProcessor.getLiveMidiNotes();
         std::vector<TabViewComponent::LiveNote> liveNotes;
         for (const auto& note : midiNotes)
@@ -334,12 +473,16 @@ void NewProjectAudioProcessorEditor::timerCallback()
         tabView.setLiveNotes(liveNotes);
         
         // Auch im Editor-Modus: Playhead-Position aktualisieren und bei Start zum ersten Takt scrollen
-        bool isPlaying = audioProcessor.isHostPlaying();
         double positionInBeats = audioProcessor.getHostPositionInBeats();
         
-        // Bei negativen Beats (Vorzähl-Pause) oder Play-Start: Position auf 0 setzen
-        int currentMeasure = (positionInBeats < 0.0) ? 0 : 0;  // Im Editor-Modus immer Takt 0
-        double positionInMeasure = (positionInBeats < 0.0) ? 0.0 : juce::jlimit(0.0, 1.0, positionInBeats / 4.0);  // Annahme: 4/4 Takt
+        // Berechne Takt basierend auf DAW-Taktart
+        int numerator = audioProcessor.getHostTimeSignatureNumerator();
+        int denominator = audioProcessor.getHostTimeSignatureDenominator();
+        double beatsPerMeasure = numerator * (4.0 / denominator);
+        
+        int currentMeasure = (positionInBeats < 0.0) ? 0 : (int)(positionInBeats / beatsPerMeasure);
+        double positionInMeasure = (positionInBeats < 0.0) ? 0.0 : 
+            std::fmod(positionInBeats, beatsPerMeasure) / beatsPerMeasure;
         
         tabView.setPlayheadPosition(positionInMeasure);
         tabView.setCurrentMeasure(currentMeasure);

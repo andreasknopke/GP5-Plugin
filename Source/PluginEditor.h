@@ -33,6 +33,10 @@ private:
     
     // 1. Der Button
     juce::TextButton loadButton { "Load GuitarPro File" };
+    juce::TextButton unloadButton { "-" };
+    
+    // Mode Label (Player/Editor)
+    juce::Label modeLabel;
     
     // 2. Zoom Buttons
     juce::TextButton zoomInButton { "+" };
@@ -60,17 +64,27 @@ private:
     // 8. Auto-Scroll Toggle
     juce::ToggleButton autoScrollButton { "Auto-Scroll" };
     
+    // 8b. Recording Button (Editor Mode only)
+    juce::ToggleButton recordButton { "REC" };
+    juce::TextButton clearRecordingButton { "Clear" };
+    
+    // 8c. Fret Position Selector (Editor Mode only)
+    juce::ComboBox fretPositionSelector;
+    juce::Label fretPositionLabel;
+    
     // 9. Track Settings Panel (popup)
     std::unique_ptr<TrackSettingsComponent> trackSettingsPanel;
     bool settingsPanelVisible = false;
 
     // 10. Hilfsfunktionen
     void loadButtonClicked();
+    void unloadButtonClicked();
     void trackSelectionChanged();
     void updateTrackSelector();
     void refreshFromProcessor();
     void updateTransportDisplay();
     void toggleSettingsPanel();
+    void updateModeDisplay();
     
     // 11. State
     int lastDisplayedMeasure = -1;

@@ -266,6 +266,10 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     {
         std::lock_guard<std::mutex> lock(liveMidiMutex);
         
+        double currentBeat = hostPositionBeats.load();
+        bool isPlaying = hostIsPlaying.load();
+        bool shouldRecord = recordingEnabled.load() && isPlaying && currentBeat >= 0.0;
+        
         for (const auto metadata : midiMessages)
         {
             const auto msg = metadata.getMessage();
@@ -276,15 +280,63 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                 int velocity = msg.getVelocity();
                 LiveMidiNote tabNote = midiNoteToTab(midiNote, velocity);
                 liveMidiNotes[midiNote] = tabNote;
+                
+                // Recording: Start einer neuen Note
+                if (shouldRecord)
+                {
+                    std::lock_guard<std::mutex> recLock(recordingMutex);
+                    RecordedNote recNote;
+                    recNote.midiNote = midiNote;
+                    recNote.velocity = velocity;
+                    recNote.string = tabNote.string;
+                    recNote.fret = tabNote.fret;
+                    recNote.startBeat = currentBeat;
+                    recNote.endBeat = currentBeat;  // Wird beim Note-Off aktualisiert
+                    recNote.isActive = true;
+                    
+                    recordedNotes.push_back(recNote);
+                    activeRecordingNotes[midiNote] = recordedNotes.size() - 1;
+                }
             }
             else if (msg.isNoteOff())
             {
                 int midiNote = msg.getNoteNumber();
                 liveMidiNotes.erase(midiNote);
+                
+                // Recording: Note beenden
+                if (recordingEnabled.load())
+                {
+                    std::lock_guard<std::mutex> recLock(recordingMutex);
+                    auto it = activeRecordingNotes.find(midiNote);
+                    if (it != activeRecordingNotes.end())
+                    {
+                        if (it->second < recordedNotes.size())
+                        {
+                            recordedNotes[it->second].endBeat = currentBeat;
+                            recordedNotes[it->second].isActive = false;
+                        }
+                        activeRecordingNotes.erase(it);
+                    }
+                }
             }
             else if (msg.isAllNotesOff() || msg.isAllSoundOff())
             {
                 liveMidiNotes.clear();
+                
+                // Recording: Alle aktiven Noten beenden
+                if (recordingEnabled.load())
+                {
+                    std::lock_guard<std::mutex> recLock(recordingMutex);
+                    for (auto& [note, idx] : activeRecordingNotes)
+                    {
+                        if (idx < recordedNotes.size())
+                        {
+                            recordedNotes[idx].endBeat = currentBeat;
+                            recordedNotes[idx].isActive = false;
+                        }
+                    }
+                    activeRecordingNotes.clear();
+                }
             }
         }
     }
@@ -477,6 +529,7 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             
             // Iteriere über Tracks
             int numTracks = juce::jmin((int)tracks.size(), maxTracks);
+            
             for (int trackIdx = 0; trackIdx < numTracks; ++trackIdx)
             {
                 bool isMuted = isTrackMuted(trackIdx);
@@ -652,6 +705,13 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                             // Note On
                             generatedMidi.addEvent(juce::MidiMessage::noteOn(midiChannel, midiNote, (juce::uint8)velocity), 0);
                             activeNotesPerChannel[midiChannel].insert(midiNote);
+                            
+                            // Mark track as playing - calculate note end time in milliseconds
+                            double tempo = hostTempo.load();
+                            if (tempo <= 0.0) tempo = 120.0;  // Fallback
+                            double noteDurationMs = beatDurationBeats * 60000.0 / tempo;
+                            double noteEndTime = juce::Time::getMillisecondCounterHiRes() + noteDurationMs;
+                            trackNoteEndTime[trackIdx].store(noteEndTime);
                         }
                     }
                     
@@ -711,6 +771,22 @@ void NewProjectAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("filePath", loadedFilePath, nullptr);
     state.setProperty ("selectedTrack", selectedTrackIndex.load(), nullptr);
     state.setProperty ("autoScroll", autoScrollEnabled.load(), nullptr);
+    state.setProperty ("fretPosition", static_cast<int>(fretPosition.load()), nullptr);
+    
+    // Speichere Track-MIDI-Einstellungen
+    juce::ValueTree trackSettings ("TrackSettings");
+    for (int i = 0; i < maxTracks; ++i)
+    {
+        juce::ValueTree track ("Track");
+        track.setProperty ("index", i, nullptr);
+        track.setProperty ("midiChannel", trackMidiChannels[i].load(), nullptr);
+        track.setProperty ("muted", trackMuted[i].load(), nullptr);
+        track.setProperty ("solo", trackSolo[i].load(), nullptr);
+        track.setProperty ("volume", trackVolume[i].load(), nullptr);
+        track.setProperty ("pan", trackPan[i].load(), nullptr);
+        trackSettings.appendChild (track, nullptr);
+    }
+    state.appendChild (trackSettings, nullptr);
     
     juce::MemoryOutputStream stream (destData, false);
     state.writeToStream (stream);
@@ -737,7 +813,55 @@ void NewProjectAudioProcessor::setStateInformation (const void* data, int sizeIn
         // Lade UI-Zustand
         savedSelectedTrack = state.getProperty ("selectedTrack", 0);
         autoScrollEnabled.store(state.getProperty ("autoScroll", true));
+        
+        // Lade Fret Position
+        int fretPosInt = state.getProperty ("fretPosition", 1);  // Default: Mid
+        fretPosition.store(fretPosInt);
+        
+        // Lade Track-MIDI-Einstellungen
+        juce::ValueTree trackSettings = state.getChildWithName ("TrackSettings");
+        if (trackSettings.isValid())
+        {
+            for (int i = 0; i < trackSettings.getNumChildren(); ++i)
+            {
+                juce::ValueTree track = trackSettings.getChild (i);
+                int trackIndex = track.getProperty ("index", -1);
+                
+                if (trackIndex >= 0 && trackIndex < maxTracks)
+                {
+                    trackMidiChannels[trackIndex].store (track.getProperty ("midiChannel", trackIndex + 1));
+                    trackMuted[trackIndex].store (track.getProperty ("muted", false));
+                    trackSolo[trackIndex].store (track.getProperty ("solo", false));
+                    trackVolume[trackIndex].store (track.getProperty ("volume", 100));
+                    trackPan[trackIndex].store (track.getProperty ("pan", 64));
+                }
+            }
+        }
     }
+}
+
+void NewProjectAudioProcessor::unloadFile()
+{
+    fileLoaded = false;
+    loadedFilePath = "";
+    
+    // Reset all track settings
+    for (int i = 0; i < maxTracks; ++i)
+    {
+        lastProcessedBeatPerTrack[i] = -1;
+        lastProcessedMeasurePerTrack[i] = -1;
+        trackMuted[i].store(false);
+        trackSolo[i].store(false);
+    }
+    
+    // Clear active notes and bends
+    activeBendCount = 0;
+    activeNotesPerChannel.clear();
+    
+    // Clear seek position
+    clearSeekPosition();
+    
+    DBG("Processor: File unloaded");
 }
 
 bool NewProjectAudioProcessor::loadGP5File(const juce::File& file)
@@ -976,14 +1100,35 @@ NewProjectAudioProcessor::LiveMidiNote NewProjectAudioProcessor::midiNoteToTab(i
     result.midiNote = midiNote;
     result.velocity = velocity;
     
+    // Fret position preferences
+    // Low: 0-4, Mid: 5-8, High: 9-12
+    FretPosition pos = getFretPosition();
+    int preferredMinFret, preferredMaxFret;
+    switch (pos)
+    {
+        case FretPosition::Mid:
+            preferredMinFret = 5;
+            preferredMaxFret = 8;
+            break;
+        case FretPosition::High:
+            preferredMinFret = 9;
+            preferredMaxFret = 12;
+            break;
+        case FretPosition::Low:
+        default:
+            preferredMinFret = 0;
+            preferredMaxFret = 4;
+            break;
+    }
+    
     // Standard guitar range: E2 (40) to approximately E6 (88)
-    // Find the best string/fret combination using standard position
-    // Priority: Use the lowest string that can play the note within reasonable fret range
+    // Find the best string/fret combination based on preferred fret range
     
     int bestString = -1;
     int bestFret = -1;
+    int bestScore = -1000;
     
-    for (int s = 5; s >= 0; --s)  // Start from lowest string (index 5 = E2)
+    for (int s = 0; s < 6; ++s)
     {
         int openStringNote = standardTuning[s];
         int fret = midiNote - openStringNote;
@@ -991,9 +1136,34 @@ NewProjectAudioProcessor::LiveMidiNote NewProjectAudioProcessor::midiNoteToTab(i
         // Valid fret range: 0-24
         if (fret >= 0 && fret <= 24)
         {
-            // Prefer positions in the lower frets (more comfortable)
-            if (bestString < 0 || fret < bestFret)
+            // Calculate score - higher is better
+            int score = 0;
+            
+            // Prefer frets within the selected range
+            if (fret >= preferredMinFret && fret <= preferredMaxFret)
             {
+                score += 100;  // Big bonus for being in preferred range
+            }
+            else
+            {
+                // Penalty based on distance from preferred range
+                int distFromRange = 0;
+                if (fret < preferredMinFret)
+                    distFromRange = preferredMinFret - fret;
+                else
+                    distFromRange = fret - preferredMaxFret;
+                score -= distFromRange * 5;
+            }
+            
+            // Small preference for higher strings (thinner, more typical for melodies)
+            score += (5 - s) * 2;
+            
+            // Slight preference for lower frets within the range
+            score -= (fret / 5);
+            
+            if (score > bestScore)
+            {
+                bestScore = score;
                 bestString = s;
                 bestFret = fret;
             }
@@ -1002,14 +1172,17 @@ NewProjectAudioProcessor::LiveMidiNote NewProjectAudioProcessor::midiNoteToTab(i
     
     if (bestString >= 0)
     {
-        result.string = bestString;
+        // Tuning array is index 0=E2 (lowest), 5=E4 (highest)
+        // Display expects index 0=top line (highest), 5=bottom line (lowest)
+        // So we need to invert: display_string = 5 - tuning_string
+        result.string = 5 - bestString;
         result.fret = bestFret;
     }
     else
     {
         // Note is out of guitar range - show on first string as high fret
         result.string = 0;
-        result.fret = juce::jmax(0, midiNote - standardTuning[0]);
+        result.fret = juce::jmax(0, midiNote - standardTuning[5]);  // E4 is highest
     }
     
     return result;
@@ -1021,6 +1194,26 @@ std::vector<NewProjectAudioProcessor::LiveMidiNote> NewProjectAudioProcessor::ge
     
     if (liveMidiNotes.empty())
         return {};
+    
+    // Hole bevorzugten Fret-Bereich
+    FretPosition pos = getFretPosition();
+    int preferredMinFret, preferredMaxFret;
+    switch (pos)
+    {
+        case FretPosition::Mid:
+            preferredMinFret = 5;
+            preferredMaxFret = 8;
+            break;
+        case FretPosition::High:
+            preferredMinFret = 9;
+            preferredMaxFret = 12;
+            break;
+        case FretPosition::Low:
+        default:
+            preferredMinFret = 0;
+            preferredMaxFret = 4;
+            break;
+    }
     
     // Sammle alle aktiven Noten und sortiere sie nach Tonhöhe (niedrig zu hoch)
     std::vector<std::pair<int, int>> notesWithVelocity;  // midiNote, velocity
@@ -1034,6 +1227,7 @@ std::vector<NewProjectAudioProcessor::LiveMidiNote> NewProjectAudioProcessor::ge
     struct NoteOption {
         int string;
         int fret;
+        int score;  // Score für diese Option
     };
     std::vector<std::vector<NoteOption>> allOptions;
     
@@ -1045,14 +1239,37 @@ std::vector<NewProjectAudioProcessor::LiveMidiNote> NewProjectAudioProcessor::ge
             int fret = midiNote - standardTuning[s];
             if (fret >= 0 && fret <= 24)
             {
-                options.push_back({s, fret});
+                // Berechne Score für diese Option
+                int score = 0;
+                
+                // Bonus für Frets im bevorzugten Bereich
+                if (fret >= preferredMinFret && fret <= preferredMaxFret)
+                {
+                    score += 100;
+                }
+                else
+                {
+                    // Strafe basierend auf Distanz zum bevorzugten Bereich
+                    int dist = 0;
+                    if (fret < preferredMinFret)
+                        dist = preferredMinFret - fret;
+                    else
+                        dist = fret - preferredMaxFret;
+                    score -= dist * 10;
+                }
+                
+                options.push_back({s, fret, score});
             }
         }
+        // Sortiere Optionen nach Score (höchster zuerst)
+        std::sort(options.begin(), options.end(), [](const NoteOption& a, const NoteOption& b) {
+            return a.score > b.score;
+        });
         allOptions.push_back(options);
     }
     
     // Finde die beste Kombination mit minimaler Bund-Spannweite
-    // Maximal 4 Bünde Unterschied (typische Handspanne), Leersaiten (0) ausgenommen
+    // Maximal 4 Bünde Unterschied (typische Handspanne), aber nur für Bünde > 0
     const int maxFretSpan = 4;
     
     std::vector<LiveMidiNote> bestResult;
@@ -1082,12 +1299,17 @@ std::vector<NewProjectAudioProcessor::LiveMidiNote> NewProjectAudioProcessor::ge
             if (fretSpan > maxFretSpan)
                 return;  // Zu große Spannweite
             
-            // Berechne Score (niedrigere Bünde besser, kleinere Spannweite besser)
-            int score = 1000 - minFret * 10 - fretSpan * 20;
+            // Berechne Score basierend auf bevorzugtem Fret-Bereich
+            int score = 0;
             
-            // Bonus für Leersaiten
+            // Summiere die Scores aller Optionen (basierend auf Fret-Position-Präferenz)
             for (const auto& opt : current)
-                if (opt.fret == 0) score += 15;
+            {
+                score += opt.score;
+            }
+            
+            // Kleine Strafe für größere Spannweite
+            score -= fretSpan * 5;
             
             if (score > bestScore)
             {
@@ -1098,7 +1320,8 @@ std::vector<NewProjectAudioProcessor::LiveMidiNote> NewProjectAudioProcessor::ge
                     LiveMidiNote ln;
                     ln.midiNote = notesWithVelocity[i].first;
                     ln.velocity = notesWithVelocity[i].second;
-                    ln.string = current[i].string;
+                    // Convert string index: tuning[0]=E2(lowest) -> display[5]=bottom
+                    ln.string = 5 - current[i].string;
                     ln.fret = current[i].fret;
                     bestResult.push_back(ln);
                 }
@@ -1106,7 +1329,7 @@ std::vector<NewProjectAudioProcessor::LiveMidiNote> NewProjectAudioProcessor::ge
             return;
         }
         
-        // Versuche jede Option für diese Note
+        // Versuche jede Option für diese Note (bereits nach Score sortiert)
         for (const auto& opt : allOptions[noteIdx])
         {
             if (usedStrings.count(opt.string) > 0)
@@ -1167,7 +1390,7 @@ TabTrack NewProjectAudioProcessor::getEmptyTabTrack() const
     int numerator = hostTimeSigNumerator.load();
     int denominator = hostTimeSigDenominator.load();
     
-    // Create a few empty measures for display
+    // Create a few empty measures for display (truly empty - no rests shown)
     for (int m = 0; m < 4; ++m)
     {
         TabMeasure measure;
@@ -1175,19 +1398,139 @@ TabTrack NewProjectAudioProcessor::getEmptyTabTrack() const
         measure.timeSignatureNumerator = numerator;
         measure.timeSignatureDenominator = denominator;
         
-        // Add empty beats based on time signature
-        int beatsPerMeasure = numerator;
-        for (int b = 0; b < beatsPerMeasure; ++b)
+        // Keine Beats hinzufügen - Takte bleiben wirklich leer
+        
+        track.measures.add(measure);
+    }
+    
+    return track;
+}
+
+//==============================================================================
+// Recording functionality
+//==============================================================================
+void NewProjectAudioProcessor::setRecordingEnabled(bool enabled)
+{
+    recordingEnabled.store(enabled);
+    DBG("Recording " << (enabled ? "enabled" : "disabled"));
+}
+
+void NewProjectAudioProcessor::clearRecording()
+{
+    std::lock_guard<std::mutex> lock(recordingMutex);
+    recordedNotes.clear();
+    activeRecordingNotes.clear();
+    DBG("Recording cleared");
+}
+
+std::vector<NewProjectAudioProcessor::RecordedNote> NewProjectAudioProcessor::getRecordedNotes() const
+{
+    std::lock_guard<std::mutex> lock(recordingMutex);
+    return recordedNotes;
+}
+
+TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
+{
+    TabTrack track;
+    track.name = "Recording";
+    track.stringCount = 6;
+    track.tuning = { 40, 45, 50, 55, 59, 64 };  // E-Standard
+    track.colour = juce::Colours::red;
+    
+    int numerator = hostTimeSigNumerator.load();
+    int denominator = hostTimeSigDenominator.load();
+    double beatsPerMeasure = numerator * (4.0 / denominator);
+    
+    // Hole aufgezeichnete Noten
+    std::vector<RecordedNote> notes;
+    {
+        std::lock_guard<std::mutex> lock(recordingMutex);
+        notes = recordedNotes;
+    }
+    
+    if (notes.empty())
+    {
+        // Leere Takte zurückgeben
+        for (int m = 0; m < 4; ++m)
         {
-            TabBeat beat;
-            beat.isRest = true;
-            // Duration based on denominator
-            if (denominator == 4) beat.duration = NoteDuration::Quarter;
-            else if (denominator == 8) beat.duration = NoteDuration::Eighth;
-            else if (denominator == 2) beat.duration = NoteDuration::Half;
-            else beat.duration = NoteDuration::Quarter;
-            
-            measure.beats.add(beat);
+            TabMeasure measure;
+            measure.measureNumber = m + 1;
+            measure.timeSignatureNumerator = numerator;
+            measure.timeSignatureDenominator = denominator;
+            track.measures.add(measure);
+        }
+        return track;
+    }
+    
+    // Finde den letzten Beat
+    double maxBeat = 0.0;
+    for (const auto& note : notes)
+    {
+        maxBeat = std::max(maxBeat, note.endBeat);
+    }
+    
+    // Anzahl der benötigten Takte
+    int numMeasures = std::max(4, (int)std::ceil(maxBeat / beatsPerMeasure) + 1);
+    
+    // Erstelle Takte
+    for (int m = 0; m < numMeasures; ++m)
+    {
+        TabMeasure measure;
+        measure.measureNumber = m + 1;
+        measure.timeSignatureNumerator = numerator;
+        measure.timeSignatureDenominator = denominator;
+        
+        double measureStartBeat = m * beatsPerMeasure;
+        double measureEndBeat = measureStartBeat + beatsPerMeasure;
+        
+        // Finde alle Noten die in diesem Takt starten
+        for (const auto& note : notes)
+        {
+            if (note.startBeat >= measureStartBeat && note.startBeat < measureEndBeat)
+            {
+                // Berechne Position im Takt (0.0 - 1.0)
+                double positionInMeasure = (note.startBeat - measureStartBeat) / beatsPerMeasure;
+                
+                // Finde oder erstelle einen Beat an dieser Position
+                // Quantisiere auf 16tel-Noten
+                int quantizedPos = (int)(positionInMeasure * 16.0 + 0.5);
+                quantizedPos = juce::jlimit(0, 15, quantizedPos);
+                
+                // Suche existierenden Beat oder erstelle neuen
+                bool found = false;
+                for (auto& beat : measure.beats)
+                {
+                    // Einfache Implementierung: füge Note zum ersten Beat hinzu
+                    // In einer erweiterten Version würde man die genaue Position berücksichtigen
+                }
+                
+                if (!found)
+                {
+                    TabBeat beat;
+                    beat.isRest = false;
+                    
+                    // Berechne Notendauer basierend auf Note-Länge
+                    double noteDuration = note.endBeat - note.startBeat;
+                    if (noteDuration >= beatsPerMeasure)
+                        beat.duration = NoteDuration::Whole;
+                    else if (noteDuration >= beatsPerMeasure / 2)
+                        beat.duration = NoteDuration::Half;
+                    else if (noteDuration >= beatsPerMeasure / 4)
+                        beat.duration = NoteDuration::Quarter;
+                    else if (noteDuration >= beatsPerMeasure / 8)
+                        beat.duration = NoteDuration::Eighth;
+                    else
+                        beat.duration = NoteDuration::Sixteenth;
+                    
+                    TabNote tabNote;
+                    tabNote.string = note.string;
+                    tabNote.fret = note.fret;
+                    tabNote.velocity = note.velocity;
+                    beat.notes.add(tabNote);
+                    
+                    measure.beats.add(beat);
+                }
+            }
         }
         
         track.measures.add(measure);

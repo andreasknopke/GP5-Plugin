@@ -93,6 +93,7 @@ public:
     void setLoadedFilePath(const juce::String& path) { loadedFilePath = path; }
     
     bool loadGP5File(const juce::File& file);
+    void unloadFile();
     bool isFileLoaded() const { return fileLoaded; }
     
     //==============================================================================
@@ -221,6 +222,18 @@ public:
             trackPan[trackIndex].store(juce::jlimit(0, 127, pan));
     }
     
+    // Check if a track is currently playing notes
+    bool isTrackPlaying(int trackIndex) const
+    {
+        if (trackIndex >= 0 && trackIndex < maxTracks)
+        {
+            double endTime = trackNoteEndTime[trackIndex].load();
+            double now = juce::Time::getMillisecondCounterHiRes();
+            return now < endTime;
+        }
+        return false;
+    }
+    
     // Initialize track settings based on GP5 file
     void initializeTrackSettings();
     
@@ -228,12 +241,28 @@ public:
     // MIDI Input -> Tab Display (Editor Mode)
     //==============================================================================
     
+    // Fret position preference for MIDI to Tab conversion
+    enum class FretPosition { Low, Mid, High };
+    void setFretPosition(FretPosition pos) { fretPosition.store(static_cast<int>(pos)); }
+    FretPosition getFretPosition() const { return static_cast<FretPosition>(fretPosition.load()); }
+    
     // Get live MIDI notes for display (thread-safe)
     struct LiveMidiNote {
         int midiNote = 0;
         int velocity = 0;
         int string = 0;    // Calculated string (0 = highest)
         int fret = 0;      // Calculated fret
+    };
+    
+    // Recorded note with timing information
+    struct RecordedNote {
+        int midiNote = 0;
+        int velocity = 0;
+        int string = 0;
+        int fret = 0;
+        double startBeat = 0.0;   // When note started (in beats)
+        double endBeat = 0.0;     // When note ended (in beats)
+        bool isActive = false;    // Still being held
     };
     
     // Get currently held notes for display
@@ -244,6 +273,16 @@ public:
     
     // Check if we have live MIDI input
     bool hasLiveMidiInput() const { return !liveMidiNotes.empty(); }
+    
+    //==============================================================================
+    // Recording functionality (Editor Mode)
+    //==============================================================================
+    void setRecordingEnabled(bool enabled);
+    bool isRecordingEnabled() const { return recordingEnabled.load(); }
+    bool isRecording() const { return recordingEnabled.load() && hostIsPlaying.load(); }
+    void clearRecording();
+    std::vector<RecordedNote> getRecordedNotes() const;
+    TabTrack getRecordedTabTrack() const;  // Convert recorded notes to TabTrack for display
 
 private:
     //==============================================================================
@@ -264,6 +303,7 @@ private:
     std::atomic<bool> trackSolo[maxTracks];
     std::atomic<int> trackVolume[maxTracks];
     std::atomic<int> trackPan[maxTracks];
+    std::atomic<double> trackNoteEndTime[maxTracks];  // Millisecond timestamp when current note ends
     
     // Per-track active notes (for proper note-off per channel)
     std::map<int, std::set<int>> activeNotesPerChannel;  // channel -> active MIDI notes
@@ -320,6 +360,15 @@ private:
     //==============================================================================
     mutable std::mutex liveMidiMutex;
     std::map<int, LiveMidiNote> liveMidiNotes;  // midiNote -> LiveMidiNote
+    
+    // Recording state
+    std::atomic<bool> recordingEnabled { false };
+    mutable std::mutex recordingMutex;
+    std::vector<RecordedNote> recordedNotes;
+    std::map<int, size_t> activeRecordingNotes;  // midiNote -> index in recordedNotes
+    
+    // Fret position preference (0=Low, 1=Mid, 2=High)
+    std::atomic<int> fretPosition { 0 };  // Default: Low
     
     // Standard guitar tuning for MIDI to Tab conversion (E2, A2, D3, G3, B3, E4)
     const std::array<int, 6> standardTuning = { 40, 45, 50, 55, 59, 64 };
