@@ -26,6 +26,13 @@ class TabViewComponent : public juce::Component,
                          public juce::ScrollBar::Listener
 {
 public:
+    // Structure for live MIDI notes to display
+    struct LiveNote {
+        int string = 0;
+        int fret = 0;
+        int velocity = 100;
+    };
+    
     TabViewComponent()
     {
         // Horizontal scrollbar
@@ -46,6 +53,22 @@ public:
         recalculateLayout();
         repaint();
     }
+    
+    // Set live MIDI notes to display (for editor mode)
+    void setLiveNotes(const std::vector<LiveNote>& notes)
+    {
+        liveNotes = notes;
+        repaint();
+    }
+    
+    // Enable/disable editor mode (show empty tab with live notes)
+    void setEditorMode(bool enabled)
+    {
+        editorMode = enabled;
+        repaint();
+    }
+    
+    bool isEditorMode() const { return editorMode; }
     
     void setZoom(float newZoom)
     {
@@ -216,6 +239,46 @@ public:
             g.setColour(juce::Colours::limegreen);
             g.fillRect(playheadX - 1.0f, yOffset, 3.0f, trackHeight);
         }
+        
+        // Draw live MIDI notes (editor mode)
+        if (!liveNotes.empty())
+        {
+            // Position for live notes: center of the visible area
+            float centerX = static_cast<float>(getWidth()) / 2.0f;
+            float firstStringY = yOffset + scaledConfig.topMargin;
+            
+            // Draw a vertical line to indicate current input position
+            g.setColour(juce::Colour(0x40FF6600));  // Transparent orange
+            g.fillRect(centerX - 30.0f, yOffset, 60.0f, trackHeight);
+            
+            // Draw each live note
+            for (const auto& note : liveNotes)
+            {
+                if (note.string >= 0 && note.string < 6)
+                {
+                    float stringY = firstStringY + note.string * scaledConfig.stringSpacing;
+                    
+                    // Draw highlighted fret number
+                    juce::String fretText = juce::String(note.fret);
+                    
+                    // Background box
+                    float textWidth = scaledConfig.fretFontSize * (note.fret >= 10 ? 1.4f : 0.9f);
+                    g.setColour(juce::Colours::orange);
+                    g.fillRoundedRectangle(centerX - textWidth/2 - 3, stringY - scaledConfig.fretFontSize/2 - 2, 
+                                           textWidth + 6, scaledConfig.fretFontSize + 4, 3.0f);
+                    
+                    // Fret number text
+                    g.setColour(juce::Colours::white);
+                    g.setFont(juce::Font(juce::FontOptions(scaledConfig.fretFontSize)).boldened());
+                    g.drawText(fretText, 
+                               static_cast<int>(centerX - textWidth/2 - 3), 
+                               static_cast<int>(stringY - scaledConfig.fretFontSize/2 - 2),
+                               static_cast<int>(textWidth + 6), 
+                               static_cast<int>(scaledConfig.fretFontSize + 4),
+                               juce::Justification::centred, false);
+                }
+            }
+        }
     }
     
     void resized() override
@@ -299,6 +362,10 @@ private:
     int currentPlayingMeasure = -1;
     double playheadPositionInMeasure = 0.0;
     float lastPlayheadX = 0.0f;  // Für Erkennung von Positionänderungen
+    
+    // Editor mode (live MIDI input display)
+    bool editorMode = false;
+    std::vector<LiveNote> liveNotes;
     
     juce::ScrollBar horizontalScrollbar { false };
     const int scrollbarHeight = 14;

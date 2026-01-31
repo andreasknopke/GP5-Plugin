@@ -175,7 +175,16 @@ void NewProjectAudioProcessorEditor::loadButtonClicked()
 void NewProjectAudioProcessorEditor::refreshFromProcessor()
 {
     if (!audioProcessor.isFileLoaded())
+    {
+        // Zeige Editor-Modus Info
+        infoLabel.setText("No file loaded - Play MIDI to see notes on tab", juce::dontSendNotification);
+        
+        // Setze leeren Track mit DAW-Taktart
+        TabTrack emptyTrack = audioProcessor.getEmptyTabTrack();
+        tabView.setTrack(emptyTrack);
+        tabView.setEditorMode(true);
         return;
+    }
     
     const auto& info = audioProcessor.getActiveSongInfo();
     int trackCount = audioProcessor.getActiveTracks().size();
@@ -295,6 +304,45 @@ void NewProjectAudioProcessorEditor::trackSelectionChanged()
 void NewProjectAudioProcessorEditor::timerCallback()
 {
     updateTransportDisplay();
+    
+    // ===========================================================================
+    // Editor Mode: Zeige leeren Tab mit Live-MIDI-Noten wenn keine Datei geladen
+    // ===========================================================================
+    if (!audioProcessor.isFileLoaded())
+    {
+        // Setze leeren Track mit DAW-Taktart
+        static bool emptyTrackSet = false;
+        if (!emptyTrackSet || tabView.isEditorMode() == false)
+        {
+            TabTrack emptyTrack = audioProcessor.getEmptyTabTrack();
+            tabView.setTrack(emptyTrack);
+            tabView.setEditorMode(true);
+            emptyTrackSet = true;
+        }
+        
+        // Live-MIDI-Noten aktualisieren
+        auto midiNotes = audioProcessor.getLiveMidiNotes();
+        std::vector<TabViewComponent::LiveNote> liveNotes;
+        for (const auto& note : midiNotes)
+        {
+            TabViewComponent::LiveNote ln;
+            ln.string = note.string;
+            ln.fret = note.fret;
+            ln.velocity = note.velocity;
+            liveNotes.push_back(ln);
+        }
+        tabView.setLiveNotes(liveNotes);
+        return;  // Keine weitere Verarbeitung nötig
+    }
+    else
+    {
+        // File ist geladen - Editor-Modus deaktivieren
+        if (tabView.isEditorMode())
+        {
+            tabView.setEditorMode(false);
+            tabView.setLiveNotes({});  // Clear live notes
+        }
+    }
     
     bool isPlaying = audioProcessor.isHostPlaying();
     

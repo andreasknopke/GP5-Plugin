@@ -1,0 +1,58 @@
+GP5 VST Editor - Alpha 0.4
+===========================
+
+Release Date: January 31, 2026
+
+NEW FEATURES:
+-------------
+* Guitar Pro 7/8 (.gp) file support
+  - Parses GPIF XML from .gp archive format
+  - Full note, chord, and effect extraction
+
+* Chord Name Display
+  - Shows chord names above the tablature (Am, E5+/G#, FM7, etc.)
+  - Works with GP3, GP4, GP5, GP7, and GP8 files
+
+* Improved Rhythm Notation Beaming
+  - Beam grouping now matches Guitar Pro style
+  - 4/4: 4 eighth notes per beam group (half-measure)
+  - 6/8, 9/8, 12/8: 3 eighth notes per beam group (dotted quarter)
+  - 3/4, 5/4, 7/4: 2 eighth notes per beam group (per quarter beat)
+
+* Fixed MIDI Channel Settings
+  - Volume, Pan, Chorus, Reverb, Phaser, Tremolo now display correctly
+  - Fixed compressed value parsing in GP3/4/5 files
+
+* Updated Load Dialog
+  - Button text changed to "Load GuitarPro File"
+  - File filter updated to include .gp extension
+
+SUPPORTED FORMATS:
+------------------
+* Guitar Pro 3 (.gp3)
+* Guitar Pro 4 (.gp4)
+* Guitar Pro 5 (.gp5)
+* Guitar Pro 7 (.gp)
+* Guitar Pro 8 (.gp)
+
+INSTALLATION:
+-------------
+1. Extract GP5_VST_Editor.vst3 folder to your VST3 directory:
+   - Windows: C:\Program Files\Common Files\VST3\
+2. Rescan plugins in your DAW
+3. Load GP5 VST Editor as an instrument
+
+REQUIREMENTS:
+-------------
+* Windows 10/11 (64-bit)
+* VST3-compatible DAW (Cubase, Reaper, FL Studio, etc.)
+* Guitar sampler for MIDI output (HALion, Kontakt, etc.)
+
+KNOWN ISSUES:
+-------------
+* Some advanced GP7/8 effects not yet implemented
+* Grace notes timing may vary
+
+FEEDBACK:
+---------
+Report issues at: https://github.com/andreasknopke/GP5-Plugin/issues

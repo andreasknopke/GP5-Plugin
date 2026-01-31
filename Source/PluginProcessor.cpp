@@ -261,6 +261,35 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     }
 
     // =========================================================================
+    // MIDI Input - Verarbeite eingehende MIDI-Noten für Tab-Anzeige
+    // =========================================================================
+    {
+        std::lock_guard<std::mutex> lock(liveMidiMutex);
+        
+        for (const auto metadata : midiMessages)
+        {
+            const auto msg = metadata.getMessage();
+            
+            if (msg.isNoteOn())
+            {
+                int midiNote = msg.getNoteNumber();
+                int velocity = msg.getVelocity();
+                LiveMidiNote tabNote = midiNoteToTab(midiNote, velocity);
+                liveMidiNotes[midiNote] = tabNote;
+            }
+            else if (msg.isNoteOff())
+            {
+                int midiNote = msg.getNoteNumber();
+                liveMidiNotes.erase(midiNote);
+            }
+            else if (msg.isAllNotesOff() || msg.isAllSoundOff())
+            {
+                liveMidiNotes.clear();
+            }
+        }
+    }
+    
+    // =========================================================================
     // MIDI Output - Mit Echtzeit-Bend-Interpolation
     // =========================================================================
     if (fileLoaded && midiOutputEnabled.load())
@@ -530,8 +559,8 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                             }
                             else if (stringIndex < 6)
                             {
-                                const int standardTuning[] = { 64, 59, 55, 50, 45, 40 };
-                                midiNote = standardTuning[stringIndex] + gpNote.fret;
+                                const int defaultTuning[] = { 64, 59, 55, 50, 45, 40 };
+                                midiNote = defaultTuning[stringIndex] + gpNote.fret;
                             }
                             
                             if (midiNote <= 0 || midiNote >= 128)
@@ -918,6 +947,236 @@ void NewProjectAudioProcessor::setSeekPosition(int measureIndex, double position
     
     DBG("Seek to: Measure " << (measureIndex + 1) << ", Position " << positionInMeasure 
         << " = " << totalBeats << " beats");
+}
+
+//==============================================================================
+// MIDI Input -> Tab Display (Editor Mode)
+//==============================================================================
+
+NewProjectAudioProcessor::LiveMidiNote NewProjectAudioProcessor::midiNoteToTab(int midiNote, int velocity) const
+{
+    LiveMidiNote result;
+    result.midiNote = midiNote;
+    result.velocity = velocity;
+    
+    // Standard guitar range: E2 (40) to approximately E6 (88)
+    // Find the best string/fret combination using standard position
+    // Priority: Use the lowest string that can play the note within reasonable fret range
+    
+    int bestString = -1;
+    int bestFret = -1;
+    
+    for (int s = 5; s >= 0; --s)  // Start from lowest string (index 5 = E2)
+    {
+        int openStringNote = standardTuning[s];
+        int fret = midiNote - openStringNote;
+        
+        // Valid fret range: 0-24
+        if (fret >= 0 && fret <= 24)
+        {
+            // Prefer positions in the lower frets (more comfortable)
+            if (bestString < 0 || fret < bestFret)
+            {
+                bestString = s;
+                bestFret = fret;
+            }
+        }
+    }
+    
+    if (bestString >= 0)
+    {
+        result.string = bestString;
+        result.fret = bestFret;
+    }
+    else
+    {
+        // Note is out of guitar range - show on first string as high fret
+        result.string = 0;
+        result.fret = juce::jmax(0, midiNote - standardTuning[0]);
+    }
+    
+    return result;
+}
+
+std::vector<NewProjectAudioProcessor::LiveMidiNote> NewProjectAudioProcessor::getLiveMidiNotes() const
+{
+    std::lock_guard<std::mutex> lock(liveMidiMutex);
+    
+    if (liveMidiNotes.empty())
+        return {};
+    
+    // Sammle alle aktiven Noten und sortiere sie nach Tonhöhe (niedrig zu hoch)
+    std::vector<std::pair<int, int>> notesWithVelocity;  // midiNote, velocity
+    for (const auto& [note, liveNote] : liveMidiNotes)
+    {
+        notesWithVelocity.push_back({note, liveNote.velocity});
+    }
+    std::sort(notesWithVelocity.begin(), notesWithVelocity.end());
+    
+    // Für jede Note: Sammle alle möglichen Saite/Bund-Kombinationen
+    struct NoteOption {
+        int string;
+        int fret;
+    };
+    std::vector<std::vector<NoteOption>> allOptions;
+    
+    for (const auto& [midiNote, velocity] : notesWithVelocity)
+    {
+        std::vector<NoteOption> options;
+        for (int s = 0; s < 6; ++s)
+        {
+            int fret = midiNote - standardTuning[s];
+            if (fret >= 0 && fret <= 24)
+            {
+                options.push_back({s, fret});
+            }
+        }
+        allOptions.push_back(options);
+    }
+    
+    // Finde die beste Kombination mit minimaler Bund-Spannweite
+    // Maximal 4 Bünde Unterschied (typische Handspanne), Leersaiten (0) ausgenommen
+    const int maxFretSpan = 4;
+    
+    std::vector<LiveMidiNote> bestResult;
+    int bestScore = -10000;
+    
+    // Rekursive Suche nach der besten Kombination
+    std::function<void(int, std::vector<NoteOption>&, std::set<int>&)> findBest;
+    findBest = [&](int noteIdx, std::vector<NoteOption>& current, std::set<int>& usedStrings) {
+        if (noteIdx >= (int)allOptions.size())
+        {
+            // Prüfe ob diese Kombination gültig ist
+            int minFret = 100, maxFret = 0;
+            for (const auto& opt : current)
+            {
+                // Leersaiten zählen nicht für die Spannweite
+                if (opt.fret > 0)
+                {
+                    minFret = std::min(minFret, opt.fret);
+                    maxFret = std::max(maxFret, opt.fret);
+                }
+            }
+            
+            // Wenn alle Leersaiten, ist es gültig
+            if (minFret > maxFret) minFret = maxFret = 0;
+            
+            int fretSpan = maxFret - minFret;
+            if (fretSpan > maxFretSpan)
+                return;  // Zu große Spannweite
+            
+            // Berechne Score (niedrigere Bünde besser, kleinere Spannweite besser)
+            int score = 1000 - minFret * 10 - fretSpan * 20;
+            
+            // Bonus für Leersaiten
+            for (const auto& opt : current)
+                if (opt.fret == 0) score += 15;
+            
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestResult.clear();
+                for (int i = 0; i < (int)current.size(); ++i)
+                {
+                    LiveMidiNote ln;
+                    ln.midiNote = notesWithVelocity[i].first;
+                    ln.velocity = notesWithVelocity[i].second;
+                    ln.string = current[i].string;
+                    ln.fret = current[i].fret;
+                    bestResult.push_back(ln);
+                }
+            }
+            return;
+        }
+        
+        // Versuche jede Option für diese Note
+        for (const auto& opt : allOptions[noteIdx])
+        {
+            if (usedStrings.count(opt.string) > 0)
+                continue;  // Saite bereits verwendet
+            
+            // Frühe Prüfung: Passt dieser Bund zur bisherigen Auswahl?
+            int minFret = 100, maxFret = 0;
+            for (const auto& prev : current)
+            {
+                if (prev.fret > 0)
+                {
+                    minFret = std::min(minFret, prev.fret);
+                    maxFret = std::max(maxFret, prev.fret);
+                }
+            }
+            if (opt.fret > 0)
+            {
+                int newMin = std::min(minFret, opt.fret);
+                int newMax = std::max(maxFret, opt.fret);
+                if (newMin <= newMax && newMax - newMin > maxFretSpan)
+                    continue;  // Würde Spannweite überschreiten
+            }
+            
+            current.push_back(opt);
+            usedStrings.insert(opt.string);
+            findBest(noteIdx + 1, current, usedStrings);
+            usedStrings.erase(opt.string);
+            current.pop_back();
+        }
+    };
+    
+    std::vector<NoteOption> current;
+    std::set<int> usedStrings;
+    findBest(0, current, usedStrings);
+    
+    // Fallback: Wenn keine gültige Kombination gefunden, zeige einzelne Noten
+    if (bestResult.empty())
+    {
+        for (const auto& [midiNote, velocity] : notesWithVelocity)
+        {
+            LiveMidiNote ln = midiNoteToTab(midiNote, velocity);
+            bestResult.push_back(ln);
+        }
+    }
+    
+    return bestResult;
+}
+
+TabTrack NewProjectAudioProcessor::getEmptyTabTrack() const
+{
+    TabTrack track;
+    track.name = "MIDI Input";
+    track.stringCount = 6;
+    track.tuning = { 40, 45, 50, 55, 59, 64 };  // E-Standard
+    track.colour = juce::Colours::blue;
+    
+    // Create measures based on DAW time signature
+    int numerator = hostTimeSigNumerator.load();
+    int denominator = hostTimeSigDenominator.load();
+    
+    // Create a few empty measures for display
+    for (int m = 0; m < 4; ++m)
+    {
+        TabMeasure measure;
+        measure.measureNumber = m + 1;
+        measure.timeSignatureNumerator = numerator;
+        measure.timeSignatureDenominator = denominator;
+        
+        // Add empty beats based on time signature
+        int beatsPerMeasure = numerator;
+        for (int b = 0; b < beatsPerMeasure; ++b)
+        {
+            TabBeat beat;
+            beat.isRest = true;
+            // Duration based on denominator
+            if (denominator == 4) beat.duration = NoteDuration::Quarter;
+            else if (denominator == 8) beat.duration = NoteDuration::Eighth;
+            else if (denominator == 2) beat.duration = NoteDuration::Half;
+            else beat.duration = NoteDuration::Quarter;
+            
+            measure.beats.add(beat);
+        }
+        
+        track.measures.add(measure);
+    }
+    
+    return track;
 }
 
 //==============================================================================

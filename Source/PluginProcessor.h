@@ -11,11 +11,14 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "GP5Parser.h"
 #include "GP7Parser.h"
+#include "TabModels.h"
 // MidiExpressionEngine deaktiviert - crasht bei erster Note
 // #include "MidiExpressionEngine.h"
 #include <atomic>
+#include <mutex>
 #include <set>
 #include <map>
+#include <array>
 #include <vector>
 #include <utility>
 
@@ -220,6 +223,27 @@ public:
     
     // Initialize track settings based on GP5 file
     void initializeTrackSettings();
+    
+    //==============================================================================
+    // MIDI Input -> Tab Display (Editor Mode)
+    //==============================================================================
+    
+    // Get live MIDI notes for display (thread-safe)
+    struct LiveMidiNote {
+        int midiNote = 0;
+        int velocity = 0;
+        int string = 0;    // Calculated string (0 = highest)
+        int fret = 0;      // Calculated fret
+    };
+    
+    // Get currently held notes for display
+    std::vector<LiveMidiNote> getLiveMidiNotes() const;
+    
+    // Get empty tab track with DAW time signature for editor mode
+    TabTrack getEmptyTabTrack() const;
+    
+    // Check if we have live MIDI input
+    bool hasLiveMidiInput() const { return !liveMidiNotes.empty(); }
 
 private:
     //==============================================================================
@@ -290,6 +314,18 @@ private:
     // Saved UI state (restored when editor opens)
     int savedSelectedTrack = 0;
     std::atomic<bool> autoScrollEnabled { true };
+    
+    //==============================================================================
+    // MIDI Input -> Tab Display (Editor Mode)
+    //==============================================================================
+    mutable std::mutex liveMidiMutex;
+    std::map<int, LiveMidiNote> liveMidiNotes;  // midiNote -> LiveMidiNote
+    
+    // Standard guitar tuning for MIDI to Tab conversion (E2, A2, D3, G3, B3, E4)
+    const std::array<int, 6> standardTuning = { 40, 45, 50, 55, 59, 64 };
+    
+    // Convert MIDI note to string/fret (standard position)
+    LiveMidiNote midiNoteToTab(int midiNote, int velocity) const;
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NewProjectAudioProcessor)
 };
