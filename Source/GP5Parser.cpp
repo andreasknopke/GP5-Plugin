@@ -1408,6 +1408,15 @@ void GP5Parser::readDirections()
 
 void GP5Parser::readMidiChannels()
 {
+    // GP3/GP4/GP5 store channel values in a compressed format
+    // They need to be converted using: (value << 3) which effectively multiplies by 8
+    // See PyGuitarPro toChannelShort: min(max((data << 3) - 1, -1), 32767) + 1
+    auto toChannelShort = [](int data) -> int {
+        int result = (data << 3) - 1;
+        result = juce::jmax(-1, juce::jmin(result, 32767));
+        return result + 1;
+    };
+    
     for (int port = 0; port < 4; ++port)
     {
         for (int ch = 0; ch < 16; ++ch)
@@ -1415,12 +1424,12 @@ void GP5Parser::readMidiChannels()
             GP5MidiChannel channel;
             channel.channel = ch;
             channel.instrument = readI32();
-            channel.volume = readU8();
-            channel.balance = readU8();
-            channel.chorus = readU8();
-            channel.reverb = readU8();
-            channel.phaser = readU8();
-            channel.tremolo = readU8();
+            channel.volume = toChannelShort(readI8());
+            channel.balance = toChannelShort(readI8());
+            channel.chorus = toChannelShort(readI8());
+            channel.reverb = toChannelShort(readI8());
+            channel.phaser = toChannelShort(readI8());
+            channel.tremolo = toChannelShort(readI8());
             skip(2);  // padding
             midiChannels.add(channel);
         }

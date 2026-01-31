@@ -780,114 +780,174 @@ private:
         const float noteheadWidth = 6.0f;
         const float beamThickness = 2.5f;
         
-        // Gruppiere aufeinanderfolgende Achtel/Sechzehntel für Beaming
-        int beamStart = -1;
-        int beamEnd = -1;
-        NoteDuration beamDuration = NoteDuration::Quarter;
+        // Berechne Beam-Gruppen-Dauer basierend auf Taktart
+        // Guitar Pro Stil: Gruppiere Achtel pro HALBTAKT in 4/4, 2/4
+        const int ppq = 960; // Ticks pro Viertel
+        int ticksPerBeamGroup = ppq * 2; // Standard: Halbe Note (4 Achtel pro Gruppe)
         
-        for (int b = 0; b <= measure.beats.size(); ++b)
+        // Für zusammengesetzte Taktarten (6/8, 9/8, 12/8) gruppiere in punktierten Vierteln (3 Achtel)
+        if (measure.timeSignatureDenominator == 8 && 
+            (measure.timeSignatureNumerator == 6 || 
+             measure.timeSignatureNumerator == 9 || 
+             measure.timeSignatureNumerator == 12))
         {
-            bool shouldBeam = false;
-            NoteDuration currentDuration = NoteDuration::Quarter;
+            ticksPerBeamGroup = (ppq * 3) / 2; // Punktierte Viertel = 3 Achtel
+        }
+        // Für ungerade Taktarten (3/4, 5/4, 7/4) gruppiere pro Viertel (2 Achtel)
+        else if (measure.timeSignatureNumerator % 2 != 0)
+        {
+            ticksPerBeamGroup = ppq; // Viertel = 2 Achtel pro Gruppe
+        }
+        // Für 2/4 gruppiere den ganzen Takt (= 4 Achtel entspricht 2/4 Takt)
+        else if (measure.timeSignatureNumerator == 2 && measure.timeSignatureDenominator == 4)
+        {
+            ticksPerBeamGroup = ppq * 2; // Halbe = ganzer 2/4 Takt
+        }
+        
+        // Sammle Noten mit ihrer Position im Takt
+        struct BeamableNote {
+            int beatIndex;
+            int tickPosition; // Position im Takt in Ticks
+            int durationTicks;
+        };
+        std::vector<BeamableNote> beamableNotes;
+        
+        int currentTick = 0;
+        for (int b = 0; b < measure.beats.size(); ++b)
+        {
+            const auto& beat = measure.beats[b];
             
-            if (b < measure.beats.size())
+            // Berechne Dauer in Ticks
+            int durationTicks = ppq; // Standard: Viertel
+            switch (beat.duration)
             {
-                const auto& beat = measure.beats[b];
-                currentDuration = beat.duration;
-                // Beam Achtel und kürzer, aber keine Pausen
-                shouldBeam = !beat.isRest && 
+                case NoteDuration::Whole: durationTicks = ppq * 4; break;
+                case NoteDuration::Half: durationTicks = ppq * 2; break;
+                case NoteDuration::Quarter: durationTicks = ppq; break;
+                case NoteDuration::Eighth: durationTicks = ppq / 2; break;
+                case NoteDuration::Sixteenth: durationTicks = ppq / 4; break;
+                case NoteDuration::ThirtySecond: durationTicks = ppq / 8; break;
+            }
+            if (beat.isDotted) durationTicks = durationTicks * 3 / 2;
+            
+            // Nur Beam-fähige Noten (Achtel und kürzer, keine Pausen)
+            bool shouldBeam = !beat.isRest && 
                              (beat.duration == NoteDuration::Eighth || 
                               beat.duration == NoteDuration::Sixteenth ||
                               beat.duration == NoteDuration::ThirtySecond);
-            }
             
             if (shouldBeam)
             {
-                if (beamStart < 0)
-                {
-                    beamStart = b;
-                    beamDuration = currentDuration;
-                }
-                beamEnd = b;
+                beamableNotes.push_back({b, currentTick, durationTicks});
             }
-            else
+            
+            currentTick += durationTicks;
+        }
+        
+        // Gruppiere nach Beam-Gruppen-Grenzen
+        std::vector<std::vector<int>> beamGroups;
+        if (!beamableNotes.empty())
+        {
+            std::vector<int> currentGroup;
+            int currentGroupNumber = beamableNotes[0].tickPosition / ticksPerBeamGroup;
+            
+            for (const auto& note : beamableNotes)
             {
-                // Beam-Gruppe beenden und zeichnen
-                if (beamStart >= 0 && beamEnd > beamStart)
+                int noteGroupNumber = note.tickPosition / ticksPerBeamGroup;
+                
+                // Wenn wir eine neue Beam-Gruppe erreichen, starte neue Gruppe
+                if (noteGroupNumber != currentGroupNumber && !currentGroup.empty())
                 {
-                    // Zeichne verbundene Noten mit Balken
-                    float startX = measureX + beatPositions[beamStart];
-                    float endX = measureX + beatPositions[beamEnd];
-                    
-                    // Zeichne alle Stems in der Gruppe
-                    for (int i = beamStart; i <= beamEnd; ++i)
-                    {
-                        float x = measureX + beatPositions[i];
-                        const auto& beat = measure.beats[i];
-                        
-                        // Stem nach unten
-                        g.drawLine(x, y, x, y + stemHeight, 1.5f);
-                        
-                        // Notenkopf
-                        g.fillEllipse(x - noteheadWidth/2, y - 3.0f, noteheadWidth, 5.0f);
-                        
-                        // Dot für gepunktete Noten
-                        if (beat.isDotted)
-                            g.fillEllipse(x + noteheadWidth/2 + 2.0f, y - 1.0f, 3.0f, 3.0f);
-                    }
-                    
-                    // Zeichne Hauptbalken (für Achtel)
-                    float beamY = y + stemHeight;
-                    g.fillRect(startX, beamY - beamThickness/2, endX - startX, beamThickness);
-                    
-                    // Zeichne zweiten Balken für Sechzehntel
-                    for (int i = beamStart; i <= beamEnd; ++i)
-                    {
-                        const auto& beat = measure.beats[i];
-                        if (beat.duration >= NoteDuration::Sixteenth)
-                        {
-                            float x = measureX + beatPositions[i];
-                            float nextX = (i < beamEnd) ? measureX + beatPositions[i + 1] : x + 8.0f;
-                            
-                            // Kurzer Balken wenn nur diese Note Sechzehntel ist
-                            bool nextIsSixteenth = (i + 1 <= beamEnd && 
-                                                    measure.beats[i + 1].duration >= NoteDuration::Sixteenth);
-                            
-                            if (nextIsSixteenth)
-                                g.fillRect(x, beamY + 3.0f, nextX - x, beamThickness);
-                            else
-                                g.fillRect(x - 4.0f, beamY + 3.0f, 8.0f, beamThickness);
-                        }
-                    }
-                }
-                else if (beamStart >= 0)
-                {
-                    // Einzelne Note (kein Beaming möglich) - mit Fähnchen zeichnen
-                    float x = measureX + beatPositions[beamStart];
-                    const auto& beat = measure.beats[beamStart];
-                    drawSingleRhythmNote(g, beat, x, y);
+                    beamGroups.push_back(currentGroup);
+                    currentGroup.clear();
                 }
                 
-                // Reset beam tracking
-                beamStart = -1;
-                beamEnd = -1;
+                currentGroup.push_back(note.beatIndex);
+                currentGroupNumber = noteGroupNumber;
+            }
+            
+            if (!currentGroup.empty())
+            {
+                beamGroups.push_back(currentGroup);
+            }
+        }
+        
+        // Zeichne jede Beam-Gruppe
+        for (const auto& group : beamGroups)
+        {
+            if (group.size() >= 2)
+            {
+                // Zeichne verbundene Noten mit Balken
+                int beamStart = group.front();
+                int beamEnd = group.back();
+                float startX = measureX + beatPositions[beamStart];
+                float endX = measureX + beatPositions[beamEnd];
                 
-                // Zeichne aktuelle Note (wenn keine Beam-Gruppe)
-                if (b < measure.beats.size())
+                // Zeichne alle Stems in der Gruppe
+                for (int idx : group)
                 {
-                    const auto& beat = measure.beats[b];
-                    float x = measureX + beatPositions[b];
+                    float x = measureX + beatPositions[idx];
+                    const auto& beat = measure.beats[idx];
                     
-                    if (beat.isRest)
+                    // Stem nach unten
+                    g.drawLine(x, y, x, y + stemHeight, 1.5f);
+                    
+                    // Notenkopf
+                    g.fillEllipse(x - noteheadWidth/2, y - 3.0f, noteheadWidth, 5.0f);
+                    
+                    // Dot für gepunktete Noten
+                    if (beat.isDotted)
+                        g.fillEllipse(x + noteheadWidth/2 + 2.0f, y - 1.0f, 3.0f, 3.0f);
+                }
+                
+                // Zeichne Hauptbalken (für Achtel)
+                float beamY = y + stemHeight;
+                g.fillRect(startX, beamY - beamThickness/2, endX - startX, beamThickness);
+                
+                // Zeichne zweiten Balken für Sechzehntel
+                for (size_t i = 0; i < group.size(); ++i)
+                {
+                    int idx = group[i];
+                    const auto& beat = measure.beats[idx];
+                    if (beat.duration >= NoteDuration::Sixteenth)
                     {
-                        // Pausen nicht zeichnen (werden woanders gezeichnet)
-                    }
-                    else if (beat.duration < NoteDuration::Eighth)
-                    {
-                        // Viertel, Halbe, Ganze
-                        drawSingleRhythmNote(g, beat, x, y);
+                        float x = measureX + beatPositions[idx];
+                        float nextX = (i + 1 < group.size()) ? measureX + beatPositions[group[i + 1]] : x + 8.0f;
+                        
+                        // Kurzer Balken wenn nur diese Note Sechzehntel ist
+                        bool nextIsSixteenth = (i + 1 < group.size() && 
+                                                measure.beats[group[i + 1]].duration >= NoteDuration::Sixteenth);
+                        
+                        if (nextIsSixteenth)
+                            g.fillRect(x, beamY + 3.0f, nextX - x, beamThickness);
+                        else
+                            g.fillRect(x - 4.0f, beamY + 3.0f, 8.0f, beamThickness);
                     }
                 }
+            }
+            else if (group.size() == 1)
+            {
+                // Einzelne Note mit Fähnchen
+                float x = measureX + beatPositions[group[0]];
+                const auto& beat = measure.beats[group[0]];
+                drawSingleRhythmNote(g, beat, x, y);
+            }
+        }
+        
+        // Zeichne nicht-beamable Noten (Viertel, Halbe, Ganze, Pausen)
+        for (int b = 0; b < measure.beats.size(); ++b)
+        {
+            const auto& beat = measure.beats[b];
+            bool isBeamable = !beat.isRest && 
+                             (beat.duration == NoteDuration::Eighth || 
+                              beat.duration == NoteDuration::Sixteenth ||
+                              beat.duration == NoteDuration::ThirtySecond);
+            
+            if (!isBeamable && !beat.isRest && beat.duration < NoteDuration::Eighth)
+            {
+                // Viertel, Halbe, Ganze
+                float x = measureX + beatPositions[b];
+                drawSingleRhythmNote(g, beat, x, y);
             }
         }
     }
