@@ -1287,7 +1287,87 @@ std::vector<NewProjectAudioProcessor::LiveMidiNote> NewProjectAudioProcessor::ge
     std::lock_guard<std::mutex> lock(liveMidiMutex);
     
     if (liveMidiNotes.empty())
+    {
+        detectedChordName = "";  // Kein Akkord wenn keine Noten
         return {};
+    }
+    
+    // Sammle alle aktiven MIDI-Noten
+    std::vector<int> midiNoteNumbers;
+    std::map<int, int> noteVelocities;
+    for (const auto& [note, liveNote] : liveMidiNotes)
+    {
+        midiNoteNumbers.push_back(note);
+        noteVelocities[note] = liveNote.velocity;
+    }
+    std::sort(midiNoteNumbers.begin(), midiNoteNumbers.end());
+    
+    // =========================================================================
+    // CHORD MATCHING: Versuche zuerst, einen bekannten Akkord zu finden
+    // =========================================================================
+    if (midiNoteNumbers.size() >= 3)  // Mindestens 3 Noten für Akkord-Matching
+    {
+        // Berechne aktuelle Handposition aus lastPlayedFret
+        int currentFretPosition = (lastPlayedFret >= 0) ? lastPlayedFret : 0;
+        
+        // Versuche erst mit exaktem Bass-Matching
+        auto chordResult = chordMatcher.findBestChord(midiNoteNumbers, currentFretPosition, true);
+        
+        // Falls kein Match mit exaktem Bass, versuche ohne Bass-Constraint
+        if (!chordResult.isMatch)
+        {
+            chordResult = chordMatcher.findBestChord(midiNoteNumbers, currentFretPosition, false);
+        }
+        
+        if (chordResult.isMatch && chordResult.shape != nullptr)
+        {
+            // Akkord gefunden! Verwende das Shape direkt
+            std::vector<LiveMidiNote> result;
+            const auto& shape = *chordResult.shape;
+            
+            // Speichere erkannten Akkordnamen für die UI
+            detectedChordName = shape.name;
+            
+            DBG("Chord matched: " << shape.name << " (cost: " << chordResult.totalCost << ")");
+            
+            for (int s = 0; s < 6; ++s)
+            {
+                if (shape.frets[s] >= 0)  // Nicht gedämpft
+                {
+                    int midiNote = standardTuning[s] + shape.frets[s];
+                    
+                    // Finde die entsprechende Velocity (oder Standard)
+                    int velocity = 100;
+                    int midiPitchClass = midiNote % 12;
+                    for (const auto& [inputNote, vel] : noteVelocities)
+                    {
+                        if (inputNote % 12 == midiPitchClass)
+                        {
+                            velocity = vel;
+                            break;
+                        }
+                    }
+                    
+                    LiveMidiNote ln;
+                    ln.midiNote = midiNote;
+                    ln.velocity = velocity;
+                    ln.string = 5 - s;  // Display: 0=top, 5=bottom; Tuning: 0=low, 5=high
+                    ln.fret = shape.frets[s];
+                    result.push_back(ln);
+                }
+            }
+            
+            // Update lastPlayedFret für nächsten Akkord
+            lastPlayedFret = shape.baseFret;
+            
+            return result;
+        }
+    }
+    
+    // =========================================================================
+    // FALLBACK: Kein Akkord erkannt - verwende bestehenden Algorithmus
+    // =========================================================================
+    detectedChordName = "";  // Kein bekannter Akkord
     
     // Hole bevorzugten Fret-Bereich
     FretPosition pos = getFretPosition();

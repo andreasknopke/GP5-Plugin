@@ -33,6 +33,13 @@ public:
         int velocity = 100;
     };
     
+    // Set chord name to display above live notes
+    void setLiveChordName(const juce::String& name)
+    {
+        liveChordName = name;
+        repaint();
+    }
+    
     TabViewComponent()
     {
         // Horizontal scrollbar
@@ -278,6 +285,27 @@ public:
                                juce::Justification::centred, false);
                 }
             }
+            
+            // Draw chord name above the live notes (like GP5 chord names)
+            if (liveChordName.isNotEmpty())
+            {
+                float chordY = firstStringY - 35.0f;  // Position above first string
+                
+                // Background for chord name
+                g.setColour(juce::Colour(0xFF2D5A1E));  // Dark green background
+                float chordWidth = liveChordName.length() * 10.0f + 16.0f;
+                g.fillRoundedRectangle(centerX - chordWidth/2, chordY - 8, chordWidth, 22.0f, 4.0f);
+                
+                // Chord name text
+                g.setColour(juce::Colours::lightgreen);
+                g.setFont(juce::Font(juce::FontOptions(14.0f)).boldened());
+                g.drawText(liveChordName, 
+                           static_cast<int>(centerX - chordWidth/2), 
+                           static_cast<int>(chordY - 8),
+                           static_cast<int>(chordWidth), 
+                           22,
+                           juce::Justification::centred, false);
+            }
         }
     }
     
@@ -366,6 +394,7 @@ private:
     // Editor mode (live MIDI input display)
     bool editorMode = false;
     std::vector<LiveNote> liveNotes;
+    juce::String liveChordName;  // Erkannter Akkordname für Live-Anzeige
     
     juce::ScrollBar horizontalScrollbar { false };
     const int scrollbarHeight = 14;

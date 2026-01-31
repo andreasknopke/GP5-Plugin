@@ -499,6 +499,9 @@ void NewProjectAudioProcessorEditor::timerCallback()
         }
         tabView.setLiveNotes(liveNotes);
         
+        // Erkannten Akkordnamen anzeigen
+        tabView.setLiveChordName(audioProcessor.getDetectedChordName());
+        
         // Auch im Editor-Modus: Playhead-Position aktualisieren und bei Start zum ersten Takt scrollen
         double positionInBeats = audioProcessor.getHostPositionInBeats();
         

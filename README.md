@@ -18,6 +18,12 @@ The GP5 VST Editor is a JUCE-based VST3 instrument plugin that reads Guitar Pro 
 - **Click-to-Seek**: Click anywhere on the tablature to jump to that position
 - **Multi-Track Support**: Switch between different tracks with per-track MIDI channel, volume, pan, mute, and solo
 - **Zoom Function**: Adjust the display size to your needs
+- **Editor Mode (MIDI Input)**:
+  - Live MIDI note display on tablature
+  - **Smart Chord Recognition**: Automatically detects and displays chord names (C, Am, G7, etc.)
+  - **Chord Shape Library**: Uses predefined guitar chord shapes (open, barre, power chords)
+  - **Cost-based Position Optimization**: Minimizes hand movement between positions
+  - Recording with DAW bar synchronization
 - **MIDI Output**: Generates MIDI with expressive articulations:
   - Real-time pitch bend interpolation for bends
   - All bend types: Normal, Bend+Release, Pre-bend, Release
@@ -98,6 +104,7 @@ GP5_VST_Editor/
 │   ├── PluginEditor.cpp/h       # Plugin GUI
 │   ├── GP5Parser.cpp/h          # Guitar Pro 3/4/5 file parser
 │   ├── GP7Parser.h              # Guitar Pro 7/8 (.gp) file parser
+│   ├── ChordMatcher.h           # Chord recognition and shape library
 │   ├── TabModels.h              # Data models for tablature
 │   ├── TabLayoutEngine.h        # Layout calculation
 │   ├── TabRenderer.h            # Tablature rendering with effects
@@ -193,3 +200,5 @@ AR-Sounds
 
 - [JUCE Framework](https://juce.com/) - Cross-Platform Audio Framework
 - [PyGuitarPro](https://github.com/Perlence/PyGuitarPro) - Reference for the GP file format specification
+- [tonal](https://github.com/tonaljs/tonal) - Music theory library (inspiration for chord detection algorithms)
+- [Gemini](https://gemini.google.com/) - AI assistance for algorithm design discussions

@@ -12,6 +12,7 @@
 #include "GP5Parser.h"
 #include "GP7Parser.h"
 #include "TabModels.h"
+#include "ChordMatcher.h"
 // MidiExpressionEngine deaktiviert - crasht bei erster Note
 // #include "MidiExpressionEngine.h"
 #include <atomic>
@@ -268,6 +269,9 @@ public:
     // Get currently held notes for display
     std::vector<LiveMidiNote> getLiveMidiNotes() const;
     
+    // Get the detected chord name from last getLiveMidiNotes() call
+    juce::String getDetectedChordName() const { return detectedChordName; }
+    
     // Get empty tab track with DAW time signature for editor mode
     TabTrack getEmptyTabTrack() const;
     
@@ -384,6 +388,10 @@ private:
     
     // Standard guitar tuning for MIDI to Tab conversion (E2, A2, D3, G3, B3, E4)
     const std::array<int, 6> standardTuning = { 40, 45, 50, 55, 59, 64 };
+    
+    // Chord Matcher für Akkord-Erkennung und -Platzierung
+    ChordMatcher chordMatcher;
+    mutable juce::String detectedChordName;  // Erkannter Akkordname aus letztem getLiveMidiNotes()
     
     // Last played position for cost-based note placement
     mutable int lastPlayedString = -1;  // -1 = no previous note
