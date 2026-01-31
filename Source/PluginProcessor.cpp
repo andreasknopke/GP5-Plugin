@@ -443,6 +443,14 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             // =====================================================================
             // STEP 2: Process new notes and send MIDI
             // =====================================================================
+            
+            // Während der Vorzähl-Pause (negative Beats) keine neuen Noten ausgeben
+            if (currentBeat < 0.0)
+            {
+                // Skip note processing during count-in
+            }
+            else
+            {
             bool anySoloActive = hasAnySolo();
             const auto& measureHeaders = usingGP7Parser ? gp7Parser.getMeasureHeaders() : gp5Parser.getMeasureHeaders();
             
@@ -651,6 +659,7 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                     lastProcessedBeatPerTrack[trackIdx] = beatIndex;
                 }
             }
+            }  // Ende des else-Blocks für currentBeat >= 0
         }
         
         wasPlaying = isPlaying;
@@ -825,6 +834,10 @@ int NewProjectAudioProcessor::getCurrentMeasureIndex() const
     
     double positionInBeats = hostPositionBeats.load();
     
+    // Bei negativen Beats (Vorzähl-Pause / Count-in) immer Takt 0 zurückgeben
+    if (positionInBeats < 0.0)
+        return 0;
+    
     // Verwende GP-Taktstruktur für konsistente Anzeige mit MIDI-Ausgabe
     const auto& measureHeaders = usingGP7Parser ? gp7Parser.getMeasureHeaders() : gp5Parser.getMeasureHeaders();
     
@@ -856,6 +869,10 @@ double NewProjectAudioProcessor::getPositionInCurrentMeasure() const
         return 0.0;
     
     double positionInBeats = hostPositionBeats.load();
+    
+    // Bei negativen Beats (Vorzähl-Pause / Count-in) immer Position 0.0 zurückgeben
+    if (positionInBeats < 0.0)
+        return 0.0;
     
     // Verwende GP-Taktstruktur für konsistente Anzeige
     const auto& measureHeaders = usingGP7Parser ? gp7Parser.getMeasureHeaders() : gp5Parser.getMeasureHeaders();

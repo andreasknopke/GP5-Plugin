@@ -332,6 +332,25 @@ void NewProjectAudioProcessorEditor::timerCallback()
             liveNotes.push_back(ln);
         }
         tabView.setLiveNotes(liveNotes);
+        
+        // Auch im Editor-Modus: Playhead-Position aktualisieren und bei Start zum ersten Takt scrollen
+        bool isPlaying = audioProcessor.isHostPlaying();
+        double positionInBeats = audioProcessor.getHostPositionInBeats();
+        
+        // Bei negativen Beats (Vorzähl-Pause) oder Play-Start: Position auf 0 setzen
+        int currentMeasure = (positionInBeats < 0.0) ? 0 : 0;  // Im Editor-Modus immer Takt 0
+        double positionInMeasure = (positionInBeats < 0.0) ? 0.0 : juce::jlimit(0.0, 1.0, positionInBeats / 4.0);  // Annahme: 4/4 Takt
+        
+        tabView.setPlayheadPosition(positionInMeasure);
+        tabView.setCurrentMeasure(currentMeasure);
+        
+        // Bei Play-Start: Zum ersten Takt scrollen
+        if (isPlaying && !wasPlaying)
+        {
+            tabView.scrollToMeasure(0);
+        }
+        
+        wasPlaying = isPlaying;
         return;  // Keine weitere Verarbeitung nötig
     }
     else
@@ -387,10 +406,16 @@ void NewProjectAudioProcessorEditor::timerCallback()
         positionJumped = true;
     }
     
+    // Bei Play-Start: Zum ersten Takt scrollen
+    if (isPlaying && !wasPlaying)
+    {
+        // Playback wurde gerade gestartet - zum Anfang scrollen
+        tabView.scrollToMeasure(0);
+    }
     // Auto-Scroll wenn:
     // 1. Aktiviert UND DAW spielt, ODER
     // 2. Aktiviert UND Position wurde manuell geändert (Sprung erkannt)
-    if (autoScrollButton.getToggleState())
+    else if (autoScrollButton.getToggleState())
     {
         if (isPlaying || positionJumped)
         {
