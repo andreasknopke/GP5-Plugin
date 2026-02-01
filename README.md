@@ -24,6 +24,10 @@ The GP5 VST Editor is a JUCE-based VST3 instrument plugin that reads Guitar Pro 
   - **Chord Shape Library**: Uses predefined guitar chord shapes (open, barre, power chords)
   - **Cost-based Position Optimization**: Minimizes hand movement between positions
   - Recording with DAW bar synchronization
+- **GP5 Export**: Save your recordings as Guitar Pro 5 (.gp5) files compatible with:
+  - Guitar Pro software (all versions)
+  - Soundslice (online tab player/editor)
+  - Other GP5-compatible applications
 - **MIDI Output**: Generates MIDI with expressive articulations:
   - Real-time pitch bend interpolation for bends
   - All bend types: Normal, Bend+Release, Pre-bend, Release
@@ -103,6 +107,7 @@ GP5_VST_Editor/
 │   ├── PluginProcessor.cpp/h    # Audio processor with MIDI generation
 │   ├── PluginEditor.cpp/h       # Plugin GUI
 │   ├── GP5Parser.cpp/h          # Guitar Pro 3/4/5 file parser
+│   ├── GP5Writer.cpp/h          # Guitar Pro 5 file writer (export)
 │   ├── GP7Parser.h              # Guitar Pro 7/8 (.gp) file parser
 │   ├── ChordMatcher.h           # Chord recognition and shape library
 │   ├── TabModels.h              # Data models for tablature
@@ -173,6 +178,8 @@ GP5_VST_Editor/
 ### Parser
 
 The GP5 parser is based on the specification from [PyGuitarPro](https://github.com/Perlence/PyGuitarPro) and was implemented in C++/JUCE with extensions for GP3 and GP4 formats.
+
+The GP5 writer exports tablature data to the Guitar Pro 5 format, fully compatible with PyGuitarPro, Guitar Pro software, and online services like Soundslice.
 
 The GP7/GP8 parser extracts the embedded GPIF XML from the .gp archive format (ZIP container with Content/score.gpif) and parses notes, chords, tracks, and effects.
 

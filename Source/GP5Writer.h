@@ -36,10 +36,14 @@ public:
     juce::String getLastError() const { return lastError; }
     
 private:
-    // Helper functions for writing GP5 binary format
-    void writeHeader();
-    void writeSongInfo();
-    void writeMidiChannels();
+    // Helper functions for writing GP5 binary format (in correct order!)
+    void writeVersion();
+    void writeSongInfo();           // 9 strings + notice lines
+    void writeLyrics();             // Lyrics section
+    void writePageSetup();          // Page layout settings
+    void writeTempoInfo();          // Tempo name + value + key
+    void writeMidiChannels();       // 64 MIDI channel settings
+    void writeDirections();         // 19 direction signs
     void writeMeasureHeaders(int numMeasures, int numerator, int denominator);
     void writeTracks(const TabTrack& track);
     void writeMeasures(const TabTrack& track);

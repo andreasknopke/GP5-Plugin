@@ -68,3 +68,20 @@ GitHub CLI (`gh`) ist installiert, aber nicht authentifiziert. Für Releases:
 ### Parser-Problem (Stand 25.01.2026)
 Die Bundnummern werden falsch gelesen (0, 1 statt 14, 18, 19 etc.).
 Muss noch debuggt werden.
+
+## GP5 Writer (Stand 01.02.2026)
+
+Der GP5Writer wurde nach der PyGuitarPro-Referenzimplementierung neu geschrieben.
+
+**Wichtige Erkenntnisse:**
+- PageSetup hat **10 Strings** (nicht 11!) - copyright ist als 2 Strings geschrieben
+- Für GP5 v5.00: Kein RSE Master Effect schreiben
+- Für GP5 v5.00: Kein `hideTempo` Bool schreiben
+- Measure Header: Placeholder (1 Byte) **vor** jedem Header außer dem ersten
+- Beat: `flags2` (short) am Ende jedes Beats
+- Note: `flags2` (byte) nach dem Fret, vor den Note Effects
+
+**Test-Skripte:**
+- `test_gp5_structure.py` - Minimale GP5 Datei erstellen
+- `test_gp5_with_notes.py` - GP5 mit echten Noten erstellen
+- `debug_gp5_bytes.py` - Byte-für-Byte Analyse von GP5 Dateien
