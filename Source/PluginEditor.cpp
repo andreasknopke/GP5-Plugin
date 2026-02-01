@@ -539,6 +539,14 @@ void NewProjectAudioProcessorEditor::timerCallback()
         }
         tabView.setLiveNotes(liveNotes);
         
+        // WICHTIG: Wenn Recording aktiv, aktualisiere die aufgezeichneten Noten
+        // mit den optimierten Werten aus der Live-Anzeige!
+        // So wird gespeichert was der User tatsächlich sieht.
+        if (audioProcessor.isRecording() && !midiNotes.empty())
+        {
+            audioProcessor.updateRecordedNotesFromLive(midiNotes);
+        }
+        
         // Erkannten Akkordnamen anzeigen
         tabView.setLiveChordName(audioProcessor.getDetectedChordName());
         

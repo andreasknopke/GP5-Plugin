@@ -287,6 +287,8 @@ public:
     bool isRecordingEnabled() const { return recordingEnabled.load() || hostIsRecording.load(); }
     bool isRecording() const { return (recordingEnabled.load() || hostIsRecording.load()) && hostIsPlaying.load(); }
     void clearRecording();
+    void reoptimizeRecordedNotes();  // Recalculate string/fret assignments for recorded notes
+    void updateRecordedNotesFromLive(const std::vector<LiveMidiNote>& liveNotes);  // Update active recorded notes with live display values
     std::vector<RecordedNote> getRecordedNotes() const;
     TabTrack getRecordedTabTrack() const;  // Convert recorded notes to TabTrack for display
     
@@ -395,6 +397,7 @@ private:
     std::map<int, size_t> activeRecordingNotes;  // midiNote -> index in recordedNotes
     double recordingStartBeat = 0.0;  // PPQ position when first note was recorded (for bar sync)
     bool recordingStartSet = false;   // Whether recordingStartBeat has been set
+    FretPosition recordingFretPosition = FretPosition::Low;  // Fret position at recording start
     
     // Recording playback state (for MIDI-out of recorded notes)
     std::set<int> activePlaybackNotes;  // Currently playing recorded notes (MIDI note numbers)

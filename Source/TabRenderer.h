@@ -157,6 +157,10 @@ public:
                     // Draw each note
                     for (const auto& note : beat.notes)
                     {
+                        // Überspringe leere Note-Slots (fret = -1 bedeutet keine Note auf dieser Saite)
+                        if (note.fret < 0)
+                            continue;
+                            
                         float noteY = firstStringY + note.string * config.stringSpacing;
                         drawNote(g, note, beatX, noteY, nextBeatX, firstStringY);
                         
@@ -190,6 +194,7 @@ public:
                         {
                             for (const auto& note : beat.notes)
                             {
+                                if (note.fret < 0) continue;  // Skip empty note slots
                                 if (note.effects.slideType == SlideType::ShiftSlide ||
                                     note.effects.slideType == SlideType::LegatoSlide)
                                 {
@@ -249,6 +254,7 @@ public:
                         // Letzter Beat im Takt - zeichne Slides ohne Zielnote
                         for (const auto& note : beat.notes)
                         {
+                            if (note.fret < 0) continue;  // Skip empty note slots
                             float noteY = firstStringY + note.string * config.stringSpacing;
                             
                             if (note.effects.slideType == SlideType::SlideIntoFromBelow ||
@@ -678,6 +684,7 @@ private:
         
         for (const auto& note : beat.notes)
         {
+            if (note.fret < 0) continue;  // Skip empty note slots
             float noteY = firstStringY + note.string * config.stringSpacing;
             float noteRadius = config.stringSpacing * 0.45f;
             
