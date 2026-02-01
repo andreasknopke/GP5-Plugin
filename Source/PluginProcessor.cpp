@@ -14,6 +14,54 @@
 #include <map>
 
 //==============================================================================
+// Helper: Fix MIDI file format (JUCE writes Format 1 even for single track)
+// This corrects the format byte to 0 for single-track MIDI files
+//==============================================================================
+static bool fixMidiFileFormat(const juce::File& midiFile)
+{
+    juce::FileInputStream input(midiFile);
+    if (!input.openedOk())
+        return false;
+    
+    // Read the file
+    juce::MemoryBlock data;
+    input.readIntoMemoryBlock(data);
+    
+    if (data.getSize() < 14)
+        return false;
+    
+    auto* bytes = static_cast<juce::uint8*>(data.getData());
+    
+    // Verify MIDI header "MThd"
+    if (bytes[0] != 'M' || bytes[1] != 'T' || bytes[2] != 'h' || bytes[3] != 'd')
+        return false;
+    
+    // Read format (bytes 8-9, big-endian)
+    int format = (bytes[8] << 8) | bytes[9];
+    // Read number of tracks (bytes 10-11, big-endian)
+    int numTracks = (bytes[10] << 8) | bytes[11];
+    
+    // If Format 1 with only 1 track, change to Format 0
+    if (format == 1 && numTracks == 1)
+    {
+        DBG("Fixing MIDI format: Format 1 with 1 track -> Format 0");
+        bytes[8] = 0;
+        bytes[9] = 0;
+        
+        // Write back to file
+        midiFile.deleteFile();
+        juce::FileOutputStream output(midiFile);
+        if (!output.openedOk())
+            return false;
+        
+        output.write(data.getData(), data.getSize());
+        return true;
+    }
+    
+    return true;  // No fix needed
+}
+
+//==============================================================================
 // Helper: Berechnet die Dauer eines GP5-Beats in Viertelnoten (Quarter Notes)
 //==============================================================================
 static double getGP5BeatDurationInQuarters(const GP5Beat& beat)
@@ -1772,10 +1820,10 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
         std::map<int, std::vector<const RecordedNote*>> noteGroups;
         for (const auto* note : notesInMeasure)
         {
-            // Quantisiere auf 16tel-Grid innerhalb des Takts
+            // Quantisiere auf 32tel-Grid innerhalb des Takts (32 Slots pro Takt bei 4/4)
             double posInMeasure = note->startBeat - measureStartBeat;
-            int quantizedSlot = (int)(posInMeasure / (beatsPerMeasure / 16.0) + 0.5);
-            quantizedSlot = juce::jlimit(0, 15, quantizedSlot);
+            int quantizedSlot = (int)(posInMeasure / (beatsPerMeasure / 32.0) + 0.5);
+            quantizedSlot = juce::jlimit(0, 31, quantizedSlot);
             noteGroups[quantizedSlot].push_back(note);
         }
         
@@ -1794,16 +1842,20 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
             }
             
             // Konvertiere zu NoteDuration
-            if (shortestDuration >= 3.5)
+            // Schwellwerte basieren auf Viertelnoten (1.0 = Quarter Note in PPQ)
+            // Whole=4.0, Half=2.0, Quarter=1.0, Eighth=0.5, Sixteenth=0.25, ThirtySecond=0.125
+            if (shortestDuration >= 3.0)
                 beat.duration = NoteDuration::Whole;
-            else if (shortestDuration >= 1.75)
+            else if (shortestDuration >= 1.5)
                 beat.duration = NoteDuration::Half;
-            else if (shortestDuration >= 0.875)
+            else if (shortestDuration >= 0.75)
                 beat.duration = NoteDuration::Quarter;
-            else if (shortestDuration >= 0.4375)
+            else if (shortestDuration >= 0.375)
                 beat.duration = NoteDuration::Eighth;
-            else
+            else if (shortestDuration >= 0.1875)
                 beat.duration = NoteDuration::Sixteenth;
+            else
+                beat.duration = NoteDuration::ThirtySecond;
             
             // Füge alle Noten der Gruppe zum Beat hinzu (Akkord)
             for (const auto* note : group)
@@ -1952,16 +2004,26 @@ bool NewProjectAudioProcessor::exportTrackToMidi(int trackIndex, const juce::Fil
     midiFile.addTrack(midiSequence);
     
     // Speichere die Datei
-    // JUCE erkennt automatisch: 1 Track = Format 0
     outputFile.deleteFile();
-    juce::FileOutputStream outputStream(outputFile);
     
-    if (!outputStream.openedOk())
-        return false;
+    {
+        // Scope für FileOutputStream - muss geschlossen werden bevor wir die Datei erneut öffnen
+        juce::FileOutputStream outputStream(outputFile);
+        
+        if (!outputStream.openedOk())
+            return false;
+        
+        // JUCE's writeTo() schreibt leider Format 1 auch bei einem Track
+        if (!midiFile.writeTo(outputStream))
+            return false;
+        
+        outputStream.flush();
+    }  // outputStream wird hier geschlossen
     
-    // JUCE's writeTo() schreibt automatisch Format 0 bei einem Track
-    // und fügt das End-of-Track Event (FF 2F 00) korrekt ein
-    return midiFile.writeTo(outputStream);
+    // Fix: JUCE schreibt Format 1 auch für Single-Track - korrigiere zu Format 0
+    fixMidiFileFormat(outputFile);
+    
+    return true;
 }
 
 bool NewProjectAudioProcessor::exportAllTracksToMidi(const juce::File& outputFile)
