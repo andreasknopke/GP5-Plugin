@@ -69,6 +69,18 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     transportLabel.setText ("Stopped", juce::dontSendNotification);
     transportLabel.setJustificationType(juce::Justification::centredRight);
     
+    // Version Label (bottom right overlay)
+    addAndMakeVisible (versionLabel);
+    versionLabel.setFont (juce::FontOptions(10.0f));
+    versionLabel.setColour (juce::Label::textColourId, juce::Colours::white.withAlpha(0.5f));
+    #ifdef GIT_COMMIT_HASH
+        versionLabel.setText (juce::String(GIT_COMMIT_HASH), juce::dontSendNotification);
+    #else
+        versionLabel.setText ("v1.0.0", juce::dontSendNotification);
+    #endif
+    versionLabel.setJustificationType(juce::Justification::bottomRight);
+    versionLabel.setInterceptsMouseClicks(false, false);  // Make it click-through
+    
     // Auto-Scroll Toggle
     addAndMakeVisible (autoScrollButton);
     autoScrollButton.setToggleState (true, juce::dontSendNotification);
@@ -242,6 +254,10 @@ void NewProjectAudioProcessorEditor::resized()
     // Tabulatur-Ansicht (Rest des Fensters)
     bounds = bounds.reduced(5);
     tabView.setBounds (bounds);
+    
+    // Version Label (overlay in bottom right corner)
+    auto versionArea = getLocalBounds().removeFromBottom(20).removeFromRight(60).reduced(5);
+    versionLabel.setBounds (versionArea);
 }
 
 // Die eigentliche Lade-Logik
