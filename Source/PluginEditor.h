@@ -68,9 +68,10 @@ private:
     // 8. Auto-Scroll Toggle
     juce::ToggleButton autoScrollButton { "Auto-Scroll" };
     
-    // 8b. Recording Button (Editor Mode only)
+    // 8b. Recording Indicator (Editor Mode only) - shows DAW record status
     juce::ToggleButton recordButton { "REC" };
     juce::TextButton clearRecordingButton { "Clear" };
+    juce::TextButton saveGpButton { "Save GP" };  // Save as Guitar Pro file
     
     // 8c. Fret Position Selector (Editor Mode only)
     juce::ComboBox fretPositionSelector;
@@ -90,6 +91,7 @@ private:
     void toggleSettingsPanel();
     void updateModeDisplay();
     void saveMidiButtonClicked();
+    void saveGpButtonClicked();
     
     // 11. State
     int lastDisplayedMeasure = -1;

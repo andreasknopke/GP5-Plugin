@@ -75,22 +75,37 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     autoScrollButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
     autoScrollButton.setColour (juce::ToggleButton::tickColourId, juce::Colours::lightgreen);
     
-    // Recording Button (Editor Mode only)
+    // Recording Button (Editor Mode only) - toggles recording, also syncs with DAW record status
     addAndMakeVisible (recordButton);
     recordButton.setColour (juce::ToggleButton::textColourId, juce::Colours::red);
     recordButton.setColour (juce::ToggleButton::tickColourId, juce::Colours::red);
-    recordButton.onClick = [this] { 
+    recordButton.onClick = [this] {
         audioProcessor.setRecordingEnabled(recordButton.getToggleState());
     };
     recordButton.setVisible(false);  // Nur im Editor-Modus sichtbar
     
-    // Clear Recording Button
+    // Clear Recording Button (im Editor: löscht Aufnahme, im Player: entlädt Datei)
     addAndMakeVisible (clearRecordingButton);
     clearRecordingButton.onClick = [this] { 
-        audioProcessor.clearRecording();
+        if (audioProcessor.isFileLoaded())
+        {
+            // Im Player-Modus: Datei entladen und zum Editor wechseln
+            audioProcessor.unloadFile();
+            tabView.resetScrollPosition();
+        }
+        else
+        {
+            // Im Editor-Modus: Nur Aufnahme löschen
+            audioProcessor.clearRecording();
+        }
         refreshFromProcessor();
     };
-    clearRecordingButton.setVisible(false);  // Nur im Editor-Modus sichtbar
+    clearRecordingButton.setVisible(false);  // Wird in updateModeDisplay() gesteuert
+    
+    // Save GP Button (Editor Mode only - save recorded notes as Guitar Pro file)
+    addAndMakeVisible (saveGpButton);
+    saveGpButton.onClick = [this] { saveGpButtonClicked(); };
+    saveGpButton.setVisible(false);
     
     // Fret Position Selector (Editor Mode only)
     addAndMakeVisible (fretPositionLabel);
@@ -202,20 +217,27 @@ void NewProjectAudioProcessorEditor::resized()
     
     toolbar.removeFromLeft(5); // Spacer
     
-    // Settings Button / Save MIDI Button (teilen sich den Platz)
-    auto settingsArea = toolbar.removeFromLeft(70);
-    settingsButton.setBounds (settingsArea);
-    saveMidiButton.setBounds (settingsArea);  // Gleiche Position, nur einer sichtbar
-    toolbar.removeFromLeft(10); // Spacer
+    // Settings Button (nur im Player-Modus, links)
+    settingsButton.setBounds (toolbar.removeFromLeft(70));
     
-    // Auto-Scroll Toggle
-    autoScrollButton.setBounds (toolbar.removeFromLeft(100));
-    toolbar.removeFromLeft(10); // Spacer
+    // Rechtsbündige Controls (von rechts nach links platziert)
+    // Clear Button (in beiden Modi sichtbar)
+    clearRecordingButton.setBounds (toolbar.removeFromRight(45));
+    toolbar.removeFromRight(5);
     
-    // Recording Controls (nur im Editor-Modus sichtbar)
-    recordButton.setBounds (toolbar.removeFromLeft(55));
-    toolbar.removeFromLeft(5);
-    clearRecordingButton.setBounds (toolbar.removeFromLeft(45));
+    // Save MIDI Button (nur im Player-Modus) / Save GP Button (nur im Editor-Modus)
+    // Beide teilen sich die gleiche Position
+    auto saveButtonArea = toolbar.removeFromRight(80);
+    saveMidiButton.setBounds (saveButtonArea);
+    saveGpButton.setBounds (saveButtonArea);
+    toolbar.removeFromRight(5);
+    
+    // Recording Button (nur im Editor-Modus)
+    recordButton.setBounds (toolbar.removeFromRight(55));
+    toolbar.removeFromRight(10); // Spacer
+    
+    // Auto-Scroll Toggle (in beiden Modi)
+    autoScrollButton.setBounds (toolbar.removeFromRight(100));
     
     // Tabulatur-Ansicht (Rest des Fensters)
     bounds = bounds.reduced(5);
@@ -275,15 +297,16 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         modeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF1E5631));
         unloadButton.setVisible(true);
         saveMidiButton.setVisible(true);  // Save MIDI nur im Player-Modus
+        saveGpButton.setVisible(false);   // Save GP nur im Editor-Modus
         
         // Track-Auswahl und Settings nur im Player-Modus
         trackLabel.setVisible(true);
         trackSelector.setVisible(true);
         settingsButton.setVisible(true);
         
-        // Recording und Fret-Selector nur im Editor-Modus
+        // Recording Button nur im Editor-Modus, Clear in beiden Modi
         recordButton.setVisible(false);
-        clearRecordingButton.setVisible(false);
+        clearRecordingButton.setVisible(true);  // Sichtbar für Wechsel zu Editor-Modus
         fretPositionLabel.setVisible(false);
         fretPositionSelector.setVisible(false);
     }
@@ -295,6 +318,7 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         modeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF5C3D00));
         unloadButton.setVisible(false);
         saveMidiButton.setVisible(false);  // Keine MIDI-Export im Editor-Modus
+        saveGpButton.setVisible(true);     // Save GP im Editor-Modus verfügbar
         
         // Track-Auswahl und Settings nicht im Editor-Modus
         trackLabel.setVisible(false);
@@ -452,16 +476,32 @@ void NewProjectAudioProcessorEditor::timerCallback()
     {
         bool isPlaying = audioProcessor.isHostPlaying();
         bool isRecording = audioProcessor.isRecording();
+        bool isRecordEnabled = audioProcessor.isRecordingEnabled();
+        
+        // Sync Recording-Button mit DAW Record-Status
+        // Wenn DAW Record aktiviert, Button auch aktivieren
+        if (audioProcessor.isHostRecording() && !recordButton.getToggleState())
+        {
+            recordButton.setToggleState(true, juce::dontSendNotification);
+            audioProcessor.setRecordingEnabled(true);
+        }
         
         // Update Recording-Button Farbe basierend auf Status
         if (isRecording)
         {
             recordButton.setColour(juce::ToggleButton::textColourId, juce::Colours::red);
-            recordButton.setColour(juce::ToggleButton::tickDisabledColourId, juce::Colours::darkred);
+            recordButton.setColour(juce::ToggleButton::tickColourId, juce::Colours::red);
+        }
+        else if (isRecordEnabled)
+        {
+            // Record enabled aber nicht playing
+            recordButton.setColour(juce::ToggleButton::textColourId, juce::Colours::darkred);
+            recordButton.setColour(juce::ToggleButton::tickColourId, juce::Colours::darkred);
         }
         else
         {
             recordButton.setColour(juce::ToggleButton::textColourId, juce::Colours::grey);
+            recordButton.setColour(juce::ToggleButton::tickColourId, juce::Colours::grey);
         }
         
         // Zeige aufgezeichnete Noten wenn Recording aktiv oder Aufnahmen vorhanden
@@ -761,5 +801,52 @@ void NewProjectAudioProcessorEditor::saveMidiButtonClicked()
                         }
                     }
                 });
+        });
+}
+
+void NewProjectAudioProcessorEditor::saveGpButtonClicked()
+{
+    // Check if there are recorded notes
+    if (!audioProcessor.hasRecordedNotes())
+    {
+        infoLabel.setText("No recorded notes to save!", juce::dontSendNotification);
+        return;
+    }
+    
+    // Create file chooser for GP5 save
+    midiFileChooser = std::make_unique<juce::FileChooser>(
+        "Save as Guitar Pro 5...",
+        juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile("Recording.gp5"),
+        "*.gp5");
+    
+    auto chooserFlags = juce::FileBrowserComponent::saveMode 
+                      | juce::FileBrowserComponent::canSelectFiles
+                      | juce::FileBrowserComponent::warnAboutOverwriting;
+    
+    midiFileChooser->launchAsync(chooserFlags, 
+        [this](const juce::FileChooser& fc)
+        {
+            auto file = fc.getResult();
+            
+            if (file != juce::File{})
+            {
+                // Ensure file has .gp5 extension
+                if (!file.hasFileExtension(".gp5"))
+                    file = file.withFileExtension(".gp5");
+                
+                // Get title from filename
+                juce::String title = file.getFileNameWithoutExtension();
+                
+                bool success = audioProcessor.exportRecordingToGP5(file, title);
+                
+                if (success)
+                {
+                    infoLabel.setText("GP5 saved: " + file.getFileName(), juce::dontSendNotification);
+                }
+                else
+                {
+                    infoLabel.setText("Error saving GP5 file!", juce::dontSendNotification);
+                }
+            }
         });
 }

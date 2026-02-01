@@ -8,6 +8,7 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "GP5Writer.h"
 #include <limits>
 #include <algorithm>
 #include <map>
@@ -242,6 +243,10 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             // Play/Stop Status
             hostIsPlaying.store(posInfo->getIsPlaying());
             
+            // Record Status (track record-armed in DAW)
+            // Note: getIsRecording() returns bool directly
+            hostIsRecording.store(posInfo->getIsRecording());
+            
             // Tempo
             if (auto bpm = posInfo->getBpm())
                 hostTempo.store(*bpm);
@@ -271,7 +276,10 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         
         double currentBeat = hostPositionBeats.load();
         bool isPlaying = hostIsPlaying.load();
-        bool shouldRecord = recordingEnabled.load() && isPlaying && currentBeat >= 0.0;
+        bool isRecArmed = hostIsRecording.load();
+        bool isManualRec = recordingEnabled.load();
+        // Recording: wenn DAW spielt UND (DAW Record-armed ODER manual Record enabled)
+        bool shouldRecord = isPlaying && currentBeat >= 0.0 && (isRecArmed || isManualRec);
         int numerator = hostTimeSigNumerator.load();
         int denominator = hostTimeSigDenominator.load();
         
@@ -332,7 +340,7 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                 }
                 
                 // Recording: Note beenden
-                if (recordingEnabled.load())
+                if (hostIsRecording.load())
                 {
                     std::lock_guard<std::mutex> recLock(recordingMutex);
                     auto it = activeRecordingNotes.find(midiNote);
@@ -356,7 +364,7 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                 lastPlayedFret = -1;
                 
                 // Recording: Alle aktiven Noten beenden
-                if (recordingEnabled.load())
+                if (hostIsRecording.load())
                 {
                     std::lock_guard<std::mutex> recLock(recordingMutex);
                     for (auto& [note, idx] : activeRecordingNotes)
@@ -756,6 +764,71 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         
         wasPlaying = isPlaying;
         lastProcessedBeat = currentBeat;
+    }
+    // =========================================================================
+    // MIDI Output for Recorded Notes (Editor Mode - no file loaded)
+    // =========================================================================
+    else if (!fileLoaded && midiOutputEnabled.load())
+    {
+        bool isPlaying = hostIsPlaying.load();
+        double currentBeat = hostPositionBeats.load();
+        
+        // Stop-Erkennung: Wenn Playback stoppt, alle Noten beenden
+        if (!isPlaying && wasPlaying)
+        {
+            for (int note : activePlaybackNotes)
+            {
+                generatedMidi.addEvent(juce::MidiMessage::noteOff(1, note), 0);
+            }
+            activePlaybackNotes.clear();
+            lastPlaybackBeat = -1.0;
+        }
+        
+        if (isPlaying && currentBeat >= 0.0)
+        {
+            std::lock_guard<std::mutex> lock(recordingMutex);
+            
+            if (!recordedNotes.empty() && recordingStartSet)
+            {
+                // Berechne relative Position zu Recording-Start
+                double relativeBeat = currentBeat - recordingStartBeat;
+                
+                // Prüfe welche Noten starten oder enden sollen
+                for (const auto& note : recordedNotes)
+                {
+                    if (note.isActive)
+                        continue;  // Noch nicht beendet
+                    
+                    double noteStartRel = note.startBeat - recordingStartBeat;
+                    double noteEndRel = note.endBeat - recordingStartBeat;
+                    
+                    // Note sollte starten
+                    if (relativeBeat >= noteStartRel && lastPlaybackBeat < noteStartRel)
+                    {
+                        if (activePlaybackNotes.find(note.midiNote) == activePlaybackNotes.end())
+                        {
+                            int velocity = juce::jlimit(1, 127, note.velocity);
+                            generatedMidi.addEvent(juce::MidiMessage::noteOn(1, note.midiNote, (juce::uint8)velocity), 0);
+                            activePlaybackNotes.insert(note.midiNote);
+                        }
+                    }
+                    
+                    // Note sollte enden
+                    if (relativeBeat >= noteEndRel && lastPlaybackBeat < noteEndRel)
+                    {
+                        if (activePlaybackNotes.find(note.midiNote) != activePlaybackNotes.end())
+                        {
+                            generatedMidi.addEvent(juce::MidiMessage::noteOff(1, note.midiNote), 0);
+                            activePlaybackNotes.erase(note.midiNote);
+                        }
+                    }
+                }
+                
+                lastPlaybackBeat = relativeBeat;
+            }
+        }
+        
+        wasPlaying = isPlaying;
     }
     
     // Generierte MIDI-Events zum Output hinzufügen
@@ -1581,13 +1654,8 @@ TabTrack NewProjectAudioProcessor::getEmptyTabTrack() const
 }
 
 //==============================================================================
-// Recording functionality
+// Recording functionality (automatic based on DAW track record status)
 //==============================================================================
-void NewProjectAudioProcessor::setRecordingEnabled(bool enabled)
-{
-    recordingEnabled.store(enabled);
-    DBG("Recording " << (enabled ? "enabled" : "disabled"));
-}
 
 void NewProjectAudioProcessor::clearRecording()
 {
@@ -1596,6 +1664,11 @@ void NewProjectAudioProcessor::clearRecording()
     activeRecordingNotes.clear();
     recordingStartBeat = 0.0;
     recordingStartSet = false;
+    
+    // Reset playback state
+    activePlaybackNotes.clear();
+    lastPlaybackBeat = -1.0;
+    
     DBG("Recording cleared");
 }
 
@@ -2044,6 +2117,48 @@ bool NewProjectAudioProcessor::exportAllTracksToMidi(const juce::File& outputFil
         return false;
     
     return midiFile.writeTo(outputStream);
+}
+
+//==============================================================================
+// Guitar Pro Export Functionality
+//==============================================================================
+
+bool NewProjectAudioProcessor::hasRecordedNotes() const
+{
+    std::lock_guard<std::mutex> lock(recordingMutex);
+    return !recordedNotes.empty();
+}
+
+bool NewProjectAudioProcessor::exportRecordingToGP5(const juce::File& outputFile, const juce::String& title)
+{
+    // Get the recorded track
+    TabTrack track = getRecordedTabTrack();
+    
+    if (track.measures.isEmpty())
+    {
+        DBG("No recorded notes to export");
+        return false;
+    }
+    
+    // Create GP5 writer
+    GP5Writer writer;
+    writer.setTitle(title.isEmpty() ? "Untitled" : title);
+    writer.setArtist("GP5 VST Editor");
+    writer.setTempo(static_cast<int>(hostTempo.load()));
+    
+    // Write to file
+    bool success = writer.writeToFile(track, outputFile);
+    
+    if (!success)
+    {
+        DBG("GP5 export failed: " << writer.getLastError());
+    }
+    else
+    {
+        DBG("GP5 exported successfully to: " << outputFile.getFullPathName());
+    }
+    
+    return success;
 }
 
 //==============================================================================

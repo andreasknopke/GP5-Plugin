@@ -100,6 +100,7 @@ public:
     //==============================================================================
     // DAW Synchronisation - Thread-safe access from Editor
     bool isHostPlaying() const { return hostIsPlaying.load(); }
+    bool isHostRecording() const { return hostIsRecording.load(); }
     double getHostTempo() const { return hostTempo.load(); }
     double getHostPositionInBeats() const { return hostPositionBeats.load(); }
     double getHostPositionInSeconds() const { return hostPositionSeconds.load(); }
@@ -280,10 +281,11 @@ public:
     
     //==============================================================================
     // Recording functionality (Editor Mode)
+    // Recording uses DAW record status OR manual toggle
     //==============================================================================
-    void setRecordingEnabled(bool enabled);
-    bool isRecordingEnabled() const { return recordingEnabled.load(); }
-    bool isRecording() const { return recordingEnabled.load() && hostIsPlaying.load(); }
+    void setRecordingEnabled(bool enabled) { recordingEnabled.store(enabled); }
+    bool isRecordingEnabled() const { return recordingEnabled.load() || hostIsRecording.load(); }
+    bool isRecording() const { return (recordingEnabled.load() || hostIsRecording.load()) && hostIsPlaying.load(); }
     void clearRecording();
     std::vector<RecordedNote> getRecordedNotes() const;
     TabTrack getRecordedTabTrack() const;  // Convert recorded notes to TabTrack for display
@@ -297,6 +299,16 @@ public:
     
     // Export all tracks to MIDI file (multi-channel)
     bool exportAllTracksToMidi(const juce::File& outputFile);
+    
+    //==============================================================================
+    // Guitar Pro Export Functionality
+    //==============================================================================
+    
+    // Export recorded notes to GP5 file
+    bool exportRecordingToGP5(const juce::File& outputFile, const juce::String& title = "Untitled");
+    
+    // Check if there are recorded notes to export
+    bool hasRecordedNotes() const;
 
 private:
     //==============================================================================
@@ -359,6 +371,7 @@ private:
     
     // DAW sync state (atomic for thread-safe access from UI)
     std::atomic<bool> hostIsPlaying { false };
+    std::atomic<bool> hostIsRecording { false };  // Track record-arm status from DAW
     std::atomic<double> hostTempo { 120.0 };
     std::atomic<double> hostPositionBeats { 0.0 };
     std::atomic<double> hostPositionSeconds { 0.0 };
@@ -375,13 +388,17 @@ private:
     mutable std::mutex liveMidiMutex;
     std::map<int, LiveMidiNote> liveMidiNotes;  // midiNote -> LiveMidiNote
     
-    // Recording state
-    std::atomic<bool> recordingEnabled { false };
+    // Recording state (automatic based on DAW track record status OR manual toggle)
+    std::atomic<bool> recordingEnabled { false };  // Manual record toggle
     mutable std::mutex recordingMutex;
     std::vector<RecordedNote> recordedNotes;
     std::map<int, size_t> activeRecordingNotes;  // midiNote -> index in recordedNotes
     double recordingStartBeat = 0.0;  // PPQ position when first note was recorded (for bar sync)
     bool recordingStartSet = false;   // Whether recordingStartBeat has been set
+    
+    // Recording playback state (for MIDI-out of recorded notes)
+    std::set<int> activePlaybackNotes;  // Currently playing recorded notes (MIDI note numbers)
+    double lastPlaybackBeat = -1.0;     // Last processed beat for playback
     
     // Fret position preference (0=Low, 1=Mid, 2=High)
     std::atomic<int> fretPosition { 0 };  // Default: Low
