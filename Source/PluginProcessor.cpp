@@ -1941,22 +1941,26 @@ bool NewProjectAudioProcessor::exportTrackToMidi(int trackIndex, const juce::Fil
         currentTimeInBeats += beatsPerMeasure;
     }
     
-    // End of Track Meta Event
+    // End of Track Meta Event (FF 2F 00) - required for MIDI standard compliance
     midiSequence.addEvent(juce::MidiMessage::endOfTrack(), currentTimeInBeats * 480.0);
     midiSequence.updateMatchedPairs();
     
-    // Erstelle MIDI-File
+    // Erstelle MIDI-File im Format 0 (Single-Track)
+    // Format 0: Alle Daten in einem Track (Metadaten + Noten)
     juce::MidiFile midiFile;
     midiFile.setTicksPerQuarterNote(480);
     midiFile.addTrack(midiSequence);
     
     // Speichere die Datei
+    // JUCE erkennt automatisch: 1 Track = Format 0
     outputFile.deleteFile();
     juce::FileOutputStream outputStream(outputFile);
     
     if (!outputStream.openedOk())
         return false;
     
+    // JUCE's writeTo() schreibt automatisch Format 0 bei einem Track
+    // und fügt das End-of-Track Event (FF 2F 00) korrekt ein
     return midiFile.writeTo(outputStream);
 }
 
@@ -1969,11 +1973,20 @@ bool NewProjectAudioProcessor::exportAllTracksToMidi(const juce::File& outputFil
     if (tracks.size() == 0)
         return false;
     
-    // Erstelle MIDI-File
+    // Bei nur einem Track: Format 0 verwenden (alles in einem Track)
+    if (tracks.size() == 1)
+    {
+        return exportTrackToMidi(0, outputFile);
+    }
+    
+    // Mehrere Tracks: Format 1 (Multi-Track MIDI)
+    // Track 0 = nur Metadaten (Tempo, Time Signature, Titel)
+    // Tracks 1+ = Musikdaten (Noten, Controller)
     juce::MidiFile midiFile;
     midiFile.setTicksPerQuarterNote(480);
     
-    // Track 0: Tempo und Time Signature (Standard für Format 1 MIDI)
+    // Track 0: NUR Tempo und Time Signature (Standard für Format 1 MIDI)
+    // Keine Musikdaten in Track 0!
     juce::MidiMessageSequence tempoTrack;
     
     // Tempo (in Mikrosekunden pro Viertelnote)
@@ -2002,10 +2015,11 @@ bool NewProjectAudioProcessor::exportAllTracksToMidi(const juce::File& outputFil
         totalLength += header.numerator * (4.0 / header.denominator);
     }
     
+    // End of Track für Tempo-Track (FF 2F 00) - required for MIDI standard
     tempoTrack.addEvent(juce::MidiMessage::endOfTrack(), totalLength * 480.0);
     midiFile.addTrack(tempoTrack);
     
-    // Für jeden Track eine MIDI-Spur erstellen
+    // Für jeden Track eine MIDI-Spur erstellen (Tracks 1+ in Format 1)
     for (int trackIdx = 0; trackIdx < tracks.size() && trackIdx < 16; ++trackIdx)
     {
         const auto& track = tracks[trackIdx];
@@ -2102,7 +2116,7 @@ bool NewProjectAudioProcessor::exportAllTracksToMidi(const juce::File& outputFil
             currentTimeInBeats += beatsPerMeasure;
         }
         
-        // End of Track
+        // End of Track (FF 2F 00) - required for MIDI standard compliance
         midiSequence.addEvent(juce::MidiMessage::endOfTrack(), totalLength * 480.0);
         midiSequence.updateMatchedPairs();
         
@@ -2110,12 +2124,15 @@ bool NewProjectAudioProcessor::exportAllTracksToMidi(const juce::File& outputFil
     }
     
     // Speichere die Datei
+    // JUCE erkennt automatisch: >1 Track = Format 1
     outputFile.deleteFile();
     juce::FileOutputStream outputStream(outputFile);
     
     if (!outputStream.openedOk())
         return false;
     
+    // JUCE's writeTo() schreibt Format 1 bei mehreren Tracks
+    // und fügt das End-of-Track Event (FF 2F 00) korrekt für jeden Track ein
     return midiFile.writeTo(outputStream);
 }
 

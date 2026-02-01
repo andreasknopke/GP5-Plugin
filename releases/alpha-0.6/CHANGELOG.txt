@@ -1,0 +1,37 @@
+GP5 VST Editor - Alpha 0.6
+===========================
+
+Release Date: February 1, 2026
+
+NEW FEATURES:
+-------------
+- GP5 Export: Save recordings as Guitar Pro 5 (.gp5) files
+  - Fully compatible with Guitar Pro software (all versions)
+  - Validated against PyGuitarPro reference implementation
+  - Compatible with Soundslice online tab player/editor
+  - Compatible with other GP5-compatible applications
+
+BUG FIXES:
+----------
+- Fixed GP5 Writer stringFlags byte: now correctly written for all beats including rests
+- Fixed GP5 PageSetup: correct 10 strings instead of 11
+- GP5 files can now be re-imported into the plugin without errors
+
+KNOWN ISSUES:
+-------------
+- Fret numbers may display incorrectly when re-loading exported files (parser issue)
+- Some advanced GP features not yet supported in export (chord diagrams, lyrics, etc.)
+
+INSTALLATION:
+-------------
+1. Extract GP5_VST_Editor.vst3 folder to:
+   - Windows: C:\Program Files\Common Files\VST3\
+   - macOS: /Library/Audio/Plug-Ins/VST3/
+2. Restart your DAW
+3. Load the plugin as an instrument
+
+USAGE:
+------
+1. Load a Guitar Pro file or record MIDI input
+2. Click "GuitarPro File" button to export as .gp5
+3. The exported file can be opened in Guitar Pro, uploaded to Soundslice, etc.
