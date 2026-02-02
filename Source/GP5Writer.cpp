@@ -467,10 +467,10 @@ void GP5Writer::writeMeasures(const TabTrack& track)
             
             if (measure.beats.isEmpty())
             {
-                // Write single rest beat
+                // Write single whole rest beat for empty measure
                 writeByte(0x40);   // flags: rest
-                writeByte(0x00);   // beat status (required when rest flag set)
-                writeByte(0);      // duration (quarter note)
+                writeByte(0x02);   // beat status (0x02 = Rest)
+                writeByte((juce::uint8)-2); // duration (Whole note = -2) to fill 4/4 measure
                 writeByte(0);      // stringFlags (PyGuitarPro ALWAYS reads this!)
                 writeShort(0);     // flags2
             }
@@ -485,10 +485,10 @@ void GP5Writer::writeMeasures(const TabTrack& track)
         else
         {
             // Empty measure
-            writeInt(1);
+            writeInt(1);       // 1 beat
             writeByte(0x40);   // rest
-            writeByte(0x00);   // beat status
-            writeByte(0);      // quarter note
+            writeByte(0x02);   // beat status (0x02 = Rest)
+            writeByte((juce::uint8)-2); // duration (Whole note = -2)
             writeByte(0);      // stringFlags (PyGuitarPro ALWAYS reads this!)
             writeShort(0);     // flags2
         }
@@ -552,7 +552,7 @@ void GP5Writer::writeBeat(const TabBeat& beat, int stringCount)
     
     // Beat status (if rest)
     if (flags & 0x40)
-        writeByte(0x00);
+        writeByte(0x02); // 0x02 = Rest status (0x00 = Empty)
     
     // Duration
     int duration = 0;
