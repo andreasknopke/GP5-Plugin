@@ -386,8 +386,8 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                 // Reset last played position wenn keine Noten mehr gehalten werden
                 if (liveMidiNotes.empty())
                 {
-                    lastPlayedString = -1;
-                    lastPlayedFret = -1;
+                    // Statt hartem Reset speichern wir die Zeit
+                    lastNoteOffTime = juce::Time::getMillisecondCounterHiRes() / 1000.0;
                 }
                 
                 // Recording: Note beenden
@@ -462,8 +462,7 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                 liveMidiNotes.clear();
                 
                 // Reset last played position für Kostenfunktion
-                lastPlayedString = -1;
-                lastPlayedFret = -1;
+                lastNoteOffTime = juce::Time::getMillisecondCounterHiRes() / 1000.0;
                 
                 // Recording: Alle aktiven Noten beenden
                 if (hostIsRecording.load())
@@ -1603,6 +1602,21 @@ NewProjectAudioProcessor::LiveMidiNote NewProjectAudioProcessor::midiNoteToTab(i
     result.midiNote = midiNote;
     result.velocity = velocity;
     
+    // Check if context is stale (e.g. 2s pause), unless we are potentially in a recording session
+    // For simplicity, we just use a 2-second timeout for resetting hand position logic
+    // But if we are legally recording, we shouldn't timeout to preserve phrase
+    bool isRecordingActive = recordingEnabled.load() || hostIsRecording.load();
+
+    if (!isRecordingActive && lastPlayedString != -1)
+    {
+        double now = juce::Time::getMillisecondCounterHiRes() / 1000.0;
+        if (now - lastNoteOffTime > 2.0)
+        {
+            lastPlayedString = -1;
+            lastPlayedFret = -1;
+        }
+    }
+
     // Finde beste Position mit Kostenfunktion
     GuitarPosition bestPos = findBestPosition(midiNote, lastPlayedString, lastPlayedFret);
     

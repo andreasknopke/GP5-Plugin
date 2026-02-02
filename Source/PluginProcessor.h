@@ -434,6 +434,7 @@ private:
     // Last played position for cost-based note placement
     mutable int lastPlayedString = -1;  // -1 = no previous note
     mutable int lastPlayedFret = -1;
+    mutable double lastNoteOffTime = 0.0;
     
     // Structure for possible guitar positions
     struct GuitarPosition {
