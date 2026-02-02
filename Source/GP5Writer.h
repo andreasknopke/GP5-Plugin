@@ -29,8 +29,11 @@ public:
     void setArtist(const juce::String& artist) { songArtist = artist; }
     void setTempo(int bpm) { tempo = bpm; }
     
-    // Write a TabTrack to a GP5 file
+    // Write a single TabTrack to a GP5 file
     bool writeToFile(const TabTrack& track, const juce::File& outputFile);
+    
+    // Write multiple TabTracks to a GP5 file (multi-channel recording)
+    bool writeToFile(const std::vector<TabTrack>& tracks, const juce::File& outputFile);
     
     // Get last error message
     juce::String getLastError() const { return lastError; }
@@ -46,7 +49,9 @@ private:
     void writeDirections();         // 19 direction signs
     void writeMeasureHeaders(int numMeasures, int numerator, int denominator);
     void writeTracks(const TabTrack& track);
+    void writeTrack(const TabTrack& track, int trackIndex, int totalTracks);
     void writeMeasures(const TabTrack& track);
+    void writeMeasuresMultiTrack(const std::vector<TabTrack>& tracks);
     void writeBeat(const TabBeat& beat, int stringCount);
     void writeNote(const TabNote& note);
     void writeNoteEffects(const NoteEffects& effects);

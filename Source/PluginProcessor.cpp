@@ -2597,6 +2597,243 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
     return track;
 }
 
+std::vector<TabTrack> NewProjectAudioProcessor::getRecordedTabTracks() const
+{
+    // Group recorded notes by MIDI channel and create a separate TabTrack for each
+    std::vector<RecordedNote> allNotes;
+    double startBeatRef = 0.0;
+    {
+        std::lock_guard<std::mutex> lock(recordingMutex);
+        allNotes = recordedNotes;
+        startBeatRef = recordingStartBeat;
+    }
+    
+    if (allNotes.empty())
+    {
+        // Return single empty track
+        std::vector<TabTrack> result;
+        result.push_back(getRecordedTabTrack());
+        return result;
+    }
+    
+    // Find all unique MIDI channels used
+    std::set<int> usedChannels;
+    for (const auto& note : allNotes)
+    {
+        usedChannels.insert(note.midiChannel);
+    }
+    
+    // If only one channel, use the regular single-track method
+    if (usedChannels.size() <= 1)
+    {
+        std::vector<TabTrack> result;
+        result.push_back(getRecordedTabTrack());
+        return result;
+    }
+    
+    // Multiple channels - create a track for each
+    std::vector<TabTrack> tracks;
+    
+    int numerator = hostTimeSigNumerator.load();
+    int denominator = hostTimeSigDenominator.load();
+    double beatsPerMeasure = numerator * (4.0 / denominator);
+    
+    // Find max beat to determine measure count
+    double maxBeat = 0.0;
+    for (const auto& note : allNotes)
+    {
+        maxBeat = std::max(maxBeat, note.endBeat);
+    }
+    int lastMeasureNumber = (int)(maxBeat / beatsPerMeasure) + 1;
+    int numMeasures = std::max(16, lastMeasureNumber + 2);
+    
+    // Create a track for each channel
+    for (int channel : usedChannels)
+    {
+        // Filter notes for this channel
+        std::vector<RecordedNote> channelNotes;
+        for (const auto& note : allNotes)
+        {
+            if (note.midiChannel == channel)
+            {
+                channelNotes.push_back(note);
+            }
+        }
+        
+        TabTrack track;
+        track.name = juce::String("Channel ") + juce::String(channel);
+        track.stringCount = 6;
+        track.tuning = { 64, 59, 55, 50, 45, 40 };  // E-Standard
+        
+        // Assign different colors per channel
+        static const juce::Colour channelColors[] = {
+            juce::Colours::red, juce::Colours::blue, juce::Colours::green,
+            juce::Colours::orange, juce::Colours::purple, juce::Colours::cyan,
+            juce::Colours::yellow, juce::Colours::magenta
+        };
+        track.colour = channelColors[(channel - 1) % 8];
+        
+        // Sort notes by start time
+        std::sort(channelNotes.begin(), channelNotes.end(), 
+            [](const RecordedNote& a, const RecordedNote& b) { return a.startBeat < b.startBeat; });
+        
+        // Build measures for this channel (simplified version)
+        for (int barNum = 1; barNum <= numMeasures; ++barNum)
+        {
+            TabMeasure measure;
+            measure.measureNumber = barNum;
+            measure.timeSignatureNumerator = numerator;
+            measure.timeSignatureDenominator = denominator;
+            
+            double measureStartBeat = (barNum - 1) * beatsPerMeasure;
+            
+            // Collect notes in this measure for this channel
+            std::vector<const RecordedNote*> notesInMeasure;
+            for (const auto& note : channelNotes)
+            {
+                double roundedPPQ = std::round(note.startBeat * 1000.0) / 1000.0;
+                int noteBar = static_cast<int>(roundedPPQ / beatsPerMeasure) + 1;
+                if (noteBar == barNum)
+                {
+                    notesInMeasure.push_back(&note);
+                }
+            }
+            
+            if (notesInMeasure.empty())
+            {
+                // Empty measure - add whole rest
+                TabBeat beat;
+                beat.isRest = true;
+                beat.duration = NoteDuration::Whole;
+                for (int s = 0; s < 6; ++s)
+                {
+                    TabNote emptyNote; emptyNote.string = s; emptyNote.fret = -1;
+                    beat.notes.add(emptyNote);
+                }
+                measure.beats.add(beat);
+            }
+            else
+            {
+                // Use 32nd note resolution
+                const double subdivision = 0.125;
+                const int maxSlots = (int)(beatsPerMeasure / subdivision + 0.5);
+                
+                // Map notes to slots
+                std::map<int, std::vector<const RecordedNote*>> noteGroups;
+                for (const auto* note : notesInMeasure)
+                {
+                    double posInMeasure = note->startBeat - measureStartBeat;
+                    int slot = (int)(posInMeasure / subdivision + 0.5);
+                    slot = juce::jlimit(0, maxSlots - 1, slot);
+                    noteGroups[slot].push_back(note);
+                }
+                
+                int currentSlot = 0;
+                while (currentSlot < maxSlots)
+                {
+                    auto it = noteGroups.find(currentSlot);
+                    bool hasNotes = (it != noteGroups.end());
+                    
+                    TabBeat beat;
+                    int durationInSlots = 0;
+                    
+                    if (hasNotes)
+                    {
+                        beat.isRest = false;
+                        const auto& group = it->second;
+                        
+                        // Determine duration based on note length
+                        double minNoteLen = 999.0;
+                        for (const auto* note : group)
+                            minNoteLen = std::min(minNoteLen, note->endBeat - note->startBeat);
+                        
+                        int desiredSlots = (int)(minNoteLen / subdivision + 0.5);
+                        if (desiredSlots < 1) desiredSlots = 1;
+                        
+                        // Find next event
+                        int nextEventSlot = maxSlots;
+                        auto nextIt = noteGroups.upper_bound(currentSlot);
+                        if (nextIt != noteGroups.end())
+                            nextEventSlot = nextIt->first;
+                        
+                        durationInSlots = std::min(desiredSlots, nextEventSlot - currentSlot);
+                        
+                        // Snap to standard durations
+                        if (durationInSlots >= 32) durationInSlots = 32;
+                        else if (durationInSlots >= 16) durationInSlots = 16;
+                        else if (durationInSlots >= 8) durationInSlots = 8;
+                        else if (durationInSlots >= 4) durationInSlots = 4;
+                        else if (durationInSlots >= 2) durationInSlots = 2;
+                        else durationInSlots = 1;
+                        
+                        // Initialize notes
+                        for (int s = 0; s < 6; ++s)
+                        {
+                            TabNote emptyNote; emptyNote.string = s; emptyNote.fret = -1;
+                            beat.notes.add(emptyNote);
+                        }
+                        
+                        // Set notes
+                        for (const auto* note : group)
+                        {
+                            if (note->string >= 0 && note->string < 6)
+                            {
+                                beat.notes.getReference(note->string).fret = note->fret;
+                                beat.notes.getReference(note->string).velocity = note->velocity;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Rest
+                        beat.isRest = true;
+                        
+                        int nextEventSlot = maxSlots;
+                        auto nextIt = noteGroups.upper_bound(currentSlot);
+                        if (nextIt != noteGroups.end())
+                            nextEventSlot = nextIt->first;
+                        
+                        int gap = nextEventSlot - currentSlot;
+                        
+                        if (gap >= 32) durationInSlots = 32;
+                        else if (gap >= 16) durationInSlots = 16;
+                        else if (gap >= 8) durationInSlots = 8;
+                        else if (gap >= 4) durationInSlots = 4;
+                        else if (gap >= 2) durationInSlots = 2;
+                        else durationInSlots = 1;
+                        
+                        for (int s = 0; s < 6; ++s)
+                        {
+                            TabNote emptyNote; emptyNote.string = s; emptyNote.fret = -1;
+                            beat.notes.add(emptyNote);
+                        }
+                    }
+                    
+                    // Set duration
+                    switch (durationInSlots)
+                    {
+                        case 32: beat.duration = NoteDuration::Whole; break;
+                        case 16: beat.duration = NoteDuration::Half; break;
+                        case 8:  beat.duration = NoteDuration::Quarter; break;
+                        case 4:  beat.duration = NoteDuration::Eighth; break;
+                        case 2:  beat.duration = NoteDuration::Sixteenth; break;
+                        default: beat.duration = NoteDuration::ThirtySecond; break;
+                    }
+                    
+                    measure.beats.add(beat);
+                    currentSlot += durationInSlots;
+                }
+            }
+            
+            track.measures.add(measure);
+        }
+        
+        tracks.push_back(track);
+    }
+    
+    return tracks;
+}
+
 //==============================================================================
 // MIDI Export Functionality
 //==============================================================================
@@ -2934,10 +3171,10 @@ bool NewProjectAudioProcessor::exportRecordingToGP5(const juce::File& outputFile
     // No reoptimization needed - string/fret values are set during recording
     // to match exactly what is shown in the live display
     
-    // Get the recorded track
-    TabTrack track = getRecordedTabTrack();
+    // Get recorded tracks (one per MIDI channel, or merged if only one channel)
+    std::vector<TabTrack> tracks = getRecordedTabTracks();
     
-    if (track.measures.isEmpty())
+    if (tracks.empty() || (tracks.size() == 1 && tracks[0].measures.isEmpty()))
     {
         DBG("No recorded notes to export");
         return false;
@@ -2949,8 +3186,8 @@ bool NewProjectAudioProcessor::exportRecordingToGP5(const juce::File& outputFile
     writer.setArtist("GP5 VST Editor");
     writer.setTempo(static_cast<int>(hostTempo.load()));
     
-    // Write to file
-    bool success = writer.writeToFile(track, outputFile);
+    // Write to file (multi-track if multiple channels, single-track otherwise)
+    bool success = writer.writeToFile(tracks, outputFile);
     
     if (!success)
     {
@@ -2958,7 +3195,8 @@ bool NewProjectAudioProcessor::exportRecordingToGP5(const juce::File& outputFile
     }
     else
     {
-        DBG("GP5 exported successfully to: " << outputFile.getFullPathName());
+        DBG("GP5 exported successfully to: " << outputFile.getFullPathName() 
+            << " (" << tracks.size() << " track(s))");
     }
     
     return success;

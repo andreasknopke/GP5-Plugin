@@ -485,6 +485,12 @@ void NewProjectAudioProcessorEditor::timerCallback()
             recordButton.setToggleState(true, juce::dontSendNotification);
             audioProcessor.setRecordingEnabled(true);
         }
+        // Wenn DAW Record deaktiviert, Button auch deaktivieren
+        else if (!audioProcessor.isHostRecording() && recordButton.getToggleState() && !isPlaying)
+        {
+            recordButton.setToggleState(false, juce::dontSendNotification);
+            audioProcessor.setRecordingEnabled(false);
+        }
         
         // Update Recording-Button Farbe basierend auf Status
         if (isRecording)
@@ -569,6 +575,11 @@ void NewProjectAudioProcessorEditor::timerCallback()
         if (isPlaying && !wasPlaying)
         {
             tabView.scrollToMeasure(0);
+        }
+        // Auto-Scroll während Playback/Recording im Editor-Modus
+        else if (isPlaying && autoScrollButton.getToggleState())
+        {
+            tabView.scrollToMeasure(currentMeasure);
         }
         
         wasPlaying = isPlaying;

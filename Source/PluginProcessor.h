@@ -304,7 +304,8 @@ public:
     void reoptimizeRecordedNotes();  // Recalculate string/fret assignments for recorded notes
     void updateRecordedNotesFromLive(const std::vector<LiveMidiNote>& liveNotes);  // Update active recorded notes with live display values
     std::vector<RecordedNote> getRecordedNotes() const;
-    TabTrack getRecordedTabTrack() const;  // Convert recorded notes to TabTrack for display
+    TabTrack getRecordedTabTrack() const;  // Convert recorded notes to TabTrack for display (all channels merged)
+    std::vector<TabTrack> getRecordedTabTracks() const;  // Convert recorded notes to TabTracks (one per MIDI channel)
     
     //==============================================================================
     // MIDI Export Functionality

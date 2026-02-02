@@ -148,6 +148,114 @@ bool GP5Writer::writeToFile(const TabTrack& track, const juce::File& outputFile)
 }
 
 //==============================================================================
+// Multi-track version
+//==============================================================================
+bool GP5Writer::writeToFile(const std::vector<TabTrack>& tracks, const juce::File& outputFile)
+{
+    if (tracks.empty())
+    {
+        lastError = "No tracks to write";
+        return false;
+    }
+    
+    // If only one track, use the simpler single-track method
+    if (tracks.size() == 1)
+    {
+        return writeToFile(tracks[0], outputFile);
+    }
+    
+    // Delete existing file to prevent appending
+    if (outputFile.existsAsFile())
+        outputFile.deleteFile();
+    
+    outputStream = outputFile.createOutputStream();
+    if (!outputStream)
+    {
+        lastError = "Could not create output file";
+        return false;
+    }
+    
+    try
+    {
+        // Determine time signature from first track
+        int numerator = 4;
+        int denominator = 4;
+        if (!tracks[0].measures.isEmpty())
+        {
+            numerator = tracks[0].measures[0].timeSignatureNumerator;
+            denominator = tracks[0].measures[0].timeSignatureDenominator;
+        }
+        
+        // Find max measure count across all tracks
+        int numMeasures = 1;
+        for (const auto& track : tracks)
+        {
+            numMeasures = juce::jmax(numMeasures, (int)track.measures.size());
+        }
+        
+        int numTracks = (int)tracks.size();
+        
+        // === PyGuitarPro GP5File.writeSong() order ===
+        
+        // 1. writeVersion()
+        writeVersion();
+        
+        // 3. writeInfo()
+        writeSongInfo();
+        
+        // 4. writeLyrics()
+        writeLyrics();
+        
+        // 6. writePageSetup()
+        writePageSetup();
+        
+        // 7. writeIntByteSizeString(tempoName) + writeI32(tempo)
+        writeStringWithLength("");  // Empty tempo name
+        writeInt(tempo);
+        
+        // 9. writeI8(key) + writeI32(octave)
+        writeByte(0);    // Key signature (0 = C major/A minor)
+        writeInt(0);     // Octave (always 0)
+        
+        // 10. writeMidiChannels()
+        writeMidiChannels();
+        
+        // 11. writeDirections()
+        writeDirections();
+        
+        // 12. writeMasterReverb()
+        writeInt(0);  // Master reverb = 0
+        
+        // 13. writeI32(measureCount) + writeI32(trackCount)
+        writeInt(numMeasures);
+        writeInt(numTracks);
+        
+        // 14. writeMeasureHeaders()
+        writeMeasureHeaders(numMeasures, numerator, denominator);
+        
+        // 15. writeTracks() - for each track
+        for (int t = 0; t < numTracks; ++t)
+        {
+            writeTrack(tracks[t], t, numTracks);
+        }
+        
+        // 16. writeMeasures() - interleaved: for each measure, write all tracks
+        writeMeasuresMultiTrack(tracks);
+        
+        outputStream->flush();
+        outputStream.reset();
+        
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        lastError = juce::String("Write error: ") + e.what();
+        outputStream.reset();
+        return false;
+    }
+}
+
+//==============================================================================
 void GP5Writer::writeVersion()
 {
     // PyGuitarPro: writeByteSizeString(version, 30)
@@ -446,6 +554,117 @@ void GP5Writer::writeTracks(const TabTrack& track)
     writeByte(0);
 }
 
+void GP5Writer::writeTrack(const TabTrack& track, int trackIndex, int totalTracks)
+{
+    // PyGuitarPro GP5File.writeTrack():
+    // - placeholder(1) if first track or GP5.0.0
+    // - flags1 byte
+    // - writeByteSizeString(name, 40)
+    // etc.
+    
+    // Placeholder for first track (GP5.0.0)
+    writeByte(0);
+    
+    // Track flags1
+    juce::uint8 flags1 = 0x08;  // isVisible = true
+    writeByte(flags1);
+    
+    // Track name (1 byte length + 40 bytes)
+    juce::String trackName = track.name.isEmpty() ? 
+        juce::String("Track ") + juce::String(trackIndex + 1) : track.name;
+    writeByte((juce::uint8)juce::jmin(40, trackName.length()));
+    for (int i = 0; i < 40; ++i)
+    {
+        if (i < trackName.length())
+            writeByte((juce::uint8)trackName[i]);
+        else
+            writeByte(0);
+    }
+    
+    // Number of strings
+    int numStrings = juce::jmax(6, track.stringCount);
+    writeInt(numStrings);
+    
+    // 7 string tunings (MIDI notes, high to low: E4=64, B3=59, G3=55, D3=50, A2=45, E2=40)
+    std::array<int, 7> defaultTuning = { 64, 59, 55, 50, 45, 40, 0 };
+    for (int i = 0; i < 7; ++i)
+    {
+        if (i < (int)track.tuning.size())
+            writeInt(track.tuning[i]);
+        else if (i < 6)
+            writeInt(defaultTuning[i]);
+        else
+            writeInt(0);
+    }
+    
+    // Port (1-based)
+    writeInt(1);
+    
+    // Channel (1-based) - use trackIndex to assign different channels
+    writeInt(trackIndex + 1);
+    
+    // Effect channel (1-based) - offset by track count
+    writeInt(totalTracks + trackIndex + 1);
+    
+    // Fret count
+    writeInt(24);
+    
+    // Offset (capo)
+    writeInt(0);
+    
+    // Color - assign different colors per track
+    static const juce::Colour trackColors[] = {
+        juce::Colours::red,
+        juce::Colours::blue,
+        juce::Colours::green,
+        juce::Colours::orange,
+        juce::Colours::purple,
+        juce::Colours::cyan,
+        juce::Colours::yellow,
+        juce::Colours::magenta
+    };
+    juce::Colour trackColour = trackColors[trackIndex % 8];
+    if (track.colour != juce::Colour())
+        trackColour = track.colour;
+    writeColor(trackColour);
+    
+    // Flags2 (short) - track settings
+    juce::int16 flags2 = 0x0003;  // tablature + notation
+    writeShort(flags2);
+    
+    // Auto accentuation
+    writeByte(0);
+    
+    // Bank
+    writeByte(0);
+    
+    // Track RSE (GP5File.writeTrackRSE)
+    writeByte(0);    // humanize
+    writeInt(0);     // unknown int
+    writeInt(0);     // unknown int
+    writeInt(100);   // unknown int (PyGuitarPro uses 100)
+    
+    // 12 placeholder bytes
+    for (int i = 0; i < 12; ++i)
+        writeByte(0);
+    
+    // RSE Instrument (GP5File.writeRSEInstrument)
+    writeInt(-1);    // instrument (-1 = none)
+    writeInt(0);     // unknown
+    writeInt(0);     // soundBank
+    
+    // GP5.0.0: effectNumber (short) + placeholder(1)
+    writeShort(0);
+    writeByte(0);
+    
+    // GP5File.writeTracks() adds placeholder(2) for GP5.0.0 ONLY after the LAST track
+    if (trackIndex == totalTracks - 1)
+    {
+        writeByte(0);
+        writeByte(0);
+    }
+}
+
 void GP5Writer::writeMeasures(const TabTrack& track)
 {
     // PyGuitarPro GP5File.writeMeasure():
@@ -498,6 +717,70 @@ void GP5Writer::writeMeasures(const TabTrack& track)
         
         // LineBreak
         writeByte(0);
+    }
+}
+
+void GP5Writer::writeMeasuresMultiTrack(const std::vector<TabTrack>& tracks)
+{
+    // GP5 file format: for each measure, write data for ALL tracks
+    // Order: Measure 1 (Track 1, Track 2, ...), Measure 2 (Track 1, Track 2, ...), ...
+    
+    // Find max measure count
+    int numMeasures = 1;
+    for (const auto& track : tracks)
+    {
+        numMeasures = juce::jmax(numMeasures, (int)track.measures.size());
+    }
+    
+    for (int m = 0; m < numMeasures; ++m)
+    {
+        // Write this measure for each track
+        for (size_t t = 0; t < tracks.size(); ++t)
+        {
+            const auto& track = tracks[t];
+            
+            // Voice 1
+            if (m < (int)track.measures.size())
+            {
+                const auto& measure = track.measures[m];
+                int numBeats = juce::jmax(1, (int)measure.beats.size());
+                
+                writeInt(numBeats);
+                
+                if (measure.beats.isEmpty())
+                {
+                    // Write single whole rest beat for empty measure
+                    writeByte(0x40);   // flags: rest
+                    writeByte(0x02);   // beat status (0x02 = Rest)
+                    writeByte((juce::uint8)-2); // duration (Whole note = -2)
+                    writeByte(0);      // stringFlags
+                    writeShort(0);     // flags2
+                }
+                else
+                {
+                    for (const auto& beat : measure.beats)
+                    {
+                        writeBeat(beat, track.stringCount);
+                    }
+                }
+            }
+            else
+            {
+                // Empty measure for this track
+                writeInt(1);       // 1 beat
+                writeByte(0x40);   // rest
+                writeByte(0x02);   // beat status (0x02 = Rest)
+                writeByte((juce::uint8)-2); // duration (Whole note = -2)
+                writeByte(0);      // stringFlags
+                writeShort(0);     // flags2
+            }
+            
+            // Voice 2 (empty)
+            writeInt(0);
+            
+            // LineBreak - must be after EACH track (not just last)
+            writeByte(0);
+        }
     }
 }
 
