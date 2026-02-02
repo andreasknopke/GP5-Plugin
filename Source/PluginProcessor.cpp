@@ -576,7 +576,8 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                     auto it = activeRecordingNotes.find(midiNote);
                     if (it != activeRecordingNotes.end() && it->second < recordedNotes.size())
                     {
-                        recordedNotes[it->second].string = 5 - bestAssignment[i].string;
+                        // standardTuning[0]=E4(top), [5]=E2(bottom) - matches display convention
+                        recordedNotes[it->second].string = bestAssignment[i].string;
                         recordedNotes[it->second].fret = bestAssignment[i].fret;
                     }
                 }
@@ -1624,10 +1625,9 @@ NewProjectAudioProcessor::LiveMidiNote NewProjectAudioProcessor::midiNoteToTab(i
     lastPlayedString = bestPos.stringIndex;
     lastPlayedFret = bestPos.fret;
     
-    // Tuning array is index 0=E2 (lowest), 5=E4 (highest)
-    // Display expects index 0=top line (highest), 5=bottom line (lowest)
-    // So we need to invert: display_string = 5 - tuning_string
-    result.string = 5 - bestPos.stringIndex;
+    // standardTuning[0]=E4 (highest, top line), [5]=E2 (lowest, bottom line)
+    // This already matches display convention: 0=top, 5=bottom
+    result.string = bestPos.stringIndex;
     result.fret = bestPos.fret;
     
     return result;
@@ -1702,7 +1702,7 @@ std::vector<NewProjectAudioProcessor::LiveMidiNote> NewProjectAudioProcessor::ge
                     LiveMidiNote ln;
                     ln.midiNote = midiNote;
                     ln.velocity = velocity;
-                    ln.string = 5 - s;  // Display: 0=top, 5=bottom; Tuning: 0=low, 5=high
+                    ln.string = s;  // standardTuning[0]=E4(top), [5]=E2(bottom) - matches display
                     ln.fret = shape.frets[s];
                     result.push_back(ln);
                 }
@@ -1881,8 +1881,8 @@ std::vector<NewProjectAudioProcessor::LiveMidiNote> NewProjectAudioProcessor::ge
                     LiveMidiNote ln;
                     ln.midiNote = notesWithVelocity[i].first;
                     ln.velocity = notesWithVelocity[i].second;
-                    // Convert string index: tuning[0]=E2(lowest) -> display[5]=bottom
-                    ln.string = 5 - current[i].string;
+                    // standardTuning[0]=E4(top), [5]=E2(bottom) - matches display
+                    ln.string = current[i].string;
                     ln.fret = current[i].fret;
                     bestResult.push_back(ln);
                 }
@@ -2142,9 +2142,8 @@ void NewProjectAudioProcessor::reoptimizeRecordedNotes()
             {
                 size_t groupIdx = notesWithIdx[i].second;
                 size_t recIdx = group[groupIdx];
-                // Display: 0=top (high E), 5=bottom (low E)
-                // Tuning: 0=low E, 5=high E
-                recordedNotes[recIdx].string = 5 - bestAssignment[i].string;
+                // standardTuning[0]=E4(top), [5]=E2(bottom) - matches display convention
+                recordedNotes[recIdx].string = bestAssignment[i].string;
                 recordedNotes[recIdx].fret = bestAssignment[i].fret;
                 
                 // Update lastPlayedFret für nächste Gruppe

@@ -438,7 +438,7 @@ private:
     
     // Structure for possible guitar positions
     struct GuitarPosition {
-        int stringIndex;  // 0 = lowest string (E2), 5 = highest string (E4)
+        int stringIndex;  // 0 = highest string (E4, top), 5 = lowest string (E2, bottom)
         int fret;
     };
     
