@@ -30,6 +30,13 @@ enum class NoteDuration
 //==============================================================================
 // Effekte und Artikulationen
 //==============================================================================
+struct TabBendPoint
+{
+    int position = 0;    // Position in note duration (0-60, 60 = full duration = 100%)
+    int value = 0;       // Bend value in 1/100 semitones (100 = 1/2 tone, 200 = full tone)
+    int vibrato = 0;     // Vibrato type: 0=none, 1=fast, 2=average, 3=slow
+};
+
 enum class SlideType
 {
     None,
@@ -65,6 +72,7 @@ struct NoteEffects
     float bendValue = 0.0f;  // In Halbtönen (0.5 = 1/2, 1.0 = full, 2.0 = 2 Stufen)
     int bendType = 0;        // 0=none, 1=bend, 2=bend+release, 3=release, 4=pre-bend, 5=pre-bend+release
     bool releaseBend = false;
+    std::vector<TabBendPoint> bendPoints;
     
     // Harmonics
     HarmonicType harmonic = HarmonicType::None;

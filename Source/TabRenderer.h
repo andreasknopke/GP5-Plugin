@@ -489,13 +489,63 @@ private:
         
         float startX = x + noteRadius + 2.0f;
         float startY = y;
-        float targetY = y - bendHeight;  // Feste Höhe über der Note
         
         // Berechne die verfügbare Breite bis zur nächsten Note
         float availableWidth = nextBeatX - startX - noteRadius - 4.0f;
         availableWidth = juce::jmax(availableWidth, 20.0f);  // Minimum 20px
         
         float endX = startX + availableWidth;
+
+        // Custom drawing if bend points exist (Detailed Mode)
+        if (!note.effects.bendPoints.empty())
+        {
+            float unitScale = bendHeight / 200.0f; // 200 units = Full (24px)
+            
+            juce::Path bendPath;
+            bool first = true;
+            
+            for (const auto& bp : note.effects.bendPoints)
+            {
+                float px = startX + (bp.position / 60.0f) * availableWidth;
+                float py = startY - (bp.value * unitScale);
+                
+                if (first) { bendPath.startNewSubPath(px, py); first = false; }
+                else { bendPath.lineTo(px, py); }
+            }
+            g.strokePath(bendPath, juce::PathStrokeType(1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            
+            // Draw values at peaks/ends
+            auto drawVal = [&](int value, int pos) {
+                if (value < 25) return;
+                float valF = value / 100.0f;
+                juce::String txt;
+                if (valF >= 1.9f && valF <= 2.1f) txt = "full";
+                else if (valF >= 0.9f && valF <= 1.1f) txt = juce::CharPointer_UTF8("\xC2\xBD");
+                else if (valF >= 0.4f && valF <= 0.6f) txt = juce::CharPointer_UTF8("\xC2\xBC");
+                else txt = juce::String(valF, 1);
+                
+                float px = startX + (pos / 60.0f) * availableWidth;
+                float py = startY - (value * unitScale);
+                g.setFont(9.0f);
+                g.drawText(txt, juce::Rectangle<float>(px - 10, py - 12, 20, 10), juce::Justification::centred, false);
+            };
+            
+            // Logic to find display points (peaks and high plateaus)
+            for (size_t i = 0; i < note.effects.bendPoints.size(); ++i) {
+                const auto& bp = note.effects.bendPoints[i];
+                // Always draw last point if high
+                if (i == note.effects.bendPoints.size() - 1) { drawVal(bp.value, bp.position); continue; }
+                
+                // Draw local maxima
+                if (i > 0 && i < note.effects.bendPoints.size() - 1) {
+                    if (bp.value > note.effects.bendPoints[i-1].value && bp.value >= note.effects.bendPoints[i+1].value)
+                        drawVal(bp.value, bp.position);
+                }
+            }
+            return;
+        }
+
+        float targetY = y - bendHeight;  // Feste Höhe über der Note
         
         // Bestimme Bend-Wert Text
         juce::String bendText;

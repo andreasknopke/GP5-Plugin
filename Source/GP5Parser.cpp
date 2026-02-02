@@ -1161,6 +1161,16 @@ TabTrack GP5Parser::convertToTabTrack(int trackIndex) const
                 tabNote.effects.bendType = gp5Note.bendType;
                 tabNote.effects.releaseBend = gp5Note.hasReleaseBend;
                 
+                // Copy detailed bend points
+                for (const auto& bp : gp5Note.bendPoints)
+                {
+                    TabBendPoint tbp;
+                    tbp.position = bp.position;
+                    tbp.value = bp.value;
+                    tbp.vibrato = bp.vibrato;
+                    tabNote.effects.bendPoints.push_back(tbp);
+                }
+                
                 if (gp5Note.hasSlide)
                     tabNote.effects.slideType = convertSlideType(gp5Note.slideType);
                 

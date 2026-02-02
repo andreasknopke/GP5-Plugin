@@ -817,7 +817,20 @@ void GP5Writer::writeBend(const NoteEffects& effects)
     int bendValue = (int)(effects.bendValue * 100.0f);
     writeInt(bendValue);
     
-    // Bend points
+    // Check if we have detailed bend points available
+    if (!effects.bendPoints.empty())
+    {
+        writeInt((int)effects.bendPoints.size());
+        for (const auto& bp : effects.bendPoints)
+        {
+            writeInt(bp.position);
+            writeInt(bp.value);
+            writeBool(bp.vibrato != 0);
+        }
+        return; // Done
+    }
+    
+    // Bend points (synthetic fallback)
     int numPoints = 2;
     if (effects.bendType == 2)  // Bend + release
         numPoints = 3;

@@ -344,7 +344,11 @@ private:
         double durationBeats = 0.0;   // Total note duration in beats
         int bendType = 0;             // 1=bend, 2=bend+release, 3=release, 4=pre-bend, 5=pre-bend+release
         int maxBendValue = 0;         // Maximum bend value in 1/100 semitones
-        std::vector<GP5BendPoint> points;
+        
+        // Fixed size array for thread safety (no malloc in audio thread)
+        GP5BendPoint points[16];
+        int pointCount = 0;
+        
         int lastSentPitchBend = 8192; // Track last sent value to avoid redundant messages
     };
     static constexpr int maxActiveBends = 32;

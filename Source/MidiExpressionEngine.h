@@ -78,6 +78,15 @@ struct ActiveNoteBuffer
     }
 };
 
+struct ActiveBendState
+{
+    bool active = false;
+    double startBeat = 0.0;
+    double durationBeats = 1.0;
+    GP5BendPoint points[8]; // Fixed max points
+    int pointCount = 0;
+};
+
 //==============================================================================
 // MIDI Expression Engine - Audio-Thread-Safe
 //==============================================================================
@@ -103,6 +112,9 @@ public:
     {
         for (auto& buf : activeNotesPerChannel)
             buf.clear();
+        for (int i=0; i<MAX_CHANNELS; ++i)
+            activeBends[i].active = false;
+
         vibratoActiveChannel = -1;
         vibratoStartBeat = 0.0;
     }
@@ -223,11 +235,37 @@ public:
             }
             
             // Bend
-            if (gpNote.hasBend && gpNote.bendValue != 0)
+            if (gpNote.hasBend)
             {
-                int pitchBend = 8192 + (gpNote.bendValue * 41);  // 4096/100 ≈ 41
-                pitchBend = juce::jlimit(0, 16383, pitchBend);
-                midiBuffer.addEvent(juce::MidiMessage::pitchWheel(midiChannel, pitchBend), sampleOffset);
+                // Register active bend for this channel
+                if (channelIdx >= 0 && channelIdx < MAX_CHANNELS)
+                {
+                    auto& bend = activeBends[channelIdx];
+                    bend.active = true;
+                    bend.startBeat = currentBeat;
+                    bend.durationBeats = 4.0 / std::pow(2.0, beat.duration + 2.0); // Simple duration calc
+                    bend.pointCount = std::min((int)gpNote.bendPoints.size(), 8);
+                    for (int i = 0; i < bend.pointCount; ++i)
+                        bend.points[i] = gpNote.bendPoints[i];
+                        
+                    // If no points but hasBend is true (legacy/simple), synthesized points needed?
+                    // GP5Parser ensures points exist if hasBend is true (it reads them).
+                    // If synthetic bend (from old model), we might have 0 points.
+                    if (bend.pointCount == 0 && gpNote.bendValue != 0)
+                    {
+                        // Synthesize simple bend
+                        bend.pointCount = 2; // Start and End
+                        bend.points[0] = {0, 0, 0};
+                        bend.points[1] = {60, gpNote.bendValue, 0};
+                    }
+                }
+            }
+            else
+            {
+                if (channelIdx >= 0 && channelIdx < MAX_CHANNELS)
+                   activeBends[channelIdx].active = false;
+                   
+                midiBuffer.addEvent(juce::MidiMessage::pitchWheel(midiChannel, 8192), sampleOffset);
             }
             
             // Vibrato tracking
@@ -266,6 +304,83 @@ public:
         // Safety
         if (beatsPerSecond <= 0.0)
             beatsPerSecond = 2.0;
+            
+        // Update Pitch Bends
+        for (int i = 0; i < MAX_CHANNELS; ++i)
+        {
+            if (activeBends[i].active)
+            {
+                const auto& bend = activeBends[i];
+                double dt = currentBeat - bend.startBeat;
+                if (dt < 0) dt = 0;
+
+                double pos = (dt / bend.durationBeats) * 60.0;
+                
+                // Interpolate
+                double bendVal = 0.0;
+                int vibVal = 0;
+                
+                if (bend.pointCount > 0)
+                {
+                    bool found = false;
+                    for (int p = 0; p < bend.pointCount - 1; ++p)
+                    {
+                        if (pos >= bend.points[p].position && pos <= bend.points[p+1].position)
+                        {
+                            double range = bend.points[p+1].position - bend.points[p].position;
+                            double t = (range > 0.001) ? (pos - bend.points[p].position) / range : 0.0;
+                            bendVal = bend.points[p].value + t * (bend.points[p+1].value - bend.points[p].value);
+                            
+                            // 0=None, 1=Fast, 2=Average, 3=Slow. Here we just trigger "bend vibrato"
+                            // If vibrato is set on start point or interpolated?
+                            // GP5 usually: vibrato on the point applies to the segment?
+                            // Let's assume point[p].vibrato enables vibrato for this segment.
+                            vibVal = bend.points[p].vibrato;
+                            
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found)
+                    {
+                         if (pos < bend.points[0].position) {
+                             bendVal = bend.points[0].value;
+                             vibVal = bend.points[0].vibrato;
+                         }
+                         else {
+                             bendVal = bend.points[bend.pointCount - 1].value;
+                             vibVal = bend.points[bend.pointCount - 1].vibrato;
+                         }
+                    }
+                }
+                
+                // Pitch Wheel (Assuming +/- 2 Semitone range default)
+                // 1 unit = 1 cent. 200 cents = 8192 range.
+                int pitchBend = 8192 + (int)(bendVal * 40.96); 
+                pitchBend = juce::jlimit(0, 16383, pitchBend);
+                midiBuffer.addEvent(juce::MidiMessage::pitchWheel(i + 1, pitchBend), 0);
+                
+                // Apply "Bend Vibrato" if present (add modulation)
+                if (vibVal > 0)
+                {
+                     // Simple LFO for bend vibrato
+                     // 5Hz typically. Depth dependent on vibVal (1=Fast/Low, 2=Avg, 3=Slow/Wide?)
+                     // For now, reuse standard vibrato CC1.
+                     // But we should mix with existing vibrato logic. 
+                     // The existing logic uses `vibratoActiveChannel`.
+                     // If we just send CC1 here it might conflict.
+                     // But let's send it.
+                     int depth = 60; // Default
+                     if (vibVal == 2) depth = 90;
+                     if (vibVal == 3) depth = 120;
+                     
+                     // Calculate Oscillated CC1
+                     double phase = currentBeat * 10.0; // Fast
+                     int mod = 64 + (int)(depth * 0.5 * std::sin(phase)); 
+                     midiBuffer.addEvent(juce::MidiMessage::controllerEvent(i + 1, 1, juce::jlimit(0,127, mod)), 0);
+                }
+            }
+        }
         
         // Update vibrato
         if (vibratoActiveChannel > 0)
@@ -329,6 +444,7 @@ private:
     // State - alle mit fester Größe, keine dynamische Allokation
     //==========================================================================
     std::array<ActiveNoteBuffer, MAX_CHANNELS> activeNotesPerChannel;
+    ActiveBendState activeBends[MAX_CHANNELS];
     int vibratoActiveChannel = -1;
     double vibratoStartBeat = 0.0;
     

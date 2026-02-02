@@ -599,19 +599,20 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                 
                 // Interpolate bend value from bend points
                 int bendValue = 0;  // Value in 1/100 semitones
+                int vibratoValue = 0; // 0=none, 1=fast, 2=avg, 3=slow
                 
-                if (bend.points.size() >= 2)
+                if (bend.pointCount >= 2)
                 {
                     // Find the two surrounding points
                     int prevIdx = 0;
-                    int nextIdx = (int)bend.points.size() - 1;
+                    int nextIdx = bend.pointCount - 1;
                     
-                    for (int i = 0; i < (int)bend.points.size(); ++i)
+                    for (int i = 0; i < bend.pointCount; ++i)
                     {
                         if (bend.points[i].position <= positionInBend)
                             prevIdx = i;
                     }
-                    for (int i = (int)bend.points.size() - 1; i >= 0; --i)
+                    for (int i = bend.pointCount - 1; i >= 0; --i)
                     {
                         if (bend.points[i].position >= positionInBend)
                             nextIdx = i;
@@ -621,6 +622,9 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                     
                     const auto& prevPoint = bend.points[prevIdx];
                     const auto& nextPoint = bend.points[nextIdx];
+                    
+                    // Use vibrato from the starting point of the segment
+                    vibratoValue = prevPoint.vibrato;
                     
                     if (prevPoint.position == nextPoint.position)
                     {
@@ -635,8 +639,10 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                         bendValue = (int)(prevPoint.value + t * (nextPoint.value - prevPoint.value));
                     }
                 }
-                else if (bend.points.size() == 1)
+                else if (bend.pointCount == 1)
                 {
+                    vibratoValue = bend.points[0].vibrato;
+                    
                     // Single point - use progress to interpolate based on bend type
                     if (bend.bendType == 1)  // Normal bend: 0 -> target
                         bendValue = (int)(bend.points[0].value * progress);
@@ -670,6 +676,20 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                         bendValue = bend.maxBendValue;
                 }
                 
+                // === Apply Vibrato Modulation ===
+                if (vibratoValue > 0)
+                {
+                   // Approximate 5Hz vibrato
+                    double vibDepth = 0.0; // In 1/100 semitones
+                    if (vibratoValue == 1) vibDepth = 25.0;  // +/- 0.25 semi (Fast)
+                    else if (vibratoValue == 2) vibDepth = 50.0;  // +/- 0.50 semi (Average)
+                    else if (vibratoValue == 3) vibDepth = 100.0; // +/- 1.00 semi (Slow/Wide)
+                    
+                    // Use measure position for phase to keep it continuous
+                    double phase = currentBeat * 30.0; // Approx speed
+                    bendValue += (int)(std::sin(phase) * vibDepth);
+                }
+
                 // Convert bend value to MIDI pitch wheel
                 // ±2 semitone range: 4096 per semitone
                 constexpr double unitsPerSemitone = 8192.0 / 2.0;
@@ -889,7 +909,14 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                                     newBend.durationBeats = beatDurationBeats;
                                     newBend.bendType = gpNote.bendType;
                                     newBend.maxBendValue = gpNote.bendValue;
-                                    newBend.points = gpNote.bendPoints;
+                                    
+                                    // Manual copy to fixed array for thread safety
+                                    newBend.pointCount = std::min((int)gpNote.bendPoints.size(), 16);
+                                    for (int i = 0; i < newBend.pointCount; ++i)
+                                    {
+                                        newBend.points[i] = gpNote.bendPoints[i];
+                                    }
+                                    
                                     newBend.lastSentPitchBend = initialPitchBend;
                                 }
                             }
