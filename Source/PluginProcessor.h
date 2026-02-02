@@ -265,6 +265,20 @@ public:
         double startBeat = 0.0;   // When note started (in beats)
         double endBeat = 0.0;     // When note ended (in beats)
         bool isActive = false;    // Still being held
+        
+        int midiChannel = 1;      // Source channel
+        
+        // Recorded Effects
+        float maxBendValue = 0.0f;           // Max deviation found
+        bool hasVibrato = false;             // Triggered by ModWheel
+        std::vector<GP5BendPoint> bendPoints; // Normalized usage for export
+        
+        // Temp recording data
+        struct RawBendEvent {
+            double beat;
+            int value; // 1/100 semitones
+        };
+        std::vector<RawBendEvent> rawBendEvents;
     };
     
     // Get currently held notes for display

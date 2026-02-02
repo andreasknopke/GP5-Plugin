@@ -363,6 +363,7 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                     
                     RecordedNote recNote;
                     recNote.midiNote = midiNote;
+                    recNote.midiChannel = msg.getChannel();
                     recNote.velocity = velocity;
                     recNote.string = tabNote.string;
                     recNote.fret = tabNote.fret;
@@ -404,6 +405,57 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                         activeRecordingNotes.erase(it);
                     }
                 }
+            }
+            else if (msg.isPitchWheel())
+            {
+                if (shouldRecord)
+                {
+                    std::lock_guard<std::mutex> recLock(recordingMutex);
+                    int channel = msg.getChannel();
+                    int wheelValue = msg.getPitchWheelValue();
+                    
+                    // Convert to GP5 1/100 semitones (assume +/- 2 semitone range)
+                    // Range 0-16383, center 8192 => +/- 8192 units = +/- 200 cents
+                    int bendVal = (int)((wheelValue - 8192.0) / 8192.0 * 200.0);
+                    if (std::abs(bendVal) < 5) bendVal = 0; // Noise threshold
+                    
+                    for (auto& [note, idx] : activeRecordingNotes)
+                    {
+                        if (idx < recordedNotes.size())
+                        {
+                            auto& recNote = recordedNotes[idx];
+                            if (recNote.isActive && recNote.midiChannel == channel)
+                            {
+                                recNote.rawBendEvents.push_back({currentBeat, bendVal});
+                                float valSemis = std::abs(bendVal) / 100.0f;
+                                if (valSemis > recNote.maxBendValue)
+                                    recNote.maxBendValue = valSemis;
+                            }
+                        }
+                    }
+                }
+            }
+            else if (msg.isController())
+            {
+               if (shouldRecord && msg.getControllerNumber() == 1) // Modulation Wheel
+               {
+                    std::lock_guard<std::mutex> recLock(recordingMutex);
+                    int channel = msg.getChannel();
+                    int val = msg.getControllerValue();
+                    
+                    if (val > 20) // Threshold for Vibrato
+                    {
+                         for (auto& [note, idx] : activeRecordingNotes)
+                        {
+                            if (idx < recordedNotes.size())
+                            {
+                                auto& recNote = recordedNotes[idx];
+                                if (recNote.isActive && recNote.midiChannel == channel)
+                                   recNote.hasVibrato = true;
+                            }
+                        }
+                    }
+               }
             }
             else if (msg.isAllNotesOff() || msg.isAllSoundOff())
             {
@@ -2392,6 +2444,90 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
                     {
                         beat.notes.getReference(note->string).fret = note->fret;
                         beat.notes.getReference(note->string).velocity = note->velocity;
+                        
+                        // === Apply Recorded Effects ===
+                        auto& tabNote = beat.notes.getReference(note->string);
+                        
+                        // Vibrato
+                        if (note->hasVibrato)
+                            tabNote.effects.vibrato = true;
+                        
+                        // Bending
+                        if (note->maxBendValue > 0.05f) // Threshold
+                        {
+                            tabNote.effects.bend = true;
+                            tabNote.effects.bendValue = note->maxBendValue;
+                            
+                            // Convert recorded raw events to GP5BendPoints (0-60 scale)
+                            if (!note->rawBendEvents.empty())
+                            {
+                                double noteStart = note->startBeat;
+                                double noteLen = note->endBeat - note->startBeat;
+                                if (noteLen < 0.001) noteLen = 0.001; // Safety
+                                
+                                tabNote.effects.bendPoints.clear();
+                                
+                                // Always start with a 0-point if not present
+                                if (note->rawBendEvents.front().beat > noteStart + 0.01)
+                                {
+                                    TabBendPoint startPt;
+                                    startPt.position = 0;
+                                    startPt.value = 0;
+                                    tabNote.effects.bendPoints.push_back(startPt);
+                                }
+                                
+                                for (const auto& ev : note->rawBendEvents)
+                                {
+                                    double relPos = (ev.beat - noteStart) / noteLen;
+                                    if (relPos < 0.0) relPos = 0.0;
+                                    if (relPos > 1.0) relPos = 1.0;
+                                    
+                                    TabBendPoint bp;
+                                    bp.position = (int)(relPos * 60.0);
+                                    bp.value = ev.value;
+                                    
+                                    // Filter too close points (GP5 restriction)
+                                    if (!tabNote.effects.bendPoints.empty())
+                                    {
+                                        if (bp.position == tabNote.effects.bendPoints.back().position)
+                                           tabNote.effects.bendPoints.back().value = bp.value; // Overwrite same pos
+                                        else
+                                           tabNote.effects.bendPoints.push_back(bp);
+                                    }
+                                    else
+                                        tabNote.effects.bendPoints.push_back(bp);
+                                }
+                                
+                                // Ensure end point
+                                if (tabNote.effects.bendPoints.empty() || tabNote.effects.bendPoints.back().position < 60)
+                                {
+                                     TabBendPoint endPt;
+                                     endPt.position = 60;
+                                     // Hold last value
+                                     if (!tabNote.effects.bendPoints.empty())
+                                         endPt.value = tabNote.effects.bendPoints.back().value;
+                                     else
+                                         endPt.value = 0;
+                                     tabNote.effects.bendPoints.push_back(endPt);
+                                }
+                                
+                                // Determine Bend Type based on curve shape
+                                // 1=Bend, 2=Bend+Release, 3=Release, 4=PreBend, 5=PreBend+Release
+                                bool startsZero = (tabNote.effects.bendPoints.front().value < 10);
+                                bool endsLow = (tabNote.effects.bendPoints.back().value < 10);
+                                
+                                if (startsZero)
+                                {
+                                    if (endsLow) tabNote.effects.bendType = 2; // Bend+Release
+                                    else tabNote.effects.bendType = 1; // Bend
+                                }
+                                else
+                                {
+                                    if (endsLow) tabNote.effects.bendType = 3; // Release (PreBend+Release?)
+                                    else tabNote.effects.bendType = 4; // PreBend or Hold
+                                }
+                            }
+                        }
                     }
                 }
             }
