@@ -212,8 +212,8 @@ struct TabTrack
     
     TabTrack()
     {
-        // Standard-Stimmung: E-Standard (E2, A2, D3, G3, B3, E4)
-        tuning = { 40, 45, 50, 55, 59, 64 };
+        // Standard-Stimmung: E-Standard (E4, B3, G3, D3, A2, E2) - High to Low
+        tuning = { 64, 59, 55, 50, 45, 40 };
     }
 };
 

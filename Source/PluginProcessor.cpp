@@ -1864,7 +1864,7 @@ TabTrack NewProjectAudioProcessor::getEmptyTabTrack() const
     TabTrack track;
     track.name = "MIDI Input";
     track.stringCount = 6;
-    track.tuning = { 40, 45, 50, 55, 59, 64 };  // E-Standard
+    track.tuning = { 64, 59, 55, 50, 45, 40 };  // E-Standard (High to Low)
     track.colour = juce::Colours::blue;
     
     // Create measures based on DAW time signature
@@ -2125,7 +2125,7 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
     TabTrack track;
     track.name = "Recording";
     track.stringCount = 6;
-    track.tuning = { 40, 45, 50, 55, 59, 64 };  // E-Standard
+    track.tuning = { 64, 59, 55, 50, 45, 40 };  // E-Standard (High to Low)
     track.colour = juce::Colours::red;
     
     int numerator = hostTimeSigNumerator.load();
@@ -2211,74 +2211,208 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
         
         if (notesInMeasure.empty())
         {
+            // Fülle leere Takte mit Pausen
+            double remainingSlots = beatsPerMeasure / 0.125;
+            while (remainingSlots > 0.1) // Float safety
+            {
+                TabBeat beat;
+                beat.isRest = true;
+                
+                // Max duration check
+                if (remainingSlots >= 32.0) { beat.duration = NoteDuration::Whole; remainingSlots -= 32.0; }
+                else if (remainingSlots >= 16.0) { beat.duration = NoteDuration::Half; remainingSlots -= 16.0; }
+                else if (remainingSlots >= 8.0) { beat.duration = NoteDuration::Quarter; remainingSlots -= 8.0; }
+                else if (remainingSlots >= 4.0) { beat.duration = NoteDuration::Eighth; remainingSlots -= 4.0; }
+                else if (remainingSlots >= 2.0) { beat.duration = NoteDuration::Sixteenth; remainingSlots -= 2.0; }
+                else { beat.duration = NoteDuration::ThirtySecond; remainingSlots -= 1.0; }
+                
+                // Add empty notes for GP5 writer
+                for (int s = 0; s < 6; ++s) {
+                   TabNote emptyNote; emptyNote.string = s; emptyNote.fret = -1; beat.notes.add(emptyNote);
+                }
+                measure.beats.add(beat);
+            }
             track.measures.add(measure);
             continue;
         }
         
-        // Gruppiere Noten nach quantisierter Startzeit (für Akkorde)
+        // 32nd note resolution (0.125 beats)
+        const double subdivision = 0.125;
+        const int maxSlots = (int)(beatsPerMeasure / subdivision + 0.5);
+        
+        // --- CHORD DETECTION & SEQUENCING ---
+        // Gruppiere Noten nach "Musikalischen Events" (Akkorde vs. Sequenzen)
+        // um zu verhindern, dass schnelle Triller als Akkord im selben Slot landen.
+        
+        // 1. Sortiere Noten zeitlich
+        std::vector<const RecordedNote*> sortedNotes = notesInMeasure;
+        std::sort(sortedNotes.begin(), sortedNotes.end(), 
+            [](const RecordedNote* a, const RecordedNote* b) { return a->startBeat < b->startBeat; });
+
+        // 2. Cluster Noten in Events
+        struct MusicalEvent {
+            double startTimeSum = 0.0;
+            std::vector<const RecordedNote*> notes;
+            double getStartTime() const { return notes.empty() ? 0.0 : startTimeSum / notes.size(); }
+        };
+        std::vector<MusicalEvent> events;
+        
+        // Toleranz für Akkorde: 0.06 Beats (ca. 30ms bei 120bpm)
+        const double chordThreshold = 0.06;
+
+        for (const auto* note : sortedNotes) {
+            if (events.empty()) {
+                MusicalEvent evt;
+                evt.notes.push_back(note);
+                evt.startTimeSum = note->startBeat;
+                events.push_back(evt);
+            } else {
+                auto& lastEvt = events.back();
+                double avgStart = lastEvt.getStartTime();
+                
+                // Wenn Note sehr nah am vorherigen Event startet -> Teil des Akkords
+                if ((note->startBeat - avgStart) < chordThreshold) {
+                    lastEvt.notes.push_back(note);
+                    lastEvt.startTimeSum += note->startBeat;
+                } else {
+                    // Neues Event (z.B. nächster Ton im Triller)
+                    MusicalEvent evt;
+                    evt.notes.push_back(note);
+                    evt.startTimeSum = note->startBeat;
+                    events.push_back(evt);
+                }
+            }
+        }
+
+        // 3. Map Events auf Slots (mit Konfliktlösung)
         std::map<int, std::vector<const RecordedNote*>> noteGroups;
-        for (const auto* note : notesInMeasure)
-        {
-            // Quantisiere auf 32tel-Grid innerhalb des Takts (32 Slots pro Takt bei 4/4)
-            double posInMeasure = note->startBeat - measureStartBeat;
-            int quantizedSlot = (int)(posInMeasure / (beatsPerMeasure / 32.0) + 0.5);
-            quantizedSlot = juce::jlimit(0, 31, quantizedSlot);
-            noteGroups[quantizedSlot].push_back(note);
+        int lastOccupiedSlot = -1;
+
+        for (const auto& evt : events) {
+            double posInMeasure = evt.getStartTime() - measureStartBeat;
+            int idealSlot = (int)(posInMeasure / subdivision + 0.5);
+            
+            // Stelle sicher, dass Events in unterschiedlichen Slots landen
+            // (außer sie sind extrem weit weg vom Grid und wir müssen mergen, aber hier priorisieren wir Trennung)
+            int slot = std::max(idealSlot, lastOccupiedSlot + 1);
+            
+            // Limit auf Taktlänge
+            if (slot >= maxSlots) slot = maxSlots - 1;
+
+            for (const auto* n : evt.notes) {
+                noteGroups[slot].push_back(n);
+            }
+            
+            // Update last occupied (nur wenn wir wirklich in einem neuen Slot sind)
+            if (slot > lastOccupiedSlot) {
+                lastOccupiedSlot = slot;
+            }
         }
         
-        // Erstelle Beats für jede Notengruppe
-        for (const auto& [slot, group] : noteGroups)
+        // Iteriere durch die Slots und fülle Lücken mit Pausen
+        int currentSlot = 0;
+        while (currentSlot < maxSlots)
         {
+            auto it = noteGroups.find(currentSlot);
+            bool hasNotes = (it != noteGroups.end());
+            
             TabBeat beat;
-            beat.isRest = false;
+            int durationInSlots = 0;
             
-            // Finde die kürzeste Notendauer in der Gruppe
-            double shortestDuration = std::numeric_limits<double>::max();
-            for (const auto* note : group)
+            if (hasNotes)
             {
-                double dur = note->endBeat - note->startBeat;
-                shortestDuration = std::min(shortestDuration, dur);
-            }
-            
-            // Konvertiere zu NoteDuration
-            // Schwellwerte basieren auf Viertelnoten (1.0 = Quarter Note in PPQ)
-            // Whole=4.0, Half=2.0, Quarter=1.0, Eighth=0.5, Sixteenth=0.25, ThirtySecond=0.125
-            if (shortestDuration >= 3.0)
-                beat.duration = NoteDuration::Whole;
-            else if (shortestDuration >= 1.5)
-                beat.duration = NoteDuration::Half;
-            else if (shortestDuration >= 0.75)
-                beat.duration = NoteDuration::Quarter;
-            else if (shortestDuration >= 0.375)
-                beat.duration = NoteDuration::Eighth;
-            else if (shortestDuration >= 0.1875)
-                beat.duration = NoteDuration::Sixteenth;
-            else
-                beat.duration = NoteDuration::ThirtySecond;
-            
-            // Initialisiere 6 Noten-Slots (einer pro Saite), alle mit fret = -1 (keine Note)
-            // GP5Writer erwartet dass beat.notes[s] die Note für String s ist!
-            for (int s = 0; s < 6; ++s)
-            {
-                TabNote emptyNote;
-                emptyNote.string = s;
-                emptyNote.fret = -1;  // -1 bedeutet keine Note auf dieser Saite
-                emptyNote.velocity = 0;
-                beat.notes.add(emptyNote);
-            }
-            
-            // Setze die tatsächlichen Noten an die richtige Position (basierend auf string)
-            for (const auto* note : group)
-            {
-                int stringIdx = note->string;  // String-Index (0-5)
-                if (stringIdx >= 0 && stringIdx < 6)
+                beat.isRest = false;
+                const auto& group = it->second;
+                
+                // Bestimme die Dauer basierend auf den Noten und dem nächsten Event
+                double minNoteLen = std::numeric_limits<double>::max();
+                for (const auto* note : group)
+                     minNoteLen = std::min(minNoteLen, note->endBeat - note->startBeat);
+                
+                int desiredSlots = (int)(minNoteLen / subdivision + 0.5);
+                if (desiredSlots < 1) desiredSlots = 1;
+                
+                // Finde nächstes Event (Note oder Taktende) um Überlappung zu vermeiden
+                int nextEventSlot = maxSlots;
+                auto nextIt = noteGroups.upper_bound(currentSlot);
+                if (nextIt != noteGroups.end())
+                    nextEventSlot = nextIt->first;
+                
+                // Duration limitieren auf Gap zum nächsten Event
+                durationInSlots = std::min(desiredSlots, nextEventSlot - currentSlot);
+                
+                // Snap to standard durations (prefer standard values)
+                // 32(1), 24(0.75), 16(0.5), 12(0.375), 8(0.25), 6, 4, 3, 2, 1
+                if (durationInSlots >= 32) durationInSlots = 32;      // Whole
+                else if (durationInSlots >= 24) durationInSlots = 24; // Dotted Half
+                else if (durationInSlots >= 16) durationInSlots = 16; // Half
+                else if (durationInSlots >= 12) durationInSlots = 12; // Dotted Quarter
+                else if (durationInSlots >= 8) durationInSlots = 8;   // Quarter
+                else if (durationInSlots >= 6) durationInSlots = 6;   // Dotted Eighth
+                else if (durationInSlots >= 4) durationInSlots = 4;   // Eighth
+                else if (durationInSlots >= 3) durationInSlots = 3;   // Dotted 16th
+                else if (durationInSlots >= 2) durationInSlots = 2;   // 16th
+                else durationInSlots = 1;                             // 32nd
+                
+                // Noten setzen
+                for (int s = 0; s < 6; ++s)
                 {
-                    beat.notes.getReference(stringIdx).fret = note->fret;
-                    beat.notes.getReference(stringIdx).velocity = note->velocity;
+                    TabNote emptyNote; emptyNote.string = s; emptyNote.fret = -1; beat.notes.add(emptyNote);
+                }
+                for (const auto* note : group)
+                {
+                    if (note->string >= 0 && note->string < 6)
+                    {
+                        beat.notes.getReference(note->string).fret = note->fret;
+                        beat.notes.getReference(note->string).velocity = note->velocity;
+                    }
+                }
+            }
+            else
+            {
+                // Pause einfügen
+                beat.isRest = true;
+                
+                // Finde Länge bis zum nächsten Event
+                int nextEventSlot = maxSlots;
+                auto nextIt = noteGroups.upper_bound(currentSlot);
+                if (nextIt != noteGroups.end()) 
+                    nextEventSlot = nextIt->first;
+                
+                int gap = nextEventSlot - currentSlot;
+                
+                // Wähle größtmögliche Standarddauer
+                if (gap >= 32) durationInSlots = 32;
+                else if (gap >= 16) durationInSlots = 16;
+                else if (gap >= 8) durationInSlots = 8;
+                else if (gap >= 4) durationInSlots = 4;
+                else if (gap >= 2) durationInSlots = 2;
+                else durationInSlots = 1;
+                
+                // Leere Noten für GP5
+                for (int s = 0; s < 6; ++s) {
+                    TabNote emptyNote; emptyNote.string = s; emptyNote.fret = -1; beat.notes.add(emptyNote);
                 }
             }
             
+            // Setze Duration und Dotted Flags
+            beat.isDotted = false;
+            switch (durationInSlots)
+            {
+                case 32: beat.duration = NoteDuration::Whole; break;
+                case 24: beat.duration = NoteDuration::Half; beat.isDotted = true; break;
+                case 16: beat.duration = NoteDuration::Half; break;
+                case 12: beat.duration = NoteDuration::Quarter; beat.isDotted = true; break;
+                case 8:  beat.duration = NoteDuration::Quarter; break;
+                case 6:  beat.duration = NoteDuration::Eighth; beat.isDotted = true; break;
+                case 4:  beat.duration = NoteDuration::Eighth; break;
+                case 3:  beat.duration = NoteDuration::Sixteenth; beat.isDotted = true; break;
+                case 2:  beat.duration = NoteDuration::Sixteenth; break;
+                default: beat.duration = NoteDuration::ThirtySecond; break;
+            }
+            
             measure.beats.add(beat);
+            currentSlot += durationInSlots;
         }
         
         track.measures.add(measure);

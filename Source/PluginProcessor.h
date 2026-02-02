@@ -406,8 +406,8 @@ private:
     // Fret position preference (0=Low, 1=Mid, 2=High)
     std::atomic<int> fretPosition { 0 };  // Default: Low
     
-    // Standard guitar tuning for MIDI to Tab conversion (E2, A2, D3, G3, B3, E4)
-    const std::array<int, 6> standardTuning = { 40, 45, 50, 55, 59, 64 };
+    // Standard guitar tuning for MIDI to Tab conversion (E4, B3, G3, D3, A2, E2) - High to Low
+    const std::array<int, 6> standardTuning = { 64, 59, 55, 50, 45, 40 };
     
     // Chord Matcher für Akkord-Erkennung und -Platzierung
     ChordMatcher chordMatcher;
