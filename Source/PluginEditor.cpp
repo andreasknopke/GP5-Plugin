@@ -832,18 +832,84 @@ void NewProjectAudioProcessorEditor::saveGpButtonClicked()
         return;
     }
     
+    // Show export panel instead of direct file chooser
+    showExportPanel();
+}
+
+void NewProjectAudioProcessorEditor::showExportPanel()
+{
+    // Get tracks from processor
+    auto tracks = audioProcessor.getRecordedTabTracks();
+    
+    if (tracks.empty())
+    {
+        infoLabel.setText("No tracks to export!", juce::dontSendNotification);
+        return;
+    }
+    
+    // Create export panel
+    exportPanel = std::make_unique<ExportPanelComponent>(
+        "Untitled",  // Default title
+        tracks,
+        // Export callback
+        [this](const juce::String& title, const std::vector<std::pair<juce::String, int>>& trackData) {
+            doExportWithMetadata(title, trackData);
+        },
+        // Cancel callback
+        [this]() {
+            hideExportPanel();
+        }
+    );
+    
+    // Center the panel - height is calculated by the component itself
+    int panelWidth = 600;
+    // Use component's preferred height: header(50) + title(35) + tracksLabel(30) + tracks + buttons(60)
+    int tracksHeight = juce::jmin((int)tracks.size() * 35, 300);  // Max 300px for tracks
+    int panelHeight = 50 + 35 + 30 + tracksHeight + 60;
+    exportPanel->setBounds(
+        (getWidth() - panelWidth) / 2,
+        (getHeight() - panelHeight) / 2,
+        panelWidth,
+        panelHeight
+    );
+    
+    addAndMakeVisible(*exportPanel);
+    exportPanelVisible = true;
+    repaint();
+}
+
+void NewProjectAudioProcessorEditor::hideExportPanel()
+{
+    if (exportPanel)
+    {
+        removeChildComponent(exportPanel.get());
+        exportPanel.reset();
+    }
+    exportPanelVisible = false;
+    repaint();
+}
+
+void NewProjectAudioProcessorEditor::doExportWithMetadata(const juce::String& title, 
+    const std::vector<std::pair<juce::String, int>>& trackData)
+{
+    hideExportPanel();
+    
     // Create file chooser for GP5 save
     midiFileChooser = std::make_unique<juce::FileChooser>(
         "Save as Guitar Pro 5...",
-        juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile("Recording.gp5"),
+        juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile(title + ".gp5"),
         "*.gp5");
     
     auto chooserFlags = juce::FileBrowserComponent::saveMode 
                       | juce::FileBrowserComponent::canSelectFiles
                       | juce::FileBrowserComponent::warnAboutOverwriting;
     
+    // Store title and track data for use in callback
+    juce::String savedTitle = title;
+    std::vector<std::pair<juce::String, int>> savedTrackData = trackData;
+    
     midiFileChooser->launchAsync(chooserFlags, 
-        [this](const juce::FileChooser& fc)
+        [this, savedTitle, savedTrackData](const juce::FileChooser& fc)
         {
             auto file = fc.getResult();
             
@@ -853,10 +919,8 @@ void NewProjectAudioProcessorEditor::saveGpButtonClicked()
                 if (!file.hasFileExtension(".gp5"))
                     file = file.withFileExtension(".gp5");
                 
-                // Get title from filename
-                juce::String title = file.getFileNameWithoutExtension();
-                
-                bool success = audioProcessor.exportRecordingToGP5(file, title);
+                bool success = audioProcessor.exportRecordingToGP5WithMetadata(
+                    file, savedTitle, savedTrackData);
                 
                 if (success)
                 {

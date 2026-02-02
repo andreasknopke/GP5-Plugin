@@ -45,7 +45,8 @@ private:
     void writeLyrics();             // Lyrics section
     void writePageSetup();          // Page layout settings
     void writeTempoInfo();          // Tempo name + value + key
-    void writeMidiChannels();       // 64 MIDI channel settings
+    void writeMidiChannels();       // 64 MIDI channel settings (default instruments)
+    void writeMidiChannels(const std::vector<TabTrack>& tracks);  // With track instruments
     void writeDirections();         // 19 direction signs
     void writeMeasureHeaders(int numMeasures, int numerator, int denominator);
     void writeTracks(const TabTrack& track);

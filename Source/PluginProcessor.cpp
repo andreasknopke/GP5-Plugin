@@ -14,6 +14,44 @@
 #include <map>
 
 //==============================================================================
+// GM Instrument names for track naming (must be defined before use in processBlock)
+//==============================================================================
+static const char* gmInstrumentNames[] = {
+    "Acoustic Grand Piano", "Bright Acoustic Piano", "Electric Grand Piano", "Honky-tonk Piano",
+    "Electric Piano 1", "Electric Piano 2", "Harpsichord", "Clavi",
+    "Celesta", "Glockenspiel", "Music Box", "Vibraphone",
+    "Marimba", "Xylophone", "Tubular Bells", "Dulcimer",
+    "Drawbar Organ", "Percussive Organ", "Rock Organ", "Church Organ",
+    "Reed Organ", "Accordion", "Harmonica", "Tango Accordion",
+    "Acoustic Guitar (nylon)", "Acoustic Guitar (steel)", "Electric Guitar (jazz)", "Electric Guitar (clean)",
+    "Electric Guitar (muted)", "Overdriven Guitar", "Distortion Guitar", "Guitar Harmonics",
+    "Acoustic Bass", "Electric Bass (finger)", "Electric Bass (pick)", "Fretless Bass",
+    "Slap Bass 1", "Slap Bass 2", "Synth Bass 1", "Synth Bass 2",
+    "Violin", "Viola", "Cello", "Contrabass",
+    "Tremolo Strings", "Pizzicato Strings", "Orchestral Harp", "Timpani",
+    "String Ensemble 1", "String Ensemble 2", "Synth Strings 1", "Synth Strings 2",
+    "Choir Aahs", "Voice Oohs", "Synth Voice", "Orchestra Hit",
+    "Trumpet", "Trombone", "Tuba", "Muted Trumpet",
+    "French Horn", "Brass Section", "Synth Brass 1", "Synth Brass 2",
+    "Soprano Sax", "Alto Sax", "Tenor Sax", "Baritone Sax",
+    "Oboe", "English Horn", "Bassoon", "Clarinet",
+    "Piccolo", "Flute", "Recorder", "Pan Flute",
+    "Blown Bottle", "Shakuhachi", "Whistle", "Ocarina",
+    "Lead 1 (square)", "Lead 2 (sawtooth)", "Lead 3 (calliope)", "Lead 4 (chiff)",
+    "Lead 5 (charang)", "Lead 6 (voice)", "Lead 7 (fifths)", "Lead 8 (bass + lead)",
+    "Pad 1 (new age)", "Pad 2 (warm)", "Pad 3 (polysynth)", "Pad 4 (choir)",
+    "Pad 5 (bowed)", "Pad 6 (metallic)", "Pad 7 (halo)", "Pad 8 (sweep)",
+    "FX 1 (rain)", "FX 2 (soundtrack)", "FX 3 (crystal)", "FX 4 (atmosphere)",
+    "FX 5 (brightness)", "FX 6 (goblins)", "FX 7 (echoes)", "FX 8 (sci-fi)",
+    "Sitar", "Banjo", "Shamisen", "Koto",
+    "Kalimba", "Bag pipe", "Fiddle", "Shanai",
+    "Tinkle Bell", "Agogo", "Steel Drums", "Woodblock",
+    "Taiko Drum", "Melodic Tom", "Synth Drum", "Reverse Cymbal",
+    "Guitar Fret Noise", "Breath Noise", "Seashore", "Bird Tweet",
+    "Telephone Ring", "Helicopter", "Applause", "Gunshot"
+};
+
+//==============================================================================
 // Helper: Fix MIDI file format (JUCE writes Format 1 even for single track)
 // This corrects the format byte to 0 for single-track MIDI files
 //==============================================================================
@@ -331,9 +369,36 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         int numerator = hostTimeSigNumerator.load();
         int denominator = hostTimeSigDenominator.load();
         
+        // Log file for debugging MIDI input
+        static juce::File midiLogFile = juce::File::getSpecialLocation(juce::File::userDesktopDirectory).getChildFile("gp5_midi_log.txt");
+        static bool logInitialized = false;
+        if (!logInitialized)
+        {
+            midiLogFile.deleteFile();  // Start fresh
+            midiLogFile.appendText("GP5 MIDI Log started\n");
+            logInitialized = true;
+        }
+        
         for (const auto metadata : midiMessages)
         {
             const auto msg = metadata.getMessage();
+            
+            // Log ALL MIDI messages to file
+            {
+                juce::String logLine = "MIDI: status=0x" + juce::String::toHexString(msg.getRawData()[0])
+                    + " ch=" + juce::String(msg.getChannel());
+                if (msg.isNoteOn())
+                    logLine += " NoteOn note=" + juce::String(msg.getNoteNumber()) + " vel=" + juce::String(msg.getVelocity());
+                else if (msg.isNoteOff())
+                    logLine += " NoteOff note=" + juce::String(msg.getNoteNumber());
+                else if (msg.isProgramChange())
+                    logLine += " ProgramChange prog=" + juce::String(msg.getProgramChangeNumber());
+                else if (msg.isController())
+                    logLine += " CC num=" + juce::String(msg.getControllerNumber()) + " val=" + juce::String(msg.getControllerValue());
+                else
+                    logLine += " other";
+                midiLogFile.appendText(logLine + "\n");
+            }
             
             if (msg.isNoteOn())
             {
@@ -456,6 +521,24 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                         }
                     }
                }
+            }
+            else if (msg.isProgramChange())
+            {
+                // Store instrument for this channel (Program Change: 0xC0-0xCF)
+                // This is processed ALWAYS (not just during playback) because DAWs
+                // often send Program Changes when loading a project, before Play
+                int channel = msg.getChannel() - 1;  // JUCE channels are 1-based, we use 0-based
+                if (channel >= 0 && channel < 16)
+                {
+                    int instrument = msg.getProgramChangeNumber();
+                    channelInstruments[channel] = instrument;
+                    
+                    // Log to file (works in Release mode)
+                    juce::File logFile = juce::File::getSpecialLocation(juce::File::userDesktopDirectory).getChildFile("gp5_midi_log.txt");
+                    logFile.appendText(juce::String("Program Change: Channel ") + juce::String(channel + 1) 
+                        + " -> Instrument " + juce::String(instrument) 
+                        + " (" + juce::String(gmInstrumentNames[instrument]) + ")\n");
+                }
             }
             else if (msg.isAllNotesOff() || msg.isAllSoundOff())
             {
@@ -2661,9 +2744,24 @@ std::vector<TabTrack> NewProjectAudioProcessor::getRecordedTabTracks() const
         }
         
         TabTrack track;
-        track.name = juce::String("Channel ") + juce::String(channel);
+        int instrument = channelInstruments[channel - 1];
+        
+        // Channel 10 is the drum channel - use "Drums" as name
+        if (channel == 10)
+        {
+            track.name = "Drums";
+            instrument = 0;  // Standard Kit for drums
+        }
+        else
+        {
+            const char* instrumentName = (instrument >= 0 && instrument < 128) ? gmInstrumentNames[instrument] : "Unknown";
+            track.name = juce::String(instrumentName);
+        }
+        
         track.stringCount = 6;
         track.tuning = { 64, 59, 55, 50, 45, 40 };  // E-Standard
+        track.midiChannel = channel - 1;  // 0-based for GP5
+        track.midiInstrument = instrument;  // Use captured instrument
         
         // Assign different colors per channel
         static const juce::Colour channelColors[] = {
@@ -3196,6 +3294,51 @@ bool NewProjectAudioProcessor::exportRecordingToGP5(const juce::File& outputFile
     else
     {
         DBG("GP5 exported successfully to: " << outputFile.getFullPathName() 
+            << " (" << tracks.size() << " track(s))");
+    }
+    
+    return success;
+}
+
+bool NewProjectAudioProcessor::exportRecordingToGP5WithMetadata(
+    const juce::File& outputFile,
+    const juce::String& title,
+    const std::vector<std::pair<juce::String, int>>& trackData)
+{
+    // Get recorded tracks (one per MIDI channel)
+    std::vector<TabTrack> tracks = getRecordedTabTracks();
+    
+    if (tracks.empty() || (tracks.size() == 1 && tracks[0].measures.isEmpty()))
+    {
+        DBG("No recorded notes to export");
+        return false;
+    }
+    
+    // Apply user-defined metadata to tracks
+    for (size_t i = 0; i < tracks.size() && i < trackData.size(); ++i)
+    {
+        tracks[i].name = trackData[i].first;          // Track name
+        tracks[i].midiInstrument = trackData[i].second;  // GM instrument (0-127)
+        DBG("Track " << i << ": name=" << tracks[i].name 
+            << ", instrument=" << tracks[i].midiInstrument);
+    }
+    
+    // Create GP5 writer
+    GP5Writer writer;
+    writer.setTitle(title.isEmpty() ? "Untitled" : title);
+    writer.setArtist("GP5 VST Editor");
+    writer.setTempo(static_cast<int>(hostTempo.load()));
+    
+    // Write to file with user metadata
+    bool success = writer.writeToFile(tracks, outputFile);
+    
+    if (!success)
+    {
+        DBG("GP5 export with metadata failed: " << writer.getLastError());
+    }
+    else
+    {
+        DBG("GP5 exported successfully with metadata to: " << outputFile.getFullPathName() 
             << " (" << tracks.size() << " track(s))");
     }
     

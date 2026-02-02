@@ -212,6 +212,8 @@ struct TabTrack
     int stringCount = 6;            // Anzahl Saiten
     juce::Array<int> tuning;        // Stimmung (MIDI-Noten, z.B. E2=40, A2=45...)
     int capo = 0;                   // Kapodaster-Position
+    int midiChannel = 0;            // MIDI Kanal (0-15)
+    int midiInstrument = 25;        // GM Instrument (0-127), default: Acoustic Guitar Steel
     
     juce::Array<TabMeasure> measures;
     

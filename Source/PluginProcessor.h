@@ -324,6 +324,11 @@ public:
     // Export recorded notes to GP5 file
     bool exportRecordingToGP5(const juce::File& outputFile, const juce::String& title = "Untitled");
     
+    // Export with user-defined metadata (title, track names, instruments)
+    bool exportRecordingToGP5WithMetadata(const juce::File& outputFile, 
+        const juce::String& title,
+        const std::vector<std::pair<juce::String, int>>& trackData);
+    
     // Check if there are recorded notes to export
     bool hasRecordedNotes() const;
 
@@ -427,6 +432,10 @@ private:
     
     // Standard guitar tuning for MIDI to Tab conversion (E4, B3, G3, D3, A2, E2) - High to Low
     const std::array<int, 6> standardTuning = { 64, 59, 55, 50, 45, 40 };
+    
+    // MIDI Instruments per channel (set by Program Change messages)
+    // Default: 25 = Acoustic Guitar (Steel) for all channels
+    std::array<int, 16> channelInstruments = { 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25 };
     
     // Chord Matcher für Akkord-Erkennung und -Platzierung
     ChordMatcher chordMatcher;

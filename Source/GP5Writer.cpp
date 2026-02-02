@@ -217,8 +217,8 @@ bool GP5Writer::writeToFile(const std::vector<TabTrack>& tracks, const juce::Fil
         writeByte(0);    // Key signature (0 = C major/A minor)
         writeInt(0);     // Octave (always 0)
         
-        // 10. writeMidiChannels()
-        writeMidiChannels();
+        // 10. writeMidiChannels() - use track instruments
+        writeMidiChannels(tracks);
         
         // 11. writeDirections()
         writeDirections();
@@ -361,6 +361,53 @@ void GP5Writer::writeMidiChannels()
                 writeInt(0);
             else if (channel == 0)  // First channel
                 writeInt(25);  // Acoustic Guitar (steel)
+            else
+                writeInt(25);
+            
+            // Volume (8-bit, compressed: 13 = roughly 104 MIDI)
+            writeByte(13);
+            // Balance (8 = center)
+            writeByte(8);
+            // Chorus
+            writeByte(0);
+            // Reverb
+            writeByte(0);
+            // Phaser
+            writeByte(0);
+            // Tremolo
+            writeByte(0);
+            // Two blank bytes
+            writeByte(0);
+            writeByte(0);
+        }
+    }
+}
+
+void GP5Writer::writeMidiChannels(const std::vector<TabTrack>& tracks)
+{
+    // Multi-track version: use instruments from tracks
+    // Build a map of channel -> instrument from tracks
+    std::array<int, 16> channelInstruments;
+    channelInstruments.fill(25);  // Default: Acoustic Guitar (steel)
+    
+    for (const auto& track : tracks)
+    {
+        int ch = track.midiChannel;
+        if (ch >= 0 && ch < 16)
+        {
+            channelInstruments[ch] = track.midiInstrument;
+        }
+    }
+    
+    for (int port = 0; port < 4; ++port)
+    {
+        for (int channel = 0; channel < 16; ++channel)
+        {
+            // Program/instrument
+            if (channel == 9)  // Drum channel
+                writeInt(0);
+            else if (port == 0)  // First port uses our track instruments
+                writeInt(channelInstruments[channel]);
             else
                 writeInt(25);
             

@@ -11,6 +11,7 @@
 #include "PluginProcessor.h"
 #include "TabViewComponent.h"
 #include "TrackSettingsComponent.h"
+#include "ExportPanelComponent.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 
 //==============================================================================
@@ -80,6 +81,13 @@ private:
     // 9. Track Settings Panel (popup)
     std::unique_ptr<TrackSettingsComponent> trackSettingsPanel;
     bool settingsPanelVisible = false;
+    
+    // 9b. Export Panel (after recording)
+    std::unique_ptr<ExportPanelComponent> exportPanel;
+    bool exportPanelVisible = false;
+    void showExportPanel();
+    void hideExportPanel();
+    void doExportWithMetadata(const juce::String& title, const std::vector<std::pair<juce::String, int>>& trackData);
 
     // 10. Hilfsfunktionen
     void loadButtonClicked();
