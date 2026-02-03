@@ -26,7 +26,7 @@ juce_add_plugin(GP5_VST_Editor
     PLUGIN_MANUFACTURER_CODE ARSo
     PLUGIN_CODE Gp5e
     
-    # MIDI-Konfiguration - Als Instrument mit MIDI Output
+    # MIDI-Konfiguration - Instrument mit MIDI UND optionalem Audio-Input
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT TRUE
@@ -55,6 +55,8 @@ target_sources(GP5_VST_Editor
         Source/GP7Parser.h
         Source/GP5Writer.cpp
         Source/GP5Writer.h
+        Source/AudioToMidiProcessor.cpp
+        Source/AudioToMidiProcessor.h
         Source/TabModels.h
         Source/TabLayoutEngine.h
         Source/TabRenderer.h

@@ -13,6 +13,7 @@
 #include "GP7Parser.h"
 #include "TabModels.h"
 #include "ChordMatcher.h"
+#include "AudioToMidiProcessor.h"
 // MidiExpressionEngine deaktiviert - crasht bei erster Note
 // #include "MidiExpressionEngine.h"
 #include <atomic>
@@ -40,6 +41,10 @@ public:
    #ifndef JucePlugin_PreferredChannelConfigurations
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
    #endif
+    
+    // Side-Chain support for VST3 Instruments
+    bool canAddBus (bool isInput) const override { return isInput; }
+    bool canRemoveBus (bool isInput) const override { return isInput && getBusCount(true) > 0; }
 
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
@@ -96,6 +101,18 @@ public:
     bool loadGP5File(const juce::File& file);
     void unloadFile();
     bool isFileLoaded() const { return fileLoaded; }
+    
+    // Check if we have content to display (either loaded file or recorded notes)
+    bool hasPlayableContent() const { return fileLoaded || hasRecordedNotes(); }
+    
+    // Get tracks for display - returns loaded tracks or creates tracks from recorded notes
+    juce::Array<GP5Track> getDisplayTracks() const;
+    
+    // Get the number of tracks for display (works for both modes)
+    int getDisplayTrackCount() const;
+    
+    // Get track name for display (works for both modes)
+    juce::String getDisplayTrackName(int trackIndex) const;
     
     //==============================================================================
     // DAW Synchronisation - Thread-safe access from Editor
@@ -257,6 +274,19 @@ public:
     // Higher values help stay in one fret region when playing runs
     void setPositionLookahead(int notes) { positionLookahead.store(juce::jlimit(1, 4, notes)); }
     int getPositionLookahead() const { return positionLookahead.load(); }
+    
+    //==============================================================================
+    // Audio-to-MIDI Mode
+    //==============================================================================
+    
+    /** Input mode: MIDI or Audio */
+    enum class InputMode { MIDI, Audio };
+    void setInputMode(InputMode mode) { inputMode.store(static_cast<int>(mode)); }
+    InputMode getInputMode() const { return static_cast<InputMode>(inputMode.load()); }
+    
+    /** Get audio-to-MIDI processor for parameter control */
+    AudioToMidiProcessor& getAudioToMidiProcessor() { return audioToMidiProcessor; }
+    const AudioToMidiProcessor& getAudioToMidiProcessor() const { return audioToMidiProcessor; }
     
     // Get live MIDI notes for display (thread-safe)
     struct LiveMidiNote {
@@ -447,6 +477,10 @@ private:
     // Position lookahead: Update position every N notes (1=every note, 4=every 4th note)
     std::atomic<int> positionLookahead { 1 };  // Default: every note
     mutable int positionLookaheadCounter = 0;  // Counter for tracking notes
+    
+    // Audio-to-MIDI mode
+    std::atomic<int> inputMode { 0 };  // 0 = MIDI, 1 = Audio
+    AudioToMidiProcessor audioToMidiProcessor;
     
     // Standard guitar tuning for MIDI to Tab conversion (E4, B3, G3, D3, A2, E2) - High to Low
     const std::array<int, 6> standardTuning = { 64, 59, 55, 50, 45, 40 };

@@ -182,9 +182,6 @@ NewProjectAudioProcessor::NewProjectAudioProcessor()
 #ifndef JucePlugin_PreferredChannelConfigurations
      : AudioProcessor (BusesProperties()
                      #if ! JucePlugin_IsMidiEffect
-                      #if ! JucePlugin_IsSynth
-                       .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
-                      #endif
                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
                      #endif
                        )
@@ -274,8 +271,11 @@ void NewProjectAudioProcessor::changeProgramName (int index, const juce::String&
 //==============================================================================
 void NewProjectAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    juce::ignoreUnused(sampleRate, samplesPerBlock);
+    juce::ignoreUnused(samplesPerBlock);
     // Inline MIDI-Generierung - keine externe Engine
+    
+    // Audio-to-MIDI Processor vorbereiten
+    audioToMidiProcessor.prepare(sampleRate, samplesPerBlock);
 }
 
 void NewProjectAudioProcessor::releaseResources()
@@ -299,11 +299,12 @@ bool NewProjectAudioProcessor::isBusesLayoutSupported (const BusesLayout& layout
      && layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
         return false;
 
-    // This checks if the input layout matches the output layout
-   #if ! JucePlugin_IsSynth
-    if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
+    // Side-chain input: allow mono, stereo, or disabled
+    auto inputSet = layouts.getMainInputChannelSet();
+    if (!inputSet.isDisabled() 
+        && inputSet != juce::AudioChannelSet::mono()
+        && inputSet != juce::AudioChannelSet::stereo())
         return false;
-   #endif
 
     return true;
   #endif
@@ -352,6 +353,15 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                 hostTimeSigDenominator.store(timeSig->denominator);
             }
         }
+    }
+
+    // =========================================================================
+    // Audio-to-MIDI - Wenn im Audio-Modus, generiere MIDI aus Audio
+    // =========================================================================
+    if (inputMode.load() == static_cast<int>(InputMode::Audio) && totalNumInputChannels > 0)
+    {
+        // Verwende ersten Audiokanal für Pitch-Detection
+        audioToMidiProcessor.processBlock(buffer, midiMessages);
     }
 
     // =========================================================================
@@ -3374,6 +3384,117 @@ bool NewProjectAudioProcessor::hasRecordedNotes() const
 {
     std::lock_guard<std::mutex> lock(recordingMutex);
     return !recordedNotes.empty();
+}
+
+juce::Array<GP5Track> NewProjectAudioProcessor::getDisplayTracks() const
+{
+    // If file is loaded, return the file's tracks
+    if (fileLoaded)
+    {
+        return getActiveTracks();
+    }
+    
+    // Otherwise, create tracks from recorded notes (one per MIDI channel)
+    juce::Array<GP5Track> tracks;
+    
+    std::vector<RecordedNote> allNotes;
+    {
+        std::lock_guard<std::mutex> lock(recordingMutex);
+        allNotes = recordedNotes;
+    }
+    
+    if (allNotes.empty())
+    {
+        return tracks;  // Return empty
+    }
+    
+    // Find all unique MIDI channels used
+    std::set<int> usedChannels;
+    for (const auto& note : allNotes)
+    {
+        usedChannels.insert(note.midiChannel);
+    }
+    
+    // Create a GP5Track for each channel
+    for (int channel : usedChannels)
+    {
+        GP5Track track;
+        int instrument = channelInstruments[channel - 1];
+        
+        // Channel 10 is the drum channel
+        if (channel == 10)
+        {
+            track.name = "Drums";
+            track.isPercussion = true;
+            instrument = 0;
+        }
+        else
+        {
+            const char* instrumentName = (instrument >= 0 && instrument < 128) ? gmInstrumentNames[instrument] : "Unknown";
+            track.name = juce::String(instrumentName);
+            track.isPercussion = false;
+        }
+        
+        track.stringCount = 6;
+        track.midiChannel = channel;
+        track.port = 0;
+        track.volume = 100;
+        track.pan = 64;
+        
+        // Standard guitar tuning
+        track.tuning.clear();
+        track.tuning.add(64);  // E4
+        track.tuning.add(59);  // B3
+        track.tuning.add(55);  // G3
+        track.tuning.add(50);  // D3
+        track.tuning.add(45);  // A2
+        track.tuning.add(40);  // E2
+        
+        tracks.add(track);
+    }
+    
+    return tracks;
+}
+
+int NewProjectAudioProcessor::getDisplayTrackCount() const
+{
+    if (fileLoaded)
+    {
+        return getActiveTracks().size();
+    }
+    
+    // Count unique MIDI channels in recorded notes
+    std::set<int> usedChannels;
+    {
+        std::lock_guard<std::mutex> lock(recordingMutex);
+        for (const auto& note : recordedNotes)
+        {
+            usedChannels.insert(note.midiChannel);
+        }
+    }
+    
+    return static_cast<int>(usedChannels.size());
+}
+
+juce::String NewProjectAudioProcessor::getDisplayTrackName(int trackIndex) const
+{
+    if (fileLoaded)
+    {
+        const auto& tracks = getActiveTracks();
+        if (trackIndex >= 0 && trackIndex < tracks.size())
+        {
+            return tracks[trackIndex].name;
+        }
+        return "Unknown";
+    }
+    
+    // Get track names from recorded notes
+    auto displayTracks = getDisplayTracks();
+    if (trackIndex >= 0 && trackIndex < displayTracks.size())
+    {
+        return displayTracks[trackIndex].name;
+    }
+    return "Recording";
 }
 
 bool NewProjectAudioProcessor::exportRecordingToGP5(const juce::File& outputFile, const juce::String& title)

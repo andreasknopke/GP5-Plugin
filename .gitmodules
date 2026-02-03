@@ -1,0 +1,3 @@
+[submodule "ThirdParty/aubio"]
+	path = ThirdParty/aubio
+	url = https://github.com/aubio/aubio.git

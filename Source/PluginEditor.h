@@ -102,6 +102,7 @@ private:
     void unloadButtonClicked();
     void trackSelectionChanged();
     void updateTrackSelector();
+    void updateTrackSelectorForRecording();  // Track-Selector für aufgezeichnete Tracks
     void refreshFromProcessor();
     void updateTransportDisplay();
     void toggleSettingsPanel();
@@ -113,6 +114,8 @@ private:
     int lastDisplayedMeasure = -1;
     double lastPositionInBeats = -1.0;  // Für Erkennung von Positionssprüngen
     bool wasPlaying = false;            // Letzter Play-Status
+    bool wasRecording = false;          // Letzter Recording-Status (für UI-Update)
+    bool hadRecordedNotes = false;      // Ob Aufnahmen vorhanden waren (für UI-Update)
 
     NewProjectAudioProcessor& audioProcessor;
 

@@ -271,7 +271,8 @@ public:
         trackRows.clear();
         trackListContainer.removeAllChildren();
         
-        const auto& tracks = audioProcessor.getActiveTracks();
+        // Verwende getDisplayTracks() um sowohl geladene als auch aufgezeichnete Tracks zu unterstützen
+        const auto tracks = audioProcessor.getDisplayTracks();
         
         int yPos = 0;
         const int rowHeight = 28;  // Compact single-row layout

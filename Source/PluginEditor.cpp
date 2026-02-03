@@ -249,19 +249,31 @@ void NewProjectAudioProcessorEditor::resized()
     zoomInButton.setBounds (toolbar.removeFromLeft(30));
     toolbar.removeFromLeft(15); // Spacer
     
-    // Im Player-Modus: Track Selector und Settings
-    // Im Editor-Modus: Fret Position Selector und Legato Selector (nutzt denselben Platz)
+    // Track Selector (Player-Modus oder Editor-Modus mit Aufnahmen)
     trackLabel.setBounds (toolbar.removeFromLeft(40));
     auto trackSelectorArea = toolbar.removeFromLeft(120);
     trackSelector.setBounds (trackSelectorArea);
     
-    // Fret Position Selector im Editor-Modus (nutzt Track-Selector Bereich)
-    fretPositionLabel.setBounds (trackLabel.getBounds());
-    fretPositionSelector.setBounds (trackSelectorArea);
-    
     toolbar.removeFromLeft(5); // Spacer
     
-    // Legato Quantization Selector (nur im Editor-Modus, neben Fret Position)
+    // Fret Position Selector (nur im Editor-Modus)
+    // Im Editor-Modus ohne Aufnahmen: nutzt Track-Selector Bereich
+    // Im Editor-Modus mit Aufnahmen: hat eigenen Bereich daneben
+    if (!audioProcessor.isFileLoaded())
+    {
+        // Editor-Modus - Fret Selector bekommt eigenen Bereich
+        fretPositionLabel.setBounds (toolbar.removeFromLeft(30));
+        fretPositionSelector.setBounds (toolbar.removeFromLeft(60));
+        toolbar.removeFromLeft(5);
+    }
+    else
+    {
+        // Player-Modus - Fret Selector nicht sichtbar, Platz nicht benötigt
+        fretPositionLabel.setBounds (0, 0, 0, 0);
+        fretPositionSelector.setBounds (0, 0, 0, 0);
+    }
+    
+    // Legato Quantization Selector (nur im Editor-Modus)
     legatoQuantizeLabel.setBounds (toolbar.removeFromLeft(45));
     legatoQuantizeSelector.setBounds (toolbar.removeFromLeft(55));
     
@@ -273,8 +285,7 @@ void NewProjectAudioProcessorEditor::resized()
     
     toolbar.removeFromLeft(5); // Spacer
     
-    // Settings Button (nur im Player-Modus, links)
-    settingsButton.setBounds (toolbar.removeFromLeft(70));
+    // Settings Button
     settingsButton.setBounds (toolbar.removeFromLeft(70));
     
     // Rechtsbündige Controls (von rechts nach links platziert)
@@ -346,22 +357,24 @@ void NewProjectAudioProcessorEditor::unloadButtonClicked()
 
 void NewProjectAudioProcessorEditor::updateModeDisplay()
 {
+    bool hasRecordings = audioProcessor.hasRecordedNotes();
+    
     if (audioProcessor.isFileLoaded())
     {
-        // Player-Modus
+        // Player-Modus (File geladen)
         modeLabel.setText("Player", juce::dontSendNotification);
         modeLabel.setColour(juce::Label::textColourId, juce::Colours::lightgreen);
         modeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF1E5631));
         unloadButton.setVisible(true);
-        saveMidiButton.setVisible(true);  // Save MIDI nur im Player-Modus
+        saveMidiButton.setVisible(true);  // Save MIDI im Player-Modus
         saveGpButton.setVisible(false);   // Save GP nur im Editor-Modus
         
-        // Track-Auswahl und Settings nur im Player-Modus
+        // Track-Auswahl und Settings im Player-Modus
         trackLabel.setVisible(true);
         trackSelector.setVisible(true);
         settingsButton.setVisible(true);
         
-        // Recording Button nur im Editor-Modus, Clear in beiden Modi
+        // Recording-Controls ausblenden im Player-Modus
         recordButton.setVisible(false);
         clearRecordingButton.setVisible(true);  // Sichtbar für Wechsel zu Editor-Modus
         fretPositionLabel.setVisible(false);
@@ -371,22 +384,52 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         posLookaheadLabel.setVisible(false);
         posLookaheadSelector.setVisible(false);
     }
-    else
+    else if (hasRecordings)
     {
-        // Editor-Modus
+        // Editor-Modus MIT Aufnahmen - hybride Ansicht
+        // Zeigt sowohl Editor- als auch Player-Features
         modeLabel.setText("Editor", juce::dontSendNotification);
         modeLabel.setColour(juce::Label::textColourId, juce::Colours::orange);
         modeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF5C3D00));
         unloadButton.setVisible(false);
-        saveMidiButton.setVisible(false);  // Keine MIDI-Export im Editor-Modus
+        saveMidiButton.setVisible(false);  // Kein MIDI-Export (nutze Save GP)
         saveGpButton.setVisible(true);     // Save GP im Editor-Modus verfügbar
         
-        // Track-Auswahl und Settings nicht im Editor-Modus
+        // Track-Auswahl und Settings auch im Editor-Modus wenn Aufnahmen vorhanden
+        // Dies ermöglicht Playback und Track-Konfiguration nach der Aufnahme
+        trackLabel.setVisible(true);
+        trackSelector.setVisible(true);
+        settingsButton.setVisible(true);
+        
+        // Recording und Editor-Selektoren bleiben sichtbar
+        recordButton.setVisible(true);
+        clearRecordingButton.setVisible(true);
+        fretPositionLabel.setVisible(true);
+        fretPositionSelector.setVisible(true);
+        legatoQuantizeLabel.setVisible(true);
+        legatoQuantizeSelector.setVisible(true);
+        posLookaheadLabel.setVisible(true);
+        posLookaheadSelector.setVisible(true);
+        
+        // Track-Selector mit aufgezeichneten Tracks aktualisieren
+        updateTrackSelectorForRecording();
+    }
+    else
+    {
+        // Editor-Modus OHNE Aufnahmen - nur Recording-Features
+        modeLabel.setText("Editor", juce::dontSendNotification);
+        modeLabel.setColour(juce::Label::textColourId, juce::Colours::orange);
+        modeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF5C3D00));
+        unloadButton.setVisible(false);
+        saveMidiButton.setVisible(false);
+        saveGpButton.setVisible(true);  // Save GP Menü, aber deaktiviert ohne Aufnahmen
+        
+        // Keine Track-Auswahl ohne Aufnahmen
         trackLabel.setVisible(false);
         trackSelector.setVisible(false);
         settingsButton.setVisible(false);
         
-        // Recording und Fret-Selector im Editor-Modus verfügbar
+        // Recording und Fret-Selector verfügbar
         recordButton.setVisible(true);
         clearRecordingButton.setVisible(true);
         fretPositionLabel.setVisible(true);
@@ -491,6 +534,40 @@ void NewProjectAudioProcessorEditor::updateTrackSelector()
     DBG("Track-Selector mit " << tracks.size() << " Tracks aktualisiert");
 }
 
+void NewProjectAudioProcessorEditor::updateTrackSelectorForRecording()
+{
+    trackSelector.clear(juce::dontSendNotification);
+    
+    // Hole Tracks aus aufgezeichneten Noten (gruppiert nach MIDI-Kanal)
+    auto tracks = audioProcessor.getDisplayTracks();
+    
+    DBG("updateTrackSelectorForRecording: " << tracks.size() << " recorded tracks found");
+    
+    for (int i = 0; i < tracks.size(); ++i)
+    {
+        const auto& track = tracks[i];
+        juce::String itemText = juce::String(i + 1) + ": " + track.name;
+        
+        // MIDI-Kanal-Info hinzufügen
+        itemText += " (Ch " + juce::String(track.midiChannel) + ")";
+        
+        DBG("  Adding recorded track: " << itemText);
+        trackSelector.addItem(itemText, i + 1);  // ID ist 1-basiert
+    }
+    
+    // Ersten Track auswählen und Tab-Ansicht aktualisieren
+    if (tracks.size() > 0)
+    {
+        trackSelector.setSelectedId(1, juce::dontSendNotification);
+        audioProcessor.setSelectedTrack(0);
+        
+        // Tab-Ansicht mit erstem Track aktualisieren
+        trackSelectionChanged();
+    }
+    
+    DBG("Track-Selector für Aufnahme mit " << tracks.size() << " Tracks aktualisiert");
+}
+
 void NewProjectAudioProcessorEditor::trackSelectionChanged()
 {
     int selectedId = trackSelector.getSelectedId();
@@ -499,34 +576,58 @@ void NewProjectAudioProcessorEditor::trackSelectionChanged()
     
     int trackIndex = selectedId - 1;  // Zurück zu 0-basiert
     
-    const auto& tracks = audioProcessor.getActiveTracks();
-    int trackCount = (int)tracks.size();
-    
-    if (trackIndex >= 0 && trackIndex < trackCount)
+    // Unterscheide zwischen Player-Modus (Datei geladen) und Editor-Modus (Aufnahmen)
+    if (audioProcessor.isFileLoaded())
     {
-        // Tab-Ansicht aktualisieren mit dem richtigen Parser
-        TabTrack track;
-        if (audioProcessor.isUsingGP7Parser())
-        {
-            const auto& gp7Tracks = audioProcessor.getGP7Parser().getTracks();
-            juce::Array<TabMeasure> measures = audioProcessor.getGP7Parser().convertToTabMeasures(trackIndex);
-            track.name = gp7Tracks[trackIndex].name;
-            track.stringCount = gp7Tracks[trackIndex].stringCount;
-            track.tuning = gp7Tracks[trackIndex].tuning;
-            track.measures = measures;
-        }
-        else
-        {
-            track = audioProcessor.getGP5Parser().convertToTabTrack(trackIndex);
-        }
-        tabView.setTrack(track);
+        // Player-Modus: Verwende geladene Datei
+        const auto& tracks = audioProcessor.getActiveTracks();
+        int trackCount = (int)tracks.size();
         
-        // MIDI-Output auf diesen Track setzen
-        audioProcessor.setSelectedTrack(trackIndex);
+        if (trackIndex >= 0 && trackIndex < trackCount)
+        {
+            // Tab-Ansicht aktualisieren mit dem richtigen Parser
+            TabTrack track;
+            if (audioProcessor.isUsingGP7Parser())
+            {
+                const auto& gp7Tracks = audioProcessor.getGP7Parser().getTracks();
+                juce::Array<TabMeasure> measures = audioProcessor.getGP7Parser().convertToTabMeasures(trackIndex);
+                track.name = gp7Tracks[trackIndex].name;
+                track.stringCount = gp7Tracks[trackIndex].stringCount;
+                track.tuning = gp7Tracks[trackIndex].tuning;
+                track.measures = measures;
+            }
+            else
+            {
+                track = audioProcessor.getGP5Parser().convertToTabTrack(trackIndex);
+            }
+            tabView.setTrack(track);
+            
+            // MIDI-Output auf diesen Track setzen
+            audioProcessor.setSelectedTrack(trackIndex);
+            
+            const auto& gp5Track = tracks[trackIndex];
+            DBG("Track " << (trackIndex + 1) << " geladen: " << gp5Track.name 
+                << " mit " << track.measures.size() << " Takten (MIDI Output aktiviert)");
+        }
+    }
+    else if (audioProcessor.hasRecordedNotes())
+    {
+        // Editor-Modus mit Aufnahmen: Verwende aufgezeichnete Tracks
+        auto recordedTracks = audioProcessor.getRecordedTabTracks();
+        int trackCount = (int)recordedTracks.size();
         
-        const auto& gp5Track = tracks[trackIndex];
-        DBG("Track " << (trackIndex + 1) << " geladen: " << gp5Track.name 
-            << " mit " << track.measures.size() << " Takten (MIDI Output aktiviert)");
+        if (trackIndex >= 0 && trackIndex < trackCount)
+        {
+            // Tab-Ansicht mit aufgezeichnetem Track aktualisieren
+            tabView.setTrack(recordedTracks[trackIndex]);
+            tabView.setEditorMode(true);
+            
+            // Ausgewählten Track für MIDI-Output setzen
+            audioProcessor.setSelectedTrack(trackIndex);
+            
+            DBG("Aufgezeichneter Track " << (trackIndex + 1) << " ausgewählt: " 
+                << recordedTracks[trackIndex].name);
+        }
     }
 }
 
@@ -542,6 +643,34 @@ void NewProjectAudioProcessorEditor::timerCallback()
         bool isPlaying = audioProcessor.isHostPlaying();
         bool isRecording = audioProcessor.isRecording();
         bool isRecordEnabled = audioProcessor.isRecordingEnabled();
+        bool hasRecordings = audioProcessor.hasRecordedNotes();
+        
+        // UI-Modus aktualisieren wenn:
+        // 1. Recording gerade beendet wurde (wasRecording -> !isRecording)
+        // 2. Erste Aufnahmen hinzugekommen sind (!hadRecordedNotes -> hasRecordings)
+        // 3. Playback gestoppt wurde nach Recording (wasPlaying && !isPlaying && hasRecordings)
+        bool shouldUpdateUI = (wasRecording && !isRecording) || 
+                              (!hadRecordedNotes && hasRecordings) ||
+                              (wasPlaying && !isPlaying && hasRecordings);
+        
+        if (shouldUpdateUI)
+        {
+            // Recording beendet oder erste Aufnahmen vorhanden - UI aktualisieren
+            updateModeDisplay();
+        }
+        
+        // Recording-Button nach Stop automatisch deaktivieren wenn Aufnahmen vorhanden
+        // Dies ermöglicht reines Playback der Aufnahme beim nächsten Play
+        if (wasPlaying && !isPlaying && hasRecordings && recordButton.getToggleState())
+        {
+            recordButton.setToggleState(false, juce::dontSendNotification);
+            audioProcessor.setRecordingEnabled(false);
+            DBG("Recording nach Stop automatisch deaktiviert - Playback-Modus aktiv");
+        }
+        
+        // Track state für nächsten Durchlauf
+        wasRecording = isRecording;
+        hadRecordedNotes = hasRecordings;
         
         // Sync Recording-Button mit DAW Record-Status
         // Wenn DAW Record aktiviert, Button auch aktivieren
@@ -550,8 +679,8 @@ void NewProjectAudioProcessorEditor::timerCallback()
             recordButton.setToggleState(true, juce::dontSendNotification);
             audioProcessor.setRecordingEnabled(true);
         }
-        // Wenn DAW Record deaktiviert, Button auch deaktivieren
-        else if (!audioProcessor.isHostRecording() && recordButton.getToggleState() && !isPlaying)
+        // Wenn DAW Record deaktiviert UND nicht mehr playing, Button deaktivieren
+        else if (!audioProcessor.isHostRecording() && !isPlaying && recordButton.getToggleState())
         {
             recordButton.setToggleState(false, juce::dontSendNotification);
             audioProcessor.setRecordingEnabled(false);
@@ -579,10 +708,17 @@ void NewProjectAudioProcessorEditor::timerCallback()
         auto recordedNotes = audioProcessor.getRecordedNotes();
         if (!recordedNotes.empty())
         {
-            // Zeige aufgezeichnete Noten als Track
-            TabTrack recordedTrack = audioProcessor.getRecordedTabTrack();
-            tabView.setTrack(recordedTrack);
-            tabView.setEditorMode(true);
+            // Während Recording: Zeige kombinierte Live-Ansicht
+            // Nach Recording (Record deaktiviert): Zeige gewählten Track
+            if (isRecording || isRecordEnabled)
+            {
+                // Recording aktiv - zeige kombinierte Live-Aufnahme
+                TabTrack recordedTrack = audioProcessor.getRecordedTabTrack();
+                tabView.setTrack(recordedTrack);
+                tabView.setEditorMode(true);
+            }
+            // Sonst: Der gewählte Track wird bereits durch trackSelectionChanged() gesetzt
+            // Timer soll nicht überschreiben!
         }
         else
         {
