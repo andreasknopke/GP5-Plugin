@@ -66,6 +66,9 @@ private:
     // 7. Transport-Info Label (Position, Tempo)
     juce::Label transportLabel;
     
+    // 7b. Version Label (bottom right overlay)
+    juce::Label versionLabel;
+    
     // 8. Auto-Scroll Toggle
     juce::ToggleButton autoScrollButton { "Auto-Scroll" };
     

@@ -63,6 +63,22 @@ target_sources(GP5_VST_Editor
         Source/TabViewComponent.h
 )
 
+# Get git commit hash
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_COMMIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+
+# If not in a git repo, use "unknown"
+if(NOT GIT_COMMIT_HASH)
+    set(GIT_COMMIT_HASH "unknown")
+endif()
+
+message(STATUS "Git commit hash: ${GIT_COMMIT_HASH}")
+
 # Compiler-Definitionen
 target_compile_definitions(GP5_VST_Editor
     PUBLIC
@@ -70,6 +86,7 @@ target_compile_definitions(GP5_VST_Editor
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0
         JUCE_STRICT_REFCOUNTEDPOINTER=1
+        GIT_COMMIT_HASH="${GIT_COMMIT_HASH}"
 )
 
 # JUCE-Module verlinken

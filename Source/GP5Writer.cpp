@@ -888,12 +888,12 @@ void GP5Writer::writeBeat(const TabBeat& beat, int stringCount)
     int duration = 0;
     switch (beat.duration)
     {
-        case 1:  duration = -2; break;  // Whole
-        case 2:  duration = -1; break;  // Half
-        case 4:  duration = 0; break;   // Quarter
-        case 8:  duration = 1; break;   // Eighth
-        case 16: duration = 2; break;   // 16th
-        case 32: duration = 3; break;   // 32nd
+        case NoteDuration::Whole:        duration = -2; break;  // Whole
+        case NoteDuration::Half:         duration = -1; break;  // Half
+        case NoteDuration::Quarter:      duration = 0; break;   // Quarter
+        case NoteDuration::Eighth:       duration = 1; break;   // Eighth
+        case NoteDuration::Sixteenth:    duration = 2; break;   // 16th
+        case NoteDuration::ThirtySecond: duration = 3; break;   // 32nd
         default: duration = 0; break;
     }
     writeByte((juce::int8)duration);
