@@ -1698,15 +1698,26 @@ NewProjectAudioProcessor::LiveMidiNote NewProjectAudioProcessor::midiNoteToTab(i
         {
             lastPlayedString = -1;
             lastPlayedFret = -1;
+            positionLookaheadCounter = 0;  // Reset counter on timeout
         }
     }
 
     // Finde beste Position mit Kostenfunktion
     GuitarPosition bestPos = findBestPosition(midiNote, lastPlayedString, lastPlayedFret);
     
-    // Update last played position für nächste Note
-    lastPlayedString = bestPos.stringIndex;
-    lastPlayedFret = bestPos.fret;
+    // Position Lookahead: Update last played position only every N notes
+    // This helps the algorithm stay in one fret region during runs
+    int lookahead = positionLookahead.load();
+    positionLookaheadCounter++;
+    
+    if (positionLookaheadCounter >= lookahead)
+    {
+        // Update last played position for next note group
+        lastPlayedString = bestPos.stringIndex;
+        lastPlayedFret = bestPos.fret;
+        positionLookaheadCounter = 0;
+    }
+    // If lookahead > 1 and counter not reached, keep using the old reference position
     
     // standardTuning[0]=E4 (highest, top line), [5]=E2 (lowest, bottom line)
     // This already matches display convention: 0=top, 5=bottom
@@ -2078,6 +2089,9 @@ void NewProjectAudioProcessor::clearRecording()
     // Reset playback state
     activePlaybackNotes.clear();
     lastPlaybackBeat = -1.0;
+    
+    // Reset position tracking
+    positionLookaheadCounter = 0;
     
     DBG("Recording cleared");
 }

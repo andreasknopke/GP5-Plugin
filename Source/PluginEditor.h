@@ -82,6 +82,10 @@ private:
     juce::ComboBox legatoQuantizeSelector;
     juce::Label legatoQuantizeLabel;
     
+    // 8e. Position Lookahead Selector (Editor Mode only)
+    juce::ComboBox posLookaheadSelector;
+    juce::Label posLookaheadLabel;
+    
     // 9. Track Settings Panel (popup)
     std::unique_ptr<TrackSettingsComponent> trackSettingsPanel;
     bool settingsPanelVisible = false;

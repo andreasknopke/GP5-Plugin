@@ -155,6 +155,25 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     };
     legatoQuantizeSelector.setVisible(false);  // Nur im Editor-Modus sichtbar
     
+    // Position Lookahead Selector (Editor Mode only)
+    addAndMakeVisible (posLookaheadLabel);
+    posLookaheadLabel.setText("Pos:", juce::dontSendNotification);
+    posLookaheadLabel.setFont(juce::FontOptions(11.0f));
+    posLookaheadLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+    posLookaheadLabel.setVisible(false);
+    
+    addAndMakeVisible (posLookaheadSelector);
+    posLookaheadSelector.addItem("1", 1);   // Update every note
+    posLookaheadSelector.addItem("2", 2);   // Update every 2nd note
+    posLookaheadSelector.addItem("3", 3);   // Update every 3rd note
+    posLookaheadSelector.addItem("4", 4);   // Update every 4th note
+    posLookaheadSelector.setSelectedId(1, juce::dontSendNotification);  // Default: every note
+    posLookaheadSelector.onChange = [this] {
+        int selectedId = posLookaheadSelector.getSelectedId();
+        audioProcessor.setPositionLookahead(selectedId);
+    };
+    posLookaheadSelector.setVisible(false);  // Nur im Editor-Modus sichtbar
+    
     // Tabulatur-Ansicht
     addAndMakeVisible (tabView);
     tabView.onMeasureClicked = [this](int measureIndex) {
@@ -248,7 +267,14 @@ void NewProjectAudioProcessorEditor::resized()
     
     toolbar.removeFromLeft(5); // Spacer
     
+    // Position Lookahead Selector (nur im Editor-Modus)
+    posLookaheadLabel.setBounds (toolbar.removeFromLeft(30));
+    posLookaheadSelector.setBounds (toolbar.removeFromLeft(40));
+    
+    toolbar.removeFromLeft(5); // Spacer
+    
     // Settings Button (nur im Player-Modus, links)
+    settingsButton.setBounds (toolbar.removeFromLeft(70));
     settingsButton.setBounds (toolbar.removeFromLeft(70));
     
     // Rechtsbündige Controls (von rechts nach links platziert)
@@ -342,6 +368,8 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         fretPositionSelector.setVisible(false);
         legatoQuantizeLabel.setVisible(false);
         legatoQuantizeSelector.setVisible(false);
+        posLookaheadLabel.setVisible(false);
+        posLookaheadSelector.setVisible(false);
     }
     else
     {
@@ -365,6 +393,8 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         fretPositionSelector.setVisible(true);
         legatoQuantizeLabel.setVisible(true);
         legatoQuantizeSelector.setVisible(true);
+        posLookaheadLabel.setVisible(true);
+        posLookaheadSelector.setVisible(true);
     }
 }
 

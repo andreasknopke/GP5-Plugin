@@ -253,6 +253,11 @@ public:
     void setLegatoQuantization(double beatsThreshold) { legatoQuantizationThreshold.store(beatsThreshold); }
     double getLegatoQuantization() const { return legatoQuantizationThreshold.load(); }
     
+    // Position lookahead: Update position reference every N notes (1-4)
+    // Higher values help stay in one fret region when playing runs
+    void setPositionLookahead(int notes) { positionLookahead.store(juce::jlimit(1, 4, notes)); }
+    int getPositionLookahead() const { return positionLookahead.load(); }
+    
     // Get live MIDI notes for display (thread-safe)
     struct LiveMidiNote {
         int midiNote = 0;
@@ -438,6 +443,10 @@ private:
     // Legato quantization threshold in beats (default: 0.25 = 1/16th note at 120bpm)
     // Notes will be extended to fill gaps smaller than this threshold
     std::atomic<double> legatoQuantizationThreshold { 0.25 };
+    
+    // Position lookahead: Update position every N notes (1=every note, 4=every 4th note)
+    std::atomic<int> positionLookahead { 1 };  // Default: every note
+    mutable int positionLookaheadCounter = 0;  // Counter for tracking notes
     
     // Standard guitar tuning for MIDI to Tab conversion (E4, B3, G3, D3, A2, E2) - High to Low
     const std::array<int, 6> standardTuning = { 64, 59, 55, 50, 45, 40 };
