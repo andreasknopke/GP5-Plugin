@@ -78,6 +78,10 @@ private:
     juce::ComboBox fretPositionSelector;
     juce::Label fretPositionLabel;
     
+    // 8d. Legato Quantization Selector (Editor Mode only)
+    juce::ComboBox legatoQuantizeSelector;
+    juce::Label legatoQuantizeLabel;
+    
     // 9. Track Settings Panel (popup)
     std::unique_ptr<TrackSettingsComponent> trackSettingsPanel;
     bool settingsPanelVisible = false;

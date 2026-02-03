@@ -1,0 +1,78 @@
+GP5 VST Editor - Alpha 0.7
+===========================
+
+Release Date: February 2, 2026
+
+NEW FEATURES:
+-------------
+* Multi-Track MIDI Recording
+  - Records MIDI from multiple channels simultaneously
+  - Creates separate tracks per MIDI channel
+  - Automatic track grouping by channel
+
+* Export Panel UI
+  - New popup panel when exporting to GP5
+  - Editable song title before saving
+  - Editable track names for each recorded track
+  - GM Instrument dropdown (128 instruments) per track
+  - Drum channel (10) support with 9 GM Drum Kit options:
+    Standard, Room, Power, Electronic, TR-808, Jazz, Brush, Orchestra, SFX
+
+* Improved GP5 Multi-Track Export
+  - Exports all recorded tracks with proper MIDI channels
+  - Correct instrument assignment per track in MIDI channel table
+  - LineBreak markers between tracks for proper display
+
+* Recording Improvements
+  - Auto-scroll follows playhead during recording
+  - Record button syncs with DAW transport state
+  - Proper measure counting during recording
+
+CHANGES SINCE ALPHA 0.6:
+------------------------
+* Export Panel replaces direct file chooser
+* Drum tracks automatically named "Drums" for channel 10
+* Fixed button visibility in Export Panel with many tracks
+* GM Instrument names displayed in export dropdown
+
+SUPPORTED FORMATS:
+------------------
+* Guitar Pro 3 (.gp3) - Read only
+* Guitar Pro 4 (.gp4) - Read only
+* Guitar Pro 5 (.gp5) - Read and Write
+* Guitar Pro 7 (.gp) - Read only
+* Guitar Pro 8 (.gp) - Read only
+
+INSTALLATION:
+-------------
+1. Extract GP5_VST_Editor.vst3 folder to your VST3 directory:
+   - Windows: C:\Program Files\Common Files\VST3\
+2. Rescan plugins in your DAW
+3. Load GP5 VST Editor as an instrument
+
+USAGE (Recording Mode):
+-----------------------
+1. Load plugin in DAW (no file loaded = Editor Mode)
+2. Route MIDI from your instrument/keyboard to the plugin
+3. Press Play in DAW to start recording
+4. Play your MIDI - notes appear in real-time on tablature
+5. Stop recording
+6. Click "Export GP5" to open Export Panel
+7. Edit title, track names, and select instruments
+8. Click "Export GP5" to save file
+
+REQUIREMENTS:
+-------------
+* Windows 10/11 (64-bit)
+* VST3-compatible DAW (Cubase, Reaper, FL Studio, etc.)
+* Guitar sampler for MIDI output (HALion, Kontakt, etc.)
+
+KNOWN ISSUES:
+-------------
+* DAWs do not forward Program Change messages to plugins
+  (Instrument must be selected manually in Export Panel)
+* Some advanced GP7/8 effects not yet implemented
+
+FEEDBACK:
+---------
+Report issues at: https://github.com/andreasknopke/GP5-Plugin/issues

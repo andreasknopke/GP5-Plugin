@@ -2346,6 +2346,73 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
         return a.startBeat < b.startBeat;
     });
     
+    // =========================================================================
+    // LEGATO QUANTIZATION: Extend note durations to fill small gaps
+    // This helps when the audio-to-MIDI engine produces too-short notes
+    // =========================================================================
+    double legatoThreshold = legatoQuantizationThreshold.load();
+    if (legatoThreshold > 0.001)
+    {
+        // Group notes by string for legato processing
+        // (notes on the same string should connect, different strings are independent)
+        std::map<int, std::vector<size_t>> notesByString;
+        for (size_t i = 0; i < notes.size(); ++i)
+        {
+            notesByString[notes[i].string].push_back(i);
+        }
+        
+        // Process each string independently
+        for (auto& [stringNum, indices] : notesByString)
+        {
+            // Sort indices by start time (should already be sorted, but be safe)
+            std::sort(indices.begin(), indices.end(), [&notes](size_t a, size_t b) {
+                return notes[a].startBeat < notes[b].startBeat;
+            });
+            
+            // Extend each note to the next note if the gap is small enough
+            for (size_t i = 0; i + 1 < indices.size(); ++i)
+            {
+                RecordedNote& currentNote = notes[indices[i]];
+                const RecordedNote& nextNote = notes[indices[i + 1]];
+                
+                double gap = nextNote.startBeat - currentNote.endBeat;
+                
+                // If gap is small (likely an artifact of early note-off), extend to next note
+                if (gap > 0.0 && gap <= legatoThreshold)
+                {
+                    currentNote.endBeat = nextNote.startBeat;
+                }
+            }
+        }
+        
+        // Also extend notes that end just before the next event on ANY string
+        // (to avoid tiny rests before chord changes)
+        for (size_t i = 0; i < notes.size(); ++i)
+        {
+            RecordedNote& note = notes[i];
+            
+            // Find the next event (any note starting after this note's current end)
+            double nextEventStart = std::numeric_limits<double>::max();
+            for (size_t j = 0; j < notes.size(); ++j)
+            {
+                if (notes[j].startBeat > note.endBeat)
+                {
+                    nextEventStart = std::min(nextEventStart, notes[j].startBeat);
+                }
+            }
+            
+            // If there's a tiny gap to the next event, extend
+            if (nextEventStart < std::numeric_limits<double>::max())
+            {
+                double gap = nextEventStart - note.endBeat;
+                if (gap > 0.0 && gap <= legatoThreshold * 0.5) // Tighter threshold for cross-string
+                {
+                    note.endBeat = nextEventStart;
+                }
+            }
+        }
+    }
+    
     // Finde den letzten Beat
     double maxBeat = 0.0;
     for (const auto& note : notes)
@@ -2372,12 +2439,36 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
         double measureStartBeat = (barNum - 1) * beatsPerMeasure;
         
         // Sammle alle Noten in diesem Takt
-        // Runde ppq auf 1000stel um Floating-Point-Präzisionsprobleme zu beheben
+        // Mit intelligenter Quantisierung: Wenn eine Note nahe am Taktanfang beginnt
+        // und stark gekürzt werden müsste, verschiebe sie in den nächsten Takt
         std::vector<const RecordedNote*> notesInMeasure;
         for (const auto& note : notes)
         {
             double roundedPPQ = std::round(note.startBeat * 1000.0) / 1000.0;
             int noteBar = static_cast<int>(roundedPPQ / beatsPerMeasure) + 1;
+            
+            // Intelligente Takt-Quantisierung:
+            // Prüfe, ob die Note nahe am nächsten Taktanfang beginnt und stark gekürzt werden müsste
+            double positionInMeasure = roundedPPQ - (noteBar - 1) * beatsPerMeasure;
+            double distanceToNextBar = beatsPerMeasure - positionInMeasure;
+            double originalDuration = note.endBeat - note.startBeat;
+            
+            // Wenn die Note weniger als 1/8-Note (0.5 Beats) vor dem nächsten Takt beginnt
+            // UND die Note auf weniger als 25% ihrer Originallänge gekürzt werden müsste
+            // -> verschiebe sie in den nächsten Takt
+            if (distanceToNextBar < 0.5 && distanceToNextBar > 0.001)
+            {
+                double truncatedDuration = distanceToNextBar;
+                double truncationRatio = truncatedDuration / std::max(0.001, originalDuration);
+                
+                // Wenn die Note auf weniger als 25% ihrer Länge gekürzt werden müsste,
+                // ist es wahrscheinlich ein Timing-Fehler -> in nächsten Takt verschieben
+                if (truncationRatio < 0.25 && originalDuration > 0.25) // nur für längere Noten
+                {
+                    noteBar = noteBar + 1; // Verschiebe in nächsten Takt
+                }
+            }
+            
             if (noteBar == barNum)
             {
                 notesInMeasure.push_back(&note);
@@ -2465,6 +2556,12 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
 
         for (const auto& evt : events) {
             double posInMeasure = evt.getStartTime() - measureStartBeat;
+            
+            // Wenn die Position negativ ist (Note wurde aus dem vorherigen Takt verschoben),
+            // platziere sie am Taktanfang (Slot 0)
+            if (posInMeasure < 0.0)
+                posInMeasure = 0.0;
+            
             int idealSlot = (int)(posInMeasure / subdivision + 0.5);
             
             // Stelle sicher, dass Events in unterschiedlichen Slots landen
@@ -2473,6 +2570,7 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
             
             // Limit auf Taktlänge
             if (slot >= maxSlots) slot = maxSlots - 1;
+            if (slot < 0) slot = 0;
 
             for (const auto* n : evt.notes) {
                 noteGroups[slot].push_back(n);

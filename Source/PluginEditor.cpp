@@ -130,6 +130,31 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     };
     fretPositionSelector.setVisible(false);  // Nur im Editor-Modus sichtbar
     
+    // Legato Quantization Selector (Editor Mode only)
+    addAndMakeVisible (legatoQuantizeLabel);
+    legatoQuantizeLabel.setText("Legato:", juce::dontSendNotification);
+    legatoQuantizeLabel.setFont(juce::FontOptions(11.0f));
+    legatoQuantizeLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+    legatoQuantizeLabel.setVisible(false);
+    
+    addAndMakeVisible (legatoQuantizeSelector);
+    legatoQuantizeSelector.addItem("Off", 1);
+    legatoQuantizeSelector.addItem("1/32", 2);      // 0.125 beats
+    legatoQuantizeSelector.addItem("1/16", 3);      // 0.25 beats (default)
+    legatoQuantizeSelector.addItem("1/8", 4);       // 0.5 beats
+    legatoQuantizeSelector.addItem("1/4", 5);       // 1.0 beats
+    legatoQuantizeSelector.setSelectedId(3, juce::dontSendNotification);  // Default: 1/16
+    legatoQuantizeSelector.onChange = [this] {
+        int selectedId = legatoQuantizeSelector.getSelectedId();
+        double threshold = 0.0;
+        if (selectedId == 2) threshold = 0.125;      // 1/32
+        else if (selectedId == 3) threshold = 0.25;  // 1/16
+        else if (selectedId == 4) threshold = 0.5;   // 1/8
+        else if (selectedId == 5) threshold = 1.0;   // 1/4
+        audioProcessor.setLegatoQuantization(threshold);
+    };
+    legatoQuantizeSelector.setVisible(false);  // Nur im Editor-Modus sichtbar
+    
     // Tabulatur-Ansicht
     addAndMakeVisible (tabView);
     tabView.onMeasureClicked = [this](int measureIndex) {
@@ -206,14 +231,20 @@ void NewProjectAudioProcessorEditor::resized()
     toolbar.removeFromLeft(15); // Spacer
     
     // Im Player-Modus: Track Selector und Settings
-    // Im Editor-Modus: Fret Position Selector (nutzt denselben Platz)
+    // Im Editor-Modus: Fret Position Selector und Legato Selector (nutzt denselben Platz)
     trackLabel.setBounds (toolbar.removeFromLeft(40));
-    auto trackSelectorArea = toolbar.removeFromLeft(160);
+    auto trackSelectorArea = toolbar.removeFromLeft(120);
     trackSelector.setBounds (trackSelectorArea);
     
     // Fret Position Selector im Editor-Modus (nutzt Track-Selector Bereich)
     fretPositionLabel.setBounds (trackLabel.getBounds());
     fretPositionSelector.setBounds (trackSelectorArea);
+    
+    toolbar.removeFromLeft(5); // Spacer
+    
+    // Legato Quantization Selector (nur im Editor-Modus, neben Fret Position)
+    legatoQuantizeLabel.setBounds (toolbar.removeFromLeft(45));
+    legatoQuantizeSelector.setBounds (toolbar.removeFromLeft(55));
     
     toolbar.removeFromLeft(5); // Spacer
     
@@ -309,6 +340,8 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         clearRecordingButton.setVisible(true);  // Sichtbar für Wechsel zu Editor-Modus
         fretPositionLabel.setVisible(false);
         fretPositionSelector.setVisible(false);
+        legatoQuantizeLabel.setVisible(false);
+        legatoQuantizeSelector.setVisible(false);
     }
     else
     {
@@ -330,6 +363,8 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         clearRecordingButton.setVisible(true);
         fretPositionLabel.setVisible(true);
         fretPositionSelector.setVisible(true);
+        legatoQuantizeLabel.setVisible(true);
+        legatoQuantizeSelector.setVisible(true);
     }
 }
 

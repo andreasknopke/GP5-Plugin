@@ -248,6 +248,11 @@ public:
     void setFretPosition(FretPosition pos) { fretPosition.store(static_cast<int>(pos)); }
     FretPosition getFretPosition() const { return static_cast<FretPosition>(fretPosition.load()); }
     
+    // Legato quantization: extends note durations to fill gaps to the next note
+    // Value in beats (e.g., 0.25 = extend if gap < 1/4 beat, 0 = disabled)
+    void setLegatoQuantization(double beatsThreshold) { legatoQuantizationThreshold.store(beatsThreshold); }
+    double getLegatoQuantization() const { return legatoQuantizationThreshold.load(); }
+    
     // Get live MIDI notes for display (thread-safe)
     struct LiveMidiNote {
         int midiNote = 0;
@@ -429,6 +434,10 @@ private:
     
     // Fret position preference (0=Low, 1=Mid, 2=High)
     std::atomic<int> fretPosition { 0 };  // Default: Low
+    
+    // Legato quantization threshold in beats (default: 0.25 = 1/16th note at 120bpm)
+    // Notes will be extended to fill gaps smaller than this threshold
+    std::atomic<double> legatoQuantizationThreshold { 0.25 };
     
     // Standard guitar tuning for MIDI to Tab conversion (E4, B3, G3, D3, A2, E2) - High to Low
     const std::array<int, 6> standardTuning = { 64, 59, 55, 50, 45, 40 };
