@@ -104,6 +104,12 @@ struct TabNote
     // Für Ties (gehaltene Noten)
     bool isTied = false;
     
+    // MIDI-Note für alternative Positionen
+    int midiNote = -1;
+    
+    // Ob diese Note manuell vom Benutzer angepasst wurde
+    bool isManuallyEdited = false;
+    
     // Berechnet die Breite des Textes für Layout
     int getDisplayWidth() const
     {

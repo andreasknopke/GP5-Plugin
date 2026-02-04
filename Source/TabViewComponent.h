@@ -14,6 +14,8 @@
 #include "TabModels.h"
 #include "TabRenderer.h"
 #include "TabLayoutEngine.h"
+#include "FretPositionCalculator.h"
+#include "NoteEditComponent.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 
 //==============================================================================
@@ -335,6 +337,21 @@ public:
     
     void mouseDown(const juce::MouseEvent& event) override
     {
+        // Prüfe zuerst ob Note-Editing aktiviert ist und eine Note angeklickt wurde
+        if (noteEditingEnabled)
+        {
+            auto hitInfo = findNoteAtPosition(event.position);
+            if (hitInfo.valid)
+            {
+                showNoteEditPopup(hitInfo);
+                return;
+            }
+        }
+        
+        // Schließe Popup falls offen
+        if (noteEditPopup.isShowing())
+            noteEditPopup.hide();
+        
         // Find clicked measure and position within it
         float clickX = event.position.x + scrollOffset - 25.0f;  // Account for clef offset
         
@@ -377,11 +394,31 @@ public:
         }
     }
     
+    //==========================================================================
+    // Note Editing API
+    //==========================================================================
+    
+    void setNoteEditingEnabled(bool enabled)
+    {
+        noteEditingEnabled = enabled;
+        if (!enabled && noteEditPopup.isShowing())
+            noteEditPopup.hide();
+        repaint();
+    }
+    
+    bool isNoteEditingEnabled() const { return noteEditingEnabled; }
+    
+    /** Callback wenn eine Note-Position geändert wird: measureIdx, beatIdx, noteIdx, newString, newFret */
+    std::function<void(int, int, int, int, int)> onNotePositionChanged;
+    
+    TabTrack& getTrackForEditing() { return track; }
+    
 private:
     TabTrack track;
     TabRenderer renderer;
     TabLayoutEngine layoutEngine;
     TabLayoutConfig config;
+    FretPositionCalculator fretCalculator;
     
     float zoom = 1.0f;
     float scrollOffset = 0.0f;
@@ -389,15 +426,90 @@ private:
     int highlightedMeasure = -1;
     int currentPlayingMeasure = -1;
     double playheadPositionInMeasure = 0.0;
-    float lastPlayheadX = 0.0f;  // Für Erkennung von Positionänderungen
+    float lastPlayheadX = 0.0f;
     
     // Editor mode (live MIDI input display)
     bool editorMode = false;
     std::vector<LiveNote> liveNotes;
-    juce::String liveChordName;  // Erkannter Akkordname für Live-Anzeige
+    juce::String liveChordName;
+    
+    // Note editing
+    bool noteEditingEnabled = false;
+    NoteEditPopup noteEditPopup;
     
     juce::ScrollBar horizontalScrollbar { false };
     const int scrollbarHeight = 14;
+    
+    NoteHitInfo findNoteAtPosition(juce::Point<float> pos)
+    {
+        NoteHitInfo hitInfo;
+        for (const auto& noteInfo : renderer.getRenderedNotes())
+        {
+            if (noteInfo.bounds.contains(pos))
+            {
+                hitInfo.valid = true;
+                hitInfo.measureIndex = noteInfo.measureIndex;
+                hitInfo.beatIndex = noteInfo.beatIndex;
+                hitInfo.noteIndex = noteInfo.noteIndex;
+                hitInfo.stringIndex = noteInfo.stringIndex;
+                hitInfo.fret = noteInfo.fret;
+                hitInfo.midiNote = noteInfo.midiNote;
+                hitInfo.noteBounds = noteInfo.bounds;
+                
+                // Hole Zeiger auf die echte Note
+                if (hitInfo.measureIndex >= 0 && hitInfo.measureIndex < track.measures.size())
+                {
+                    auto& measure = track.measures.getReference(hitInfo.measureIndex);
+                    if (hitInfo.beatIndex >= 0 && hitInfo.beatIndex < measure.beats.size())
+                    {
+                        auto& beat = measure.beats.getReference(hitInfo.beatIndex);
+                        if (hitInfo.noteIndex >= 0 && hitInfo.noteIndex < beat.notes.size())
+                            hitInfo.notePtr = &beat.notes.getReference(hitInfo.noteIndex);
+                    }
+                }
+                
+                // Berechne alternative Positionen
+                if (hitInfo.midiNote >= 0)
+                {
+                    fretCalculator.setTuning(track.tuning);
+                    hitInfo.alternatives = fretCalculator.calculateAlternatives(
+                        hitInfo.midiNote, hitInfo.stringIndex, hitInfo.fret);
+                }
+                break;
+            }
+        }
+        return hitInfo;
+    }
+    
+    void showNoteEditPopup(const NoteHitInfo& hitInfo)
+    {
+        if (!hitInfo.valid) return;
+        
+        noteEditPopup.onPositionSelected = [this](const NoteHitInfo& info, const AlternatePosition& newPos) {
+            applyNotePositionChange(info, newPos);
+        };
+        noteEditPopup.showForNote(hitInfo, track.tuning, this);
+    }
+    
+    void applyNotePositionChange(const NoteHitInfo& info, const AlternatePosition& newPos)
+    {
+        if (info.measureIndex < 0 || info.measureIndex >= track.measures.size()) return;
+        auto& measure = track.measures.getReference(info.measureIndex);
+        if (info.beatIndex < 0 || info.beatIndex >= measure.beats.size()) return;
+        auto& beat = measure.beats.getReference(info.beatIndex);
+        if (info.noteIndex < 0 || info.noteIndex >= beat.notes.size()) return;
+        
+        auto& note = beat.notes.getReference(info.noteIndex);
+        note.string = newPos.string;
+        note.fret = newPos.fret;
+        note.isManuallyEdited = true;
+        if (note.midiNote < 0) note.midiNote = info.midiNote;
+        
+        if (onNotePositionChanged)
+            onNotePositionChanged(info.measureIndex, info.beatIndex, info.noteIndex, newPos.string, newPos.fret);
+        
+        repaint();
+    }
     
     void recalculateLayout()
     {

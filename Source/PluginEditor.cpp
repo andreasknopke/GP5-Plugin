@@ -174,6 +174,13 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     };
     posLookaheadSelector.setVisible(false);  // Nur im Editor-Modus sichtbar
     
+    // Note Edit Toggle Button (Player Mode only)
+    addAndMakeVisible (noteEditButton);
+    noteEditButton.setColour (juce::ToggleButton::textColourId, juce::Colours::cyan);
+    noteEditButton.setColour (juce::ToggleButton::tickColourId, juce::Colours::cyan);
+    noteEditButton.onClick = [this] { noteEditToggled(); };
+    noteEditButton.setVisible(false);  // Nur im Player-Modus mit geladenem File sichtbar
+    
     // Tabulatur-Ansicht
     addAndMakeVisible (tabView);
     tabView.onMeasureClicked = [this](int measureIndex) {
@@ -189,6 +196,12 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
         
         // Transport-Anzeige aktualisieren
         updateTransportDisplay();
+    };
+    
+    // Note-Position-Changed Callback
+    tabView.onNotePositionChanged = [this](int measureIdx, int beatIdx, int noteIdx, int newString, int newFret) {
+        DBG("Note geändert: Takt " << (measureIdx + 1) << ", Beat " << (beatIdx + 1) 
+            << ", Note " << (noteIdx + 1) << " -> Saite " << (newString + 1) << ", Bund " << newFret);
     };
 
     // Fenstergröße setzen (größer für die Tab-Ansicht + Header)
@@ -287,6 +300,10 @@ void NewProjectAudioProcessorEditor::resized()
     
     // Settings Button
     settingsButton.setBounds (toolbar.removeFromLeft(70));
+    toolbar.removeFromLeft(5);
+    
+    // Note Edit Button (nur im Player-Modus)
+    noteEditButton.setBounds (toolbar.removeFromLeft(90));
     
     // Rechtsbündige Controls (von rechts nach links platziert)
     // Clear Button (in beiden Modi sichtbar)
@@ -373,6 +390,7 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         trackLabel.setVisible(true);
         trackSelector.setVisible(true);
         settingsButton.setVisible(true);
+        noteEditButton.setVisible(true);  // Note Editing im Player-Modus verfügbar
         
         // Recording-Controls ausblenden im Player-Modus
         recordButton.setVisible(false);
@@ -400,6 +418,7 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         trackLabel.setVisible(true);
         trackSelector.setVisible(true);
         settingsButton.setVisible(true);
+        noteEditButton.setVisible(true);  // Note Editing auch nach Recording verfügbar
         
         // Recording und Editor-Selektoren bleiben sichtbar
         recordButton.setVisible(true);
@@ -428,6 +447,8 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         trackLabel.setVisible(false);
         trackSelector.setVisible(false);
         settingsButton.setVisible(false);
+        noteEditButton.setVisible(false);  // Kein Note Editing im Editor-Modus ohne Aufnahmen
+        tabView.setNoteEditingEnabled(false);
         
         // Recording und Fret-Selector verfügbar
         recordButton.setVisible(true);
@@ -1133,4 +1154,20 @@ void NewProjectAudioProcessorEditor::doExportWithMetadata(const juce::String& ti
                 }
             }
         });
+}
+
+void NewProjectAudioProcessorEditor::noteEditToggled()
+{
+    bool editingEnabled = noteEditButton.getToggleState();
+    tabView.setNoteEditingEnabled(editingEnabled);
+    
+    if (editingEnabled)
+    {
+        infoLabel.setText("Note Editing: Click on a note to change its fret/string position", juce::dontSendNotification);
+    }
+    else
+    {
+        // Zeige wieder die normalen Infos
+        refreshFromProcessor();
+    }
 }

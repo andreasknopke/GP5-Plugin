@@ -86,6 +86,9 @@ private:
     juce::ComboBox posLookaheadSelector;
     juce::Label posLookaheadLabel;
     
+    // 8f. Note Edit Toggle (Player Mode)
+    juce::ToggleButton noteEditButton { "Edit Notes" };
+    
     // 9. Track Settings Panel (popup)
     std::unique_ptr<TrackSettingsComponent> trackSettingsPanel;
     bool settingsPanelVisible = false;
@@ -109,6 +112,7 @@ private:
     void updateModeDisplay();
     void saveMidiButtonClicked();
     void saveGpButtonClicked();
+    void noteEditToggled();
     
     // 11. State
     int lastDisplayedMeasure = -1;

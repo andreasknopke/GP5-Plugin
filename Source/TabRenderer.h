@@ -17,6 +17,21 @@
 
 //==============================================================================
 /**
+ * RenderedNoteInfo - Speichert Informationen über eine gerenderte Note für Hit-Testing.
+ */
+struct RenderedNoteInfo
+{
+    juce::Rectangle<float> bounds;
+    int measureIndex = -1;
+    int beatIndex = -1;
+    int noteIndex = -1;
+    int stringIndex = 0;
+    int fret = 0;
+    int midiNote = -1;
+};
+
+//==============================================================================
+/**
  * TabRenderer
  * 
  * Zeichnet eine komplette Tabulatur mit allen visuellen Elementen.
@@ -25,6 +40,9 @@ class TabRenderer
 {
 public:
     TabRenderer() = default;
+    
+    const juce::Array<RenderedNoteInfo>& getRenderedNotes() const { return renderedNotes; }
+    void clearRenderedNotes() { renderedNotes.clear(); }
     
     /**
      * Zeichnet einen Track in den angegebenen Bereich.
@@ -41,6 +59,8 @@ public:
         
         this->config = config;
         this->bounds = bounds;
+        this->currentTrackTuning = track.tuning;
+        renderedNotes.clear();
         
         const int stringCount = track.stringCount;
         const float firstStringY = bounds.getY() + config.topMargin;  // Verwende Config-Margin
@@ -154,15 +174,25 @@ public:
                 }
                 else if (!beat.notes.isEmpty())  // Nur zeichnen wenn Noten vorhanden
                 {
+                    // Setze Kontext für Note-Tracking
+                    currentMeasureIndex = m;
+                    currentBeatIndex = b;
+                    
                     // Draw each note
+                    int noteIdx = 0;
                     for (const auto& note : beat.notes)
                     {
                         // Überspringe leere Note-Slots (fret = -1 bedeutet keine Note auf dieser Saite)
                         if (note.fret < 0)
+                        {
+                            noteIdx++;
                             continue;
-                            
+                        }
+                        
+                        currentNoteIndex = noteIdx;
                         float noteY = firstStringY + note.string * config.stringSpacing;
                         drawNote(g, note, beatX, noteY, nextBeatX, firstStringY);
+                        noteIdx++;
                         
                         // Draw bend symbol if note has bend
                         if (note.effects.bend)
@@ -292,6 +322,11 @@ public:
 private:
     TabLayoutConfig config;
     juce::Rectangle<float> bounds;
+    juce::Array<RenderedNoteInfo> renderedNotes;
+    juce::Array<int> currentTrackTuning;
+    int currentMeasureIndex = 0;
+    int currentBeatIndex = 0;
+    int currentNoteIndex = 0;
     
     void drawNote(juce::Graphics& g, const TabNote& note, float x, float y, float nextBeatX, float firstStringY)
     {
@@ -313,6 +348,28 @@ private:
         float textWidth = g.getCurrentFont().getStringWidthFloat(fretText) + 4.0f;
         float bgWidth = juce::jmax(noteRadius * 2.0f, textWidth);
         float bgHeight = noteRadius * 2.0f;
+        
+        // Speichere die Noten-Info für Hit-Testing
+        juce::Rectangle<float> noteBounds(x - bgWidth / 2.0f - 2.0f, y - bgHeight / 2.0f - 2.0f, 
+                                           bgWidth + 4.0f, bgHeight + 4.0f);
+        RenderedNoteInfo noteInfo;
+        noteInfo.bounds = noteBounds;
+        noteInfo.measureIndex = currentMeasureIndex;
+        noteInfo.beatIndex = currentBeatIndex;
+        noteInfo.noteIndex = currentNoteIndex;
+        noteInfo.stringIndex = note.string;
+        noteInfo.fret = note.fret;
+        noteInfo.midiNote = (note.midiNote >= 0) ? note.midiNote :
+            ((note.string >= 0 && note.string < currentTrackTuning.size()) ? 
+             currentTrackTuning[note.string] + note.fret : -1);
+        renderedNotes.add(noteInfo);
+        
+        // Highlight für manuell editierte Noten
+        if (note.isManuallyEdited)
+        {
+            g.setColour(juce::Colour(0x3000BFFF));
+            g.fillRoundedRectangle(noteBounds, 3.0f);
+        }
         
         // Background (to cover the string line) - sized to fit text
         g.setColour(config.backgroundColor);
