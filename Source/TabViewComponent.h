@@ -63,6 +63,8 @@ public:
         repaint();
     }
     
+    const TabTrack& getTrack() const { return track; }
+    
     // Set live MIDI notes to display (for editor mode)
     void setLiveNotes(const std::vector<LiveNote>& notes)
     {
@@ -239,14 +241,28 @@ public:
             float measureX = 25.0f + measure.xPosition * zoom - scrollOffset;
             float measureWidth = measure.calculatedWidth * zoom;
             
-            // Semi-transparent green overlay für aktuellen Takt
-            g.setColour(juce::Colour(0x2000FF00));  // Transparentes Grün
+            // Semi-transparent green overlay fuer aktuellen Takt
+            g.setColour(juce::Colour(0x2000FF00));  // Transparentes Gruen
             g.fillRect(measureX, yOffset, measureWidth, trackHeight);
             
             // Playhead-Linie an der exakten Position innerhalb des Taktes
             float playheadX = measureX + static_cast<float>(playheadPositionInMeasure) * measureWidth;
             g.setColour(juce::Colours::limegreen);
             g.fillRect(playheadX - 1.0f, yOffset, 3.0f, trackHeight);
+        }
+        
+        // Draw note hover highlight when note editing is enabled
+        if (noteEditingEnabled)
+        {
+            // Draw hovered note highlight (cyan glow)
+            if (hoveredNoteInfo.valid)
+            {
+                auto bounds = hoveredNoteInfo.noteBounds;
+                g.setColour(juce::Colours::cyan.withAlpha(0.4f));
+                g.fillRoundedRectangle(bounds.expanded(3.0f), 4.0f);
+                g.setColour(juce::Colours::cyan);
+                g.drawRoundedRectangle(bounds.expanded(2.0f), 4.0f, 2.0f);
+            }
         }
         
         // Draw live MIDI notes (editor mode)
@@ -335,6 +351,30 @@ public:
         }
     }
     
+    void mouseMove(const juce::MouseEvent& event) override
+    {
+        if (noteEditingEnabled)
+        {
+            auto newHovered = findNoteAtPosition(event.position);
+            if (newHovered.measureIndex != hoveredNoteInfo.measureIndex ||
+                newHovered.beatIndex != hoveredNoteInfo.beatIndex ||
+                newHovered.noteIndex != hoveredNoteInfo.noteIndex)
+            {
+                hoveredNoteInfo = newHovered;
+                repaint();
+            }
+        }
+    }
+    
+    void mouseExit(const juce::MouseEvent&) override
+    {
+        if (hoveredNoteInfo.valid)
+        {
+            hoveredNoteInfo = NoteHitInfo();
+            repaint();
+        }
+    }
+    
     void mouseDown(const juce::MouseEvent& event) override
     {
         // Prüfe zuerst ob Note-Editing aktiviert ist und eine Note angeklickt wurde
@@ -401,14 +441,18 @@ public:
     void setNoteEditingEnabled(bool enabled)
     {
         noteEditingEnabled = enabled;
-        if (!enabled && noteEditPopup.isShowing())
-            noteEditPopup.hide();
+        if (!enabled)
+        {
+            if (noteEditPopup.isShowing())
+                noteEditPopup.hide();
+            hoveredNoteInfo = NoteHitInfo();
+        }
         repaint();
     }
     
     bool isNoteEditingEnabled() const { return noteEditingEnabled; }
     
-    /** Callback wenn eine Note-Position geändert wird: measureIdx, beatIdx, noteIdx, newString, newFret */
+    /** Callback wenn eine Note-Position geändert wird: measureIdx, beatIdx, oldString, newString, newFret */
     std::function<void(int, int, int, int, int)> onNotePositionChanged;
     
     TabTrack& getTrackForEditing() { return track; }
@@ -436,6 +480,7 @@ private:
     // Note editing
     bool noteEditingEnabled = false;
     NoteEditPopup noteEditPopup;
+    NoteHitInfo hoveredNoteInfo;   // Note unter dem Mauszeiger
     
     juce::ScrollBar horizontalScrollbar { false };
     const int scrollbarHeight = 14;
@@ -500,13 +545,15 @@ private:
         if (info.noteIndex < 0 || info.noteIndex >= beat.notes.size()) return;
         
         auto& note = beat.notes.getReference(info.noteIndex);
+        int oldString = note.string;  // Speichere alte Position VOR der Änderung
         note.string = newPos.string;
         note.fret = newPos.fret;
         note.isManuallyEdited = true;
         if (note.midiNote < 0) note.midiNote = info.midiNote;
         
+        // Übergebe oldString statt noteIndex, damit recordedNotes die Note finden kann
         if (onNotePositionChanged)
-            onNotePositionChanged(info.measureIndex, info.beatIndex, info.noteIndex, newPos.string, newPos.fret);
+            onNotePositionChanged(info.measureIndex, info.beatIndex, oldString, newPos.string, newPos.fret);
         
         repaint();
     }

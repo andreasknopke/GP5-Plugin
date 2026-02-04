@@ -467,11 +467,15 @@ public:
      * @param midiNotes Die zu matchenden MIDI-Noten
      * @param currentFretPosition Aktuelle Handposition (für Transition-Kosten)
      * @param requireExactBass Wenn true, muss der Bass-Ton exakt übereinstimmen
+     * @param preferredMinFret Bevorzugter minimaler Bund (Low=0, Mid=5, High=9)
+     * @param preferredMaxFret Bevorzugter maximaler Bund (Low=4, Mid=8, High=12)
      * @return Das beste Match mit Kosteninformationen
      */
     MatchResult findBestChord(const std::vector<int>& midiNotes, 
                               int currentFretPosition = 0,
-                              bool requireExactBass = true) const
+                              bool requireExactBass = true,
+                              int preferredMinFret = 0,
+                              int preferredMaxFret = 4) const
     {
         if (midiNotes.size() < 2)
             return {};  // Mindestens 2 Noten für einen Akkord
@@ -538,7 +542,25 @@ public:
                 transitionCost = 0.0f;
             }
             
-            float totalCost = shapeCost + transitionCost;
+            // Fret-Präferenz-Kosten: Starker Bonus/Malus basierend auf bevorzugtem Bereich
+            float fretPreferenceCost = 0.0f;
+            if (shapePosition >= preferredMinFret && shapePosition <= preferredMaxFret)
+            {
+                // Bonus: Shape ist im bevorzugten Bereich
+                fretPreferenceCost = -15.0f;
+            }
+            else
+            {
+                // Strafe: Shape ist außerhalb des bevorzugten Bereichs
+                int distFromPreferred = 0;
+                if (shapePosition < preferredMinFret)
+                    distFromPreferred = preferredMinFret - shapePosition;
+                else
+                    distFromPreferred = shapePosition - preferredMaxFret;
+                fretPreferenceCost = distFromPreferred * 4.0f;
+            }
+
+            float totalCost = shapeCost + transitionCost + fretPreferenceCost;
             
             if (totalCost < bestResult.totalCost)
             {

@@ -599,107 +599,9 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         }
         
         // =====================================================================
-        // Recording: Update active notes with optimized string/fret from getLiveMidiNotes
-        // This ensures recorded notes match exactly what is shown in live display
+        // Recording: Die string/fret Werte werden bereits korrekt von midiNoteToTab()
+        // berechnet und in recordedNotes gespeichert. Keine weitere Optimierung nötig.
         // =====================================================================
-        if (shouldRecord && !liveMidiNotes.empty())
-        {
-            // Get the optimized live notes (this is what the user sees)
-            // Note: getLiveMidiNotes() will acquire liveMidiMutex again, but we already hold it
-            // So we need to release it temporarily - but that's not safe.
-            // Instead, we do the optimization inline here.
-            
-            // Build the same optimized result as getLiveMidiNotes() does
-            std::vector<std::pair<int, LiveMidiNote>> currentLiveNotes(liveMidiNotes.begin(), liveMidiNotes.end());
-            
-            if (!currentLiveNotes.empty())
-            {
-                // Sort by MIDI note
-                std::sort(currentLiveNotes.begin(), currentLiveNotes.end(),
-                    [](const auto& a, const auto& b) { return a.first < b.first; });
-                
-                // Get preferred fret range
-                FretPosition pos = getFretPosition();
-                int preferredMinFret, preferredMaxFret;
-                switch (pos)
-                {
-                    case FretPosition::Mid:
-                        preferredMinFret = 5; preferredMaxFret = 8; break;
-                    case FretPosition::High:
-                        preferredMinFret = 9; preferredMaxFret = 12; break;
-                    default:
-                        preferredMinFret = 0; preferredMaxFret = 4; break;
-                }
-                
-                // For each active note, find best position considering all notes together
-                struct NoteOption { int string; int fret; int score; };
-                std::vector<std::vector<NoteOption>> allOptions;
-                
-                for (const auto& [midiNote, _] : currentLiveNotes)
-                {
-                    std::vector<NoteOption> options;
-                    for (int s = 0; s < 6; ++s)
-                    {
-                        int fret = midiNote - standardTuning[s];
-                        if (fret >= 0 && fret <= 24)
-                        {
-                            int score = 0;
-                            if (fret >= preferredMinFret && fret <= preferredMaxFret)
-                                score += 100;
-                            else
-                            {
-                                int dist = (fret < preferredMinFret) ? (preferredMinFret - fret) : (fret - preferredMaxFret);
-                                score -= dist * 15;
-                                if (dist > 3) score -= (dist - 3) * (dist - 3) * 5;
-                            }
-                            if (lastPlayedFret >= 7)
-                            {
-                                int distFromLast = std::abs(fret - lastPlayedFret);
-                                if (distFromLast <= 3) score += 30;
-                                else if (distFromLast > 5) score -= (distFromLast - 5) * 8;
-                            }
-                            score += s * 2;
-                            options.push_back({s, fret, score});
-                        }
-                    }
-                    std::sort(options.begin(), options.end(), [](const NoteOption& a, const NoteOption& b) {
-                        return a.score > b.score;
-                    });
-                    allOptions.push_back(options);
-                }
-                
-                // Greedy assignment - best option for each note if string is free
-                std::set<int> usedStrings;
-                std::vector<NoteOption> bestAssignment(currentLiveNotes.size());
-                
-                for (size_t i = 0; i < allOptions.size(); ++i)
-                {
-                    for (const auto& opt : allOptions[i])
-                    {
-                        if (usedStrings.count(opt.string) == 0)
-                        {
-                            bestAssignment[i] = opt;
-                            usedStrings.insert(opt.string);
-                            break;
-                        }
-                    }
-                }
-                
-                // Update the active recording notes with the optimized values
-                std::lock_guard<std::mutex> recLock(recordingMutex);
-                for (size_t i = 0; i < currentLiveNotes.size(); ++i)
-                {
-                    int midiNote = currentLiveNotes[i].first;
-                    auto it = activeRecordingNotes.find(midiNote);
-                    if (it != activeRecordingNotes.end() && it->second < recordedNotes.size())
-                    {
-                        // standardTuning[0]=E4(top), [5]=E2(bottom) - matches display convention
-                        recordedNotes[it->second].string = bestAssignment[i].string;
-                        recordedNotes[it->second].fret = bestAssignment[i].fret;
-                    }
-                }
-            }
-        }
     }
     
     // =========================================================================
@@ -1225,6 +1127,7 @@ void NewProjectAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("selectedTrack", selectedTrackIndex.load(), nullptr);
     state.setProperty ("autoScroll", autoScrollEnabled.load(), nullptr);
     state.setProperty ("fretPosition", static_cast<int>(fretPosition.load()), nullptr);
+    state.setProperty ("positionLookahead", positionLookahead.load(), nullptr);
     
     // Speichere Track-MIDI-Einstellungen
     juce::ValueTree trackSettings ("TrackSettings");
@@ -1240,6 +1143,31 @@ void NewProjectAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
         trackSettings.appendChild (track, nullptr);
     }
     state.appendChild (trackSettings, nullptr);
+    
+    // Speichere aufgezeichnete Noten
+    {
+        std::lock_guard<std::mutex> lock(recordingMutex);
+        if (!recordedNotes.empty())
+        {
+            juce::ValueTree recNotesTree ("RecordedNotes");
+            recNotesTree.setProperty ("startBeat", recordingStartBeat, nullptr);
+            recNotesTree.setProperty ("startSet", recordingStartSet, nullptr);
+            
+            for (const auto& note : recordedNotes)
+            {
+                juce::ValueTree noteTree ("Note");
+                noteTree.setProperty ("midiNote", note.midiNote, nullptr);
+                noteTree.setProperty ("velocity", note.velocity, nullptr);
+                noteTree.setProperty ("string", note.string, nullptr);
+                noteTree.setProperty ("fret", note.fret, nullptr);
+                noteTree.setProperty ("startBeat", note.startBeat, nullptr);
+                noteTree.setProperty ("endBeat", note.endBeat, nullptr);
+                noteTree.setProperty ("midiChannel", note.midiChannel, nullptr);
+                recNotesTree.appendChild (noteTree, nullptr);
+            }
+            state.appendChild (recNotesTree, nullptr);
+        }
+    }
     
     juce::MemoryOutputStream stream (destData, false);
     state.writeToStream (stream);
@@ -1271,6 +1199,10 @@ void NewProjectAudioProcessor::setStateInformation (const void* data, int sizeIn
         int fretPosInt = state.getProperty ("fretPosition", 1);  // Default: Mid
         fretPosition.store(fretPosInt);
         
+        // Lade Position Lookahead
+        int posLookahead = state.getProperty ("positionLookahead", 4);  // Default: 4
+        positionLookahead.store(posLookahead);
+        
         // Lade Track-MIDI-Einstellungen
         juce::ValueTree trackSettings = state.getChildWithName ("TrackSettings");
         if (trackSettings.isValid())
@@ -1289,6 +1221,34 @@ void NewProjectAudioProcessor::setStateInformation (const void* data, int sizeIn
                     trackPan[trackIndex].store (track.getProperty ("pan", 64));
                 }
             }
+        }
+        
+        // Lade aufgezeichnete Noten
+        juce::ValueTree recNotesTree = state.getChildWithName ("RecordedNotes");
+        if (recNotesTree.isValid())
+        {
+            std::lock_guard<std::mutex> lock(recordingMutex);
+            recordedNotes.clear();
+            
+            recordingStartBeat = recNotesTree.getProperty ("startBeat", 0.0);
+            recordingStartSet = recNotesTree.getProperty ("startSet", false);
+            
+            for (int i = 0; i < recNotesTree.getNumChildren(); ++i)
+            {
+                juce::ValueTree noteTree = recNotesTree.getChild (i);
+                RecordedNote note;
+                note.midiNote = noteTree.getProperty ("midiNote", 0);
+                note.velocity = noteTree.getProperty ("velocity", 100);
+                note.string = noteTree.getProperty ("string", 0);
+                note.fret = noteTree.getProperty ("fret", 0);
+                note.startBeat = noteTree.getProperty ("startBeat", 0.0);
+                note.endBeat = noteTree.getProperty ("endBeat", 0.0);
+                note.midiChannel = noteTree.getProperty ("midiChannel", 1);
+                note.isActive = false;
+                recordedNotes.push_back(note);
+            }
+            
+            DBG("Loaded " << recordedNotes.size() << " recorded notes from state");
         }
     }
 }
@@ -1566,57 +1526,90 @@ float NewProjectAudioProcessor::calculatePositionCost(const GuitarPosition& curr
 {
     float cost = 0.0f;
 
-    // 1. Fret-Distanz (Horizontal) - Bewegung entlang des Halses
-    // Quadratische Strafe macht große Sprünge deutlich teurer
-    int fretDiff = std::abs(current.fret - previous.fret);
-    cost += fretDiff * 1.5f;  // Erhöht von 1.0
-    
-    // Zusätzliche quadratische Komponente für große Sprünge
-    if (fretDiff > 2)
+    // 0. Fret-Position-Präferenz (Low/Mid/High) - sanfte Tendenz zur bevorzugten Region
+    FretPosition pos = getFretPosition();
+    int preferredMinFret, preferredMaxFret;
+    switch (pos)
     {
-        cost += (fretDiff - 2) * (fretDiff - 2) * 0.5f;
+        case FretPosition::Mid:
+            preferredMinFret = 5;
+            preferredMaxFret = 8;
+            break;
+        case FretPosition::High:
+            preferredMinFret = 9;
+            preferredMaxFret = 12;
+            break;
+        case FretPosition::Low:
+        default:
+            preferredMinFret = 0;
+            preferredMaxFret = 4;
+            break;
+    }
+    
+    // Bonus wenn in bevorzugter Region, STARKE Strafe wenn außerhalb
+    if (current.fret >= preferredMinFret && current.fret <= preferredMaxFret)
+    {
+        cost -= 10.0f;  // Starker Bonus für bevorzugte Region
+    }
+    else
+    {
+        int distFromPreferred = 0;
+        if (current.fret < preferredMinFret)
+            distFromPreferred = preferredMinFret - current.fret;
+        else
+            distFromPreferred = current.fret - preferredMaxFret;
+        cost += distFromPreferred * 3.0f;  // Deutliche Strafe pro Bund Abstand
+    }
+
+    // 1. Fret-Distanz (Horizontal) - Bewegung entlang des Halses
+    int fretDiff = std::abs(current.fret - previous.fret);
+    cost += fretDiff * 1.0f;  // Reduziert von 1.5
+    
+    // Zusätzliche quadratische Komponente für große Sprünge (nur bei sehr großen)
+    if (fretDiff > 4)
+    {
+        cost += (fretDiff - 4) * (fretDiff - 4) * 0.3f;
     }
 
     // 2. String-Distanz (Vertikal) - Saitenwechsel
     int stringDiff = std::abs(current.stringIndex - previous.stringIndex);
-    cost += stringDiff * 0.8f;  // Erhöht von 0.5
+    cost += stringDiff * 0.5f;  // Reduziert von 0.8
 
-    // 3. Hand-Spanne (Stretch Penalty)
-    // Wenn wir nicht rutschen, können wir ca. 4 Bünde greifen
-    // Alles darüber hinaus erfordert eine Handbewegung (sehr teuer!)
-    if (fretDiff > 4 && current.fret != 0 && previous.fret != 0)
+    // 3. Hand-Spanne (Stretch Penalty) - NUR wenn NICHT in bevorzugter Region
+    // Wenn wir in Richtung bevorzugte Region gehen, keine Strafe!
+    bool movingTowardsPreferred = (current.fret >= preferredMinFret && current.fret <= preferredMaxFret) ||
+                                   (current.fret < previous.fret && previous.fret > preferredMaxFret) ||
+                                   (current.fret > previous.fret && previous.fret < preferredMinFret);
+    
+    if (fretDiff > 4 && current.fret != 0 && previous.fret != 0 && !movingTowardsPreferred)
     {
-        cost += 15.0f;  // Stark erhöht von 5.0
-        // Zusätzliche Strafe pro extra Bund
-        cost += (fretDiff - 4) * 3.0f;
+        cost += 8.0f;  // Reduziert von 15.0
+        cost += (fretDiff - 4) * 1.5f;  // Reduziert von 3.0
     }
     
-    // 4. "Handposition-Trägheit" - Bevorzuge Bünde nahe der vorherigen Position
-    // Dies hält den Spieler in einem Bereich (z.B. Bund 10-15)
-    if (previous.fret >= 7 && current.fret != 0)
+    // 4. "Handposition-Trägheit" - DEAKTIVIERT wenn außerhalb bevorzugter Region
+    // Dies ermöglicht das Verlassen einer hohen Position wenn Low bevorzugt ist
+    bool previousInPreferred = (previous.fret >= preferredMinFret && previous.fret <= preferredMaxFret);
+    if (previousInPreferred && previous.fret >= 5 && current.fret != 0)
     {
-        // Wir sind in einer hohen Position - stark bevorzugen dort zu bleiben
+        // Nur Trägheit anwenden wenn vorherige Position bereits im bevorzugten Bereich war
         int centerFret = previous.fret;
         int distFromCenter = std::abs(current.fret - centerFret);
         
-        // Innerhalb von 3 Bünden: kein Zusatzkosten
-        // Außerhalb: progressive Strafe
         if (distFromCenter > 3)
         {
-            cost += (distFromCenter - 3) * 4.0f;
+            cost += (distFromCenter - 3) * 2.0f;  // Reduziert von 4.0
         }
     }
 
-    // 5. Bevorzugung offener Saiten (Open String Bonus) - kontextabhängig
+    // 5. Offene Saiten sind IMMER einfacher zu spielen (starker Bonus)
     if (current.fret == 0)
     {
-        // Wenn wir in einer hohen Position sind (>7), sind offene Saiten unnatürlich
-        if (previous.fret > 7)
-            cost += 8.0f;  // Stark erhöht von 2.0
-        else if (previous.fret > 4)
-            cost += 3.0f;  // Mittlere Strafe
-        else
-            cost -= 2.0f;  // Bonus in der offenen Position
+        cost -= 8.0f;  // Starker Bonus für offene Saiten - immer einfacher zu greifen
+        if (pos == FretPosition::Low)
+            cost -= 4.0f;  // Extra Bonus bei Low-Präferenz
+        else if (pos == FretPosition::High)
+            cost += 3.0f;  // Leichte Reduzierung des Bonus bei High-Präferenz
     }
     
     // 6. Kleine Präferenz für höhere Saiten bei Melodien (dünnere Saiten)
@@ -1789,13 +1782,33 @@ std::vector<NewProjectAudioProcessor::LiveMidiNote> NewProjectAudioProcessor::ge
         // Berechne aktuelle Handposition aus lastPlayedFret
         int currentFretPosition = (lastPlayedFret >= 0) ? lastPlayedFret : 0;
         
+        // Hole Fret-Präferenz
+        FretPosition pos = getFretPosition();
+        int preferredMinFret, preferredMaxFret;
+        switch (pos)
+        {
+            case FretPosition::Mid:
+                preferredMinFret = 5;
+                preferredMaxFret = 8;
+                break;
+            case FretPosition::High:
+                preferredMinFret = 9;
+                preferredMaxFret = 12;
+                break;
+            case FretPosition::Low:
+            default:
+                preferredMinFret = 0;
+                preferredMaxFret = 4;
+                break;
+        }
+        
         // Versuche erst mit exaktem Bass-Matching
-        auto chordResult = chordMatcher.findBestChord(midiNoteNumbers, currentFretPosition, true);
+        auto chordResult = chordMatcher.findBestChord(midiNoteNumbers, currentFretPosition, true, preferredMinFret, preferredMaxFret);
         
         // Falls kein Match mit exaktem Bass, versuche ohne Bass-Constraint
         if (!chordResult.isMatch)
         {
-            chordResult = chordMatcher.findBestChord(midiNoteNumbers, currentFretPosition, false);
+            chordResult = chordMatcher.findBestChord(midiNoteNumbers, currentFretPosition, false, preferredMinFret, preferredMaxFret);
         }
         
         if (chordResult.isMatch && chordResult.shape != nullptr)
@@ -2341,6 +2354,182 @@ std::vector<NewProjectAudioProcessor::RecordedNote> NewProjectAudioProcessor::ge
 {
     std::lock_guard<std::mutex> lock(recordingMutex);
     return recordedNotes;
+}
+
+void NewProjectAudioProcessor::updateRecordedNotePosition(int measureIndex, int beatIndex, int oldString, int newString, int newFret)
+{
+    // Diese Funktion aktualisiert sowohl den editedTrack als auch die recordedNotes
+    // basierend auf Takt/Beat und alter String-Position
+    // oldString ist die String-Position VOR der Änderung (um die Note in recordedNotes zu finden)
+    
+    // Aktualisiere editedTrack (wenn vorhanden) - hier ist die Änderung bereits in der UI erfolgt
+    // Wir müssen den Track aus der UI holen (wird über setEditedTrack gemacht)
+    
+    // Aktualisiere recordedNotes
+    std::lock_guard<std::mutex> lock(recordingMutex);
+    
+    if (!recordedNotes.empty())
+    {
+        int numerator = hostTimeSigNumerator.load();
+        int denominator = hostTimeSigDenominator.load();
+        double beatsPerMeasure = numerator * (4.0 / denominator);
+        
+        // measureIndex in der UI ist 0-basiert, entspricht aber barNum-1 in getRecordedTabTrack
+        int barNum = measureIndex + 1;
+        double measureStartBeat = (barNum - 1) * beatsPerMeasure;
+        
+        // Sammle Noten in diesem Takt (gleiche Logik wie getRecordedTabTrack)
+        std::vector<std::pair<size_t, RecordedNote*>> notesInMeasure;
+        for (size_t i = 0; i < recordedNotes.size(); ++i)
+        {
+            auto& note = recordedNotes[i];
+            double roundedPPQ = std::round(note.startBeat * 1000.0) / 1000.0;
+            int noteBar = static_cast<int>(roundedPPQ / beatsPerMeasure) + 1;
+            
+            // Anwenden der gleichen Quantisierungs-Logik
+            double positionInMeasure = roundedPPQ - (noteBar - 1) * beatsPerMeasure;
+            double distanceToNextBar = beatsPerMeasure - positionInMeasure;
+            double originalDuration = note.endBeat - note.startBeat;
+            
+            if (distanceToNextBar < 0.5 && distanceToNextBar > 0.001)
+            {
+                double truncatedDuration = distanceToNextBar;
+                double truncationRatio = truncatedDuration / std::max(0.001, originalDuration);
+                if (truncationRatio < 0.25 && originalDuration > 0.25)
+                {
+                    noteBar = noteBar + 1;
+                }
+            }
+            
+            if (noteBar == barNum)
+            {
+                notesInMeasure.push_back({i, &note});
+            }
+        }
+        
+        if (notesInMeasure.empty())
+        {
+            DBG("No recorded notes found in measure " << (measureIndex + 1));
+            return;
+        }
+        
+        // Sortiere nach startBeat
+        std::sort(notesInMeasure.begin(), notesInMeasure.end(), 
+            [](const auto& a, const auto& b) { return a.second->startBeat < b.second->startBeat; });
+        
+        // Gruppiere nach Slots (gleiche Logik wie getRecordedTabTrack)
+        double subdivision = 0.125; // 32nd note in quarter-note beats
+        double chordThreshold = 0.08; // Notes within ~80ms are chord
+        
+        struct SlotGroup {
+            int slot;
+            std::vector<std::pair<size_t, RecordedNote*>> notes;
+        };
+        std::vector<SlotGroup> slotGroups;
+        
+        int lastOccupiedSlot = -1;
+        double lastStartTime = -999.0;
+        
+        for (auto& [noteIdx, notePtr] : notesInMeasure)
+        {
+            double posInMeasure = notePtr->startBeat - measureStartBeat;
+            if (posInMeasure < 0.0) posInMeasure = 0.0;
+            
+            int idealSlot = (int)(posInMeasure / subdivision + 0.5);
+            
+            // Prüfe ob diese Note zum letzten Slot gehört (Akkord)
+            bool isChord = !slotGroups.empty() && 
+                          std::abs(notePtr->startBeat - lastStartTime) < chordThreshold;
+            
+            if (isChord)
+            {
+                slotGroups.back().notes.push_back({noteIdx, notePtr});
+            }
+            else
+            {
+                int slot = std::max(idealSlot, lastOccupiedSlot + 1);
+                int maxSlots = static_cast<int>(beatsPerMeasure / subdivision);
+                if (slot >= maxSlots) slot = maxSlots - 1;
+                if (slot < 0) slot = 0;
+                
+                SlotGroup group;
+                group.slot = slot;
+                group.notes.push_back({noteIdx, notePtr});
+                slotGroups.push_back(group);
+                lastOccupiedSlot = slot;
+            }
+            lastStartTime = notePtr->startBeat;
+        }
+        
+        // beatIndex entspricht der Reihenfolge der Slot-Gruppen (nicht dem Slot-Wert selbst!)
+        int currentBeatIdx = 0;
+        int currentSlot = 0;
+        int maxSlots = static_cast<int>(beatsPerMeasure / subdivision);
+        size_t groupIdx = 0;
+        
+        while (currentSlot < maxSlots && groupIdx <= slotGroups.size())
+        {
+            if (groupIdx < slotGroups.size() && slotGroups[groupIdx].slot == currentSlot)
+            {
+                // Dies ist ein Beat mit Noten
+                if (currentBeatIdx == beatIndex)
+                {
+                    // Gefunden! Suche nach der Note mit der alten String-Position
+                    for (auto& [recIdx, notePtr] : slotGroups[groupIdx].notes)
+                    {
+                        if (notePtr->string == oldString)
+                        {
+                            notePtr->string = newString;
+                            notePtr->fret = newFret;
+                            DBG("Updated recordedNotes[" << recIdx << "] string " << oldString 
+                                << " -> " << newFret << "/" << newString);
+                            return;
+                        }
+                    }
+                    DBG("Note not found on string " << oldString << " in beat " << beatIndex);
+                    return;
+                }
+                
+                // Berechne Slot-Sprung
+                int nextSlot = maxSlots;
+                if (groupIdx + 1 < slotGroups.size())
+                    nextSlot = slotGroups[groupIdx + 1].slot;
+                    
+                currentSlot = nextSlot;
+                groupIdx++;
+                currentBeatIdx++;
+            }
+            else
+            {
+                // Pause
+                int nextNoteSlot = (groupIdx < slotGroups.size()) ? slotGroups[groupIdx].slot : maxSlots;
+                
+                while (currentSlot < nextNoteSlot)
+                {
+                    int remaining = nextNoteSlot - currentSlot;
+                    int pauseDuration;
+                    if (remaining >= 32) pauseDuration = 32;
+                    else if (remaining >= 16) pauseDuration = 16;
+                    else if (remaining >= 8) pauseDuration = 8;
+                    else if (remaining >= 4) pauseDuration = 4;
+                    else if (remaining >= 2) pauseDuration = 2;
+                    else pauseDuration = 1;
+                    
+                    currentSlot += pauseDuration;
+                    currentBeatIdx++;
+                }
+            }
+        }
+        
+        DBG("Beat " << beatIndex << " not found in measure " << (measureIndex + 1) 
+            << " (had " << slotGroups.size() << " note groups, iterated to beat " << currentBeatIdx << ")");
+    }
+}
+
+void NewProjectAudioProcessor::setEditedTrack(const TabTrack& track)
+{
+    editedTrack = track;
+    editedTrackValid = true;
 }
 
 TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const

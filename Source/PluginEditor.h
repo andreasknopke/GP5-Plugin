@@ -50,8 +50,8 @@ private:
     // 3b. Track Settings Button
     juce::TextButton settingsButton { "Settings" };
     
-    // 3c. Save MIDI Button (Player Mode only)
-    juce::TextButton saveMidiButton { "Save MIDI" };
+    // 3c. Unified Save Button (shows format menu)
+    juce::TextButton saveButton { "Save" };
 
     // 4. Der FileChooser (smart pointer, um Speicherlecks zu vermeiden)
     std::unique_ptr<juce::FileChooser> fileChooser;
@@ -72,7 +72,6 @@ private:
     // 8b. Recording Indicator (Editor Mode only) - shows DAW record status
     juce::ToggleButton recordButton { "REC" };
     juce::TextButton clearRecordingButton { "Clear" };
-    juce::TextButton saveGpButton { "Save GP" };  // Save as Guitar Pro file
     
     // 8c. Fret Position Selector (Editor Mode only)
     juce::ComboBox fretPositionSelector;
@@ -110,8 +109,9 @@ private:
     void updateTransportDisplay();
     void toggleSettingsPanel();
     void updateModeDisplay();
-    void saveMidiButtonClicked();
-    void saveGpButtonClicked();
+    void saveButtonClicked();
+    void doSaveMidi();
+    void doSaveGp5();
     void noteEditToggled();
     
     // 11. State

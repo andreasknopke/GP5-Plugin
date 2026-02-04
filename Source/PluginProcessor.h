@@ -347,6 +347,15 @@ public:
     TabTrack getRecordedTabTrack() const;  // Convert recorded notes to TabTrack for display (all channels merged)
     std::vector<TabTrack> getRecordedTabTracks() const;  // Convert recorded notes to TabTracks (one per MIDI channel)
     
+    // Update a specific note's position (from manual editing)
+    // oldString: the string position BEFORE the change (to find the note in recordedNotes)
+    void updateRecordedNotePosition(int measureIndex, int beatIndex, int oldString, int newString, int newFret);
+    
+    // Speichere editierten Track (für Plugin-State)
+    void setEditedTrack(const TabTrack& track);
+    const TabTrack& getEditedTrack() const { return editedTrack; }
+    bool hasEditedTrack() const { return editedTrackValid; }
+    
     //==============================================================================
     // MIDI Export Functionality
     //==============================================================================
@@ -463,19 +472,23 @@ private:
     bool recordingStartSet = false;   // Whether recordingStartBeat has been set
     FretPosition recordingFretPosition = FretPosition::Low;  // Fret position at recording start
     
+    // Editierter Track (speichert manuelle Änderungen)
+    TabTrack editedTrack;
+    bool editedTrackValid = false;
+    
     // Recording playback state (for MIDI-out of recorded notes)
     std::set<int> activePlaybackNotes;  // Currently playing recorded notes (MIDI note numbers)
     double lastPlaybackBeat = -1.0;     // Last processed beat for playback
     
     // Fret position preference (0=Low, 1=Mid, 2=High)
-    std::atomic<int> fretPosition { 0 };  // Default: Low
+    std::atomic<int> fretPosition { 1 };  // Default: Mid (0=Low, 1=Mid, 2=High)
     
     // Legato quantization threshold in beats (default: 0.25 = 1/16th note at 120bpm)
     // Notes will be extended to fill gaps smaller than this threshold
     std::atomic<double> legatoQuantizationThreshold { 0.25 };
     
     // Position lookahead: Update position every N notes (1=every note, 4=every 4th note)
-    std::atomic<int> positionLookahead { 1 };  // Default: every note
+    std::atomic<int> positionLookahead { 4 };  // Default: 4 notes
     mutable int positionLookaheadCounter = 0;  // Counter for tracking notes
     
     // Audio-to-MIDI mode

@@ -91,9 +91,9 @@ public:
         
         // Header
         g.setColour(juce::Colours::white);
-        g.setFont(juce::Font(14.0f).boldened());
+        g.setFont(juce::Font(juce::FontOptions(14.0f)).boldened());
         juce::String noteName = FretPositionCalculator::getMidiNoteName(currentHitInfo.midiNote);
-        g.drawText("Position für " + noteName, getLocalBounds().removeFromTop(35).reduced(10, 5),
+        g.drawText("Position for " + noteName, getLocalBounds().removeFromTop(35).reduced(10, 5),
                    juce::Justification::centredLeft, true);
         
         g.setColour(juce::Colour(0xFF555555));
@@ -171,12 +171,12 @@ private:
         }
         
         g.setColour(isCurrent ? juce::Colours::white : juce::Colours::lightgrey);
-        g.setFont(juce::Font(13.0f));
+        g.setFont(juce::Font(juce::FontOptions(13.0f)));
         
         juce::String saiteName = (stringIdx >= 0 && stringIdx < tuning.size()) 
             ? FretPositionCalculator::getMidiNoteName(tuning[stringIdx]) 
             : juce::String(stringIdx + 1);
-        g.drawText("Saite " + saiteName + ", Bund " + juce::String(fret),
+        g.drawText("String " + saiteName + ", Fret " + juce::String(fret),
                    itemBounds.getX() + (isCurrent ? 20 : 5), y, itemBounds.getWidth() - 25, 28,
                    juce::Justification::centredLeft, false);
     }

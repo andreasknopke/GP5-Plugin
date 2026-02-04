@@ -48,10 +48,10 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     addAndMakeVisible (settingsButton);
     settingsButton.onClick = [this] { toggleSettingsPanel(); };
     
-    // Save MIDI Button (Player Mode only)
-    addAndMakeVisible (saveMidiButton);
-    saveMidiButton.onClick = [this] { saveMidiButtonClicked(); };
-    saveMidiButton.setVisible(false);  // Nur im Player-Modus mit geladenem File sichtbar
+    // Unified Save Button (shows format menu: MIDI or GP5)
+    addAndMakeVisible (saveButton);
+    saveButton.onClick = [this] { saveButtonClicked(); };
+    saveButton.setVisible(false);  // Nur sichtbar wenn Noten vorhanden
     
     // Info Label (Header links - Song-Infos)
     addAndMakeVisible (infoLabel);
@@ -102,10 +102,7 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     };
     clearRecordingButton.setVisible(false);  // Wird in updateModeDisplay() gesteuert
     
-    // Save GP Button (Editor Mode only - save recorded notes as Guitar Pro file)
-    addAndMakeVisible (saveGpButton);
-    saveGpButton.onClick = [this] { saveGpButtonClicked(); };
-    saveGpButton.setVisible(false);
+    // (saveGpButton removed - merged into unified saveButton)
     
     // Fret Position Selector (Editor Mode only)
     addAndMakeVisible (fretPositionLabel);
@@ -118,7 +115,7 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     fretPositionSelector.addItem("Low (0-4)", 1);
     fretPositionSelector.addItem("Mid (5-8)", 2);
     fretPositionSelector.addItem("High (9-12)", 3);
-    fretPositionSelector.setSelectedId(1, juce::dontSendNotification);  // Default: Low
+    fretPositionSelector.setSelectedId(2, juce::dontSendNotification);  // Default: Mid
     fretPositionSelector.onChange = [this] {
         int selectedId = fretPositionSelector.getSelectedId();
         if (selectedId == 1)
@@ -167,7 +164,7 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     posLookaheadSelector.addItem("2", 2);   // Update every 2nd note
     posLookaheadSelector.addItem("3", 3);   // Update every 3rd note
     posLookaheadSelector.addItem("4", 4);   // Update every 4th note
-    posLookaheadSelector.setSelectedId(1, juce::dontSendNotification);  // Default: every note
+    posLookaheadSelector.setSelectedId(4, juce::dontSendNotification);  // Default: 4 notes
     posLookaheadSelector.onChange = [this] {
         int selectedId = posLookaheadSelector.getSelectedId();
         audioProcessor.setPositionLookahead(selectedId);
@@ -199,9 +196,15 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     };
     
     // Note-Position-Changed Callback
-    tabView.onNotePositionChanged = [this](int measureIdx, int beatIdx, int noteIdx, int newString, int newFret) {
+    tabView.onNotePositionChanged = [this](int measureIdx, int beatIdx, int oldString, int newString, int newFret) {
         DBG("Note geändert: Takt " << (measureIdx + 1) << ", Beat " << (beatIdx + 1) 
-            << ", Note " << (noteIdx + 1) << " -> Saite " << (newString + 1) << ", Bund " << newFret);
+            << ", Saite " << (oldString + 1) << " -> Saite " << (newString + 1) << ", Bund " << newFret);
+        
+        // Änderung an den Processor weiterleiten für Speicherung und Export
+        audioProcessor.updateRecordedNotePosition(measureIdx, beatIdx, oldString, newString, newFret);
+        
+        // Speichere den aktuellen Track-Zustand im Processor
+        audioProcessor.setEditedTrack(tabView.getTrack());
     };
 
     // Fenstergröße setzen (größer für die Tab-Ansicht + Header)
@@ -226,6 +229,17 @@ void NewProjectAudioProcessorEditor::paint (juce::Graphics& g)
 {
     // Hintergrundfarbe (Dunkelgrau für den Pro-Look)
     g.fillAll (juce::Colour(0xFF2D2D30));
+    
+    // Bottom Bar Hintergrund (nur im Editor-Modus)
+    if (!audioProcessor.isFileLoaded())
+    {
+        auto bottomBarArea = getLocalBounds().removeFromBottom(30);
+        g.setColour (juce::Colour(0xFF3C3C3C));
+        g.fillRect (bottomBarArea);
+        g.setColour (juce::Colour(0xFF555555));
+        g.drawLine ((float)bottomBarArea.getX(), (float)bottomBarArea.getY(), 
+                    (float)bottomBarArea.getRight(), (float)bottomBarArea.getY(), 1.0f);
+    }
 }
 
 void NewProjectAudioProcessorEditor::resized()
@@ -242,6 +256,38 @@ void NewProjectAudioProcessorEditor::resized()
     // Transport Label (Position, Tempo, Taktart-Warnung) - rechte Hälfte
     transportLabel.setBounds (header);
     
+    // Bottom Bar (30px hoch) - Editor-Modus Selektoren (Fret, Legato, Pos)
+    bool showBottomBar = !audioProcessor.isFileLoaded();  // Nur im Editor-Modus
+    if (showBottomBar)
+    {
+        auto bottomBar = bounds.removeFromBottom(30);
+        bottomBar = bottomBar.reduced(5, 2);
+        
+        // Fret Position Selector
+        fretPositionLabel.setBounds (bottomBar.removeFromLeft(30));
+        fretPositionSelector.setBounds (bottomBar.removeFromLeft(90));
+        bottomBar.removeFromLeft(20); // Spacer
+        
+        // Legato Quantization Selector
+        legatoQuantizeLabel.setBounds (bottomBar.removeFromLeft(50));
+        legatoQuantizeSelector.setBounds (bottomBar.removeFromLeft(70));
+        bottomBar.removeFromLeft(20); // Spacer
+        
+        // Position Lookahead Selector
+        posLookaheadLabel.setBounds (bottomBar.removeFromLeft(30));
+        posLookaheadSelector.setBounds (bottomBar.removeFromLeft(55));
+    }
+    else
+    {
+        // Player-Modus - Bottom Bar Elemente nicht sichtbar
+        fretPositionLabel.setBounds (0, 0, 0, 0);
+        fretPositionSelector.setBounds (0, 0, 0, 0);
+        legatoQuantizeLabel.setBounds (0, 0, 0, 0);
+        legatoQuantizeSelector.setBounds (0, 0, 0, 0);
+        posLookaheadLabel.setBounds (0, 0, 0, 0);
+        posLookaheadSelector.setBounds (0, 0, 0, 0);
+    }
+    
     // Toolbar (45px hoch) - Buttons
     auto toolbar = bounds.removeFromTop(45);
     toolbar = toolbar.reduced(5);
@@ -252,8 +298,8 @@ void NewProjectAudioProcessorEditor::resized()
     unloadButton.setBounds (toolbar.removeFromLeft(25));
     toolbar.removeFromLeft(5); // Spacer
     
-    // Mode Label
-    modeLabel.setBounds (toolbar.removeFromLeft(60));
+    // Mode Label (mit Symbol)
+    modeLabel.setBounds (toolbar.removeFromLeft(85));
     toolbar.removeFromLeft(5); // Spacer
     
     // Zoom Buttons
@@ -269,35 +315,6 @@ void NewProjectAudioProcessorEditor::resized()
     
     toolbar.removeFromLeft(5); // Spacer
     
-    // Fret Position Selector (nur im Editor-Modus)
-    // Im Editor-Modus ohne Aufnahmen: nutzt Track-Selector Bereich
-    // Im Editor-Modus mit Aufnahmen: hat eigenen Bereich daneben
-    if (!audioProcessor.isFileLoaded())
-    {
-        // Editor-Modus - Fret Selector bekommt eigenen Bereich
-        fretPositionLabel.setBounds (toolbar.removeFromLeft(30));
-        fretPositionSelector.setBounds (toolbar.removeFromLeft(60));
-        toolbar.removeFromLeft(5);
-    }
-    else
-    {
-        // Player-Modus - Fret Selector nicht sichtbar, Platz nicht benötigt
-        fretPositionLabel.setBounds (0, 0, 0, 0);
-        fretPositionSelector.setBounds (0, 0, 0, 0);
-    }
-    
-    // Legato Quantization Selector (nur im Editor-Modus)
-    legatoQuantizeLabel.setBounds (toolbar.removeFromLeft(45));
-    legatoQuantizeSelector.setBounds (toolbar.removeFromLeft(55));
-    
-    toolbar.removeFromLeft(5); // Spacer
-    
-    // Position Lookahead Selector (nur im Editor-Modus)
-    posLookaheadLabel.setBounds (toolbar.removeFromLeft(30));
-    posLookaheadSelector.setBounds (toolbar.removeFromLeft(40));
-    
-    toolbar.removeFromLeft(5); // Spacer
-    
     // Settings Button
     settingsButton.setBounds (toolbar.removeFromLeft(70));
     toolbar.removeFromLeft(5);
@@ -310,11 +327,9 @@ void NewProjectAudioProcessorEditor::resized()
     clearRecordingButton.setBounds (toolbar.removeFromRight(45));
     toolbar.removeFromRight(5);
     
-    // Save MIDI Button (nur im Player-Modus) / Save GP Button (nur im Editor-Modus)
-    // Beide teilen sich die gleiche Position
-    auto saveButtonArea = toolbar.removeFromRight(80);
-    saveMidiButton.setBounds (saveButtonArea);
-    saveGpButton.setBounds (saveButtonArea);
+    // Unified Save Button (zeigt Format-Menü)
+    auto saveButtonArea = toolbar.removeFromRight(60);
+    saveButton.setBounds (saveButtonArea);
     toolbar.removeFromRight(5);
     
     // Recording Button (nur im Editor-Modus)
@@ -352,6 +367,11 @@ void NewProjectAudioProcessorEditor::loadButtonClicked()
             {
                 refreshFromProcessor();
                 updateModeDisplay();
+                
+                // Note-Editing-Zustand synchronisieren (falls vorher aktiv war)
+                bool editingEnabled = noteEditButton.getToggleState();
+                tabView.setNoteEditingEnabled(editingEnabled);
+                
                 DBG("GP5 erfolgreich geladen!");
             }
             else
@@ -379,12 +399,11 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
     if (audioProcessor.isFileLoaded())
     {
         // Player-Modus (File geladen)
-        modeLabel.setText("Player", juce::dontSendNotification);
+        modeLabel.setText(juce::String(juce::CharPointer_UTF8("\xf0\x9f\x94\x8a")) + "  Play", juce::dontSendNotification);
         modeLabel.setColour(juce::Label::textColourId, juce::Colours::lightgreen);
         modeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF1E5631));
         unloadButton.setVisible(true);
-        saveMidiButton.setVisible(true);  // Save MIDI im Player-Modus
-        saveGpButton.setVisible(false);   // Save GP nur im Editor-Modus
+        saveButton.setVisible(true);  // Save Button im Player-Modus immer sichtbar (Datei geladen = Noten vorhanden)
         
         // Track-Auswahl und Settings im Player-Modus
         trackLabel.setVisible(true);
@@ -406,12 +425,11 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
     {
         // Editor-Modus MIT Aufnahmen - hybride Ansicht
         // Zeigt sowohl Editor- als auch Player-Features
-        modeLabel.setText("Editor", juce::dontSendNotification);
+        modeLabel.setText(juce::String(juce::CharPointer_UTF8("\xf0\x9f\x91\x82")) + "  Listen", juce::dontSendNotification);
         modeLabel.setColour(juce::Label::textColourId, juce::Colours::orange);
         modeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF5C3D00));
         unloadButton.setVisible(false);
-        saveMidiButton.setVisible(false);  // Kein MIDI-Export (nutze Save GP)
-        saveGpButton.setVisible(true);     // Save GP im Editor-Modus verfügbar
+        saveButton.setVisible(true);  // Save Button sichtbar wenn Aufnahmen vorhanden
         
         // Track-Auswahl und Settings auch im Editor-Modus wenn Aufnahmen vorhanden
         // Dies ermöglicht Playback und Track-Konfiguration nach der Aufnahme
@@ -436,12 +454,11 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
     else
     {
         // Editor-Modus OHNE Aufnahmen - nur Recording-Features
-        modeLabel.setText("Editor", juce::dontSendNotification);
+        modeLabel.setText(juce::String(juce::CharPointer_UTF8("\xf0\x9f\x91\x82")) + "  Listen", juce::dontSendNotification);
         modeLabel.setColour(juce::Label::textColourId, juce::Colours::orange);
         modeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF5C3D00));
         unloadButton.setVisible(false);
-        saveMidiButton.setVisible(false);
-        saveGpButton.setVisible(true);  // Save GP Menü, aber deaktiviert ohne Aufnahmen
+        saveButton.setVisible(false);  // Kein Save Button ohne Noten
         
         // Keine Track-Auswahl ohne Aufnahmen
         trackLabel.setVisible(false);
@@ -767,14 +784,6 @@ void NewProjectAudioProcessorEditor::timerCallback()
         }
         tabView.setLiveNotes(liveNotes);
         
-        // WICHTIG: Wenn Recording aktiv, aktualisiere die aufgezeichneten Noten
-        // mit den optimierten Werten aus der Live-Anzeige!
-        // So wird gespeichert was der User tatsächlich sieht.
-        if (audioProcessor.isRecording() && !midiNotes.empty())
-        {
-            audioProcessor.updateRecordedNotesFromLive(midiNotes);
-        }
-        
         // Erkannten Akkordnamen anzeigen
         tabView.setLiveChordName(audioProcessor.getDetectedChordName());
         
@@ -967,10 +976,33 @@ void NewProjectAudioProcessorEditor::toggleSettingsPanel()
     }
 }
 
-void NewProjectAudioProcessorEditor::saveMidiButtonClicked()
+void NewProjectAudioProcessorEditor::saveButtonClicked()
 {
-    if (!audioProcessor.isFileLoaded())
+    // Popup-Menü mit Format-Auswahl
+    juce::PopupMenu menu;
+    
+    menu.addItem(1, "Save as MIDI...");
+    menu.addItem(2, "Save as GuitarPro (.gp5)...");
+    
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&saveButton),
+        [this](int result)
+        {
+            if (result == 1)
+                doSaveMidi();
+            else if (result == 2)
+                doSaveGp5();
+        });
+}
+
+void NewProjectAudioProcessorEditor::doSaveMidi()
+{
+    // Prüfe ob Noten vorhanden sind (entweder geladene Datei oder Aufnahmen)
+    bool hasNotes = audioProcessor.isFileLoaded() || audioProcessor.hasRecordedNotes();
+    if (!hasNotes)
+    {
+        infoLabel.setText("No notes to save!", juce::dontSendNotification);
         return;
+    }
     
     // Erstelle Auswahl-Dialog: Aktuelle Spur oder alle Spuren
     juce::PopupMenu menu;
@@ -986,7 +1018,7 @@ void NewProjectAudioProcessorEditor::saveMidiButtonClicked()
     menu.addSeparator();
     menu.addItem(2, "All Tracks (Multi-Channel MIDI)");
     
-    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&saveMidiButton),
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&saveButton),
         [this, currentTrack](int result)
         {
             if (result == 0)
@@ -1045,23 +1077,43 @@ void NewProjectAudioProcessorEditor::saveMidiButtonClicked()
         });
 }
 
-void NewProjectAudioProcessorEditor::saveGpButtonClicked()
+void NewProjectAudioProcessorEditor::doSaveGp5()
 {
-    // Check if there are recorded notes
-    if (!audioProcessor.hasRecordedNotes())
+    // Prüfe ob Noten vorhanden sind
+    bool hasNotes = audioProcessor.isFileLoaded() || audioProcessor.hasRecordedNotes();
+    if (!hasNotes)
     {
-        infoLabel.setText("No recorded notes to save!", juce::dontSendNotification);
+        infoLabel.setText("No notes to save!", juce::dontSendNotification);
         return;
     }
     
-    // Show export panel instead of direct file chooser
+    // Show export panel for metadata entry
     showExportPanel();
 }
 
 void NewProjectAudioProcessorEditor::showExportPanel()
 {
-    // Get tracks from processor
-    auto tracks = audioProcessor.getRecordedTabTracks();
+    // Get tracks - entweder von geladener Datei oder von Aufnahmen
+    std::vector<TabTrack> tracks;
+    juce::String defaultTitle = "Untitled";
+    
+    if (audioProcessor.isFileLoaded())
+    {
+        // Player-Modus: Konvertiere geladene GP5Tracks zu TabTracks
+        const auto& loadedTracks = audioProcessor.getActiveTracks();
+        for (size_t i = 0; i < loadedTracks.size(); ++i)
+        {
+            tracks.push_back(audioProcessor.getGP5Parser().convertToTabTrack(static_cast<int>(i)));
+        }
+        defaultTitle = audioProcessor.getActiveSongInfo().title;
+        if (defaultTitle.isEmpty())
+            defaultTitle = "Untitled";
+    }
+    else
+    {
+        // Editor-Modus: Verwende aufgezeichnete Tracks
+        tracks = audioProcessor.getRecordedTabTracks();
+    }
     
     if (tracks.empty())
     {
@@ -1071,7 +1123,7 @@ void NewProjectAudioProcessorEditor::showExportPanel()
     
     // Create export panel
     exportPanel = std::make_unique<ExportPanelComponent>(
-        "Untitled",  // Default title
+        defaultTitle,
         tracks,
         // Export callback
         [this](const juce::String& title, const std::vector<std::pair<juce::String, int>>& trackData) {
@@ -1167,7 +1219,28 @@ void NewProjectAudioProcessorEditor::noteEditToggled()
     }
     else
     {
-        // Zeige wieder die normalen Infos
-        refreshFromProcessor();
+        // Nur Info-Label aktualisieren, NICHT refreshFromProcessor() aufrufen!
+        // Das wuerde die aufgezeichneten Noten ueberschreiben.
+        if (audioProcessor.isFileLoaded())
+        {
+            const auto& info = audioProcessor.getActiveSongInfo();
+            int trackCount = audioProcessor.getActiveTracks().size();
+            int measureCount = audioProcessor.getActiveMeasureHeaders().size();
+            juce::String infoText = info.title;
+            if (info.artist.isNotEmpty())
+                infoText += " - " + info.artist;
+            infoText += " | " + juce::String(info.tempo) + " BPM";
+            infoText += " | " + juce::String(trackCount) + " Tracks";
+            infoText += " | " + juce::String(measureCount) + " Measures";
+            infoLabel.setText(infoText, juce::dontSendNotification);
+        }
+        else if (audioProcessor.hasRecordedNotes())
+        {
+            infoLabel.setText("Recorded notes - Use Save to export", juce::dontSendNotification);
+        }
+        else
+        {
+            infoLabel.setText("No file loaded - Play MIDI to see notes on tab", juce::dontSendNotification);
+        }
     }
 }
