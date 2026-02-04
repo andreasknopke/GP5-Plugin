@@ -14,20 +14,28 @@ The GP5 VST Editor is a JUCE-based VST3 instrument plugin that reads Guitar Pro 
 - **Chord Name Display**: Shows chord names above the tablature (Am, E5+/G#, FM7, etc.)
 - **Tablature Display**: Professional rendering of notes as guitar tablature with effects notation
 - **Rhythm Notation**: Proper beam grouping by metric position (4 eighths per half-measure in 4/4)
+- **integrated Note Editing**: Click on notes to change string/fret positions for optimal playability
 - **DAW Synchronization**: Automatic scrolling and position sync during playback
+- **Unified Recording Workflow**: Seamless transition between recording and player modes
 - **Click-to-Seek**: Click anywhere on the tablature to jump to that position
 - **Multi-Track Support**: Switch between different tracks with per-track MIDI channel, volume, pan, mute, and solo
 - **Zoom Function**: Adjust the display size to your needs
-- **Editor Mode (MIDI Input)**:
-  - Live MIDI note display on tablature
+- **Enhanced Export**: Export recordings with customizable metadata (Title, Artist, Track names)
+- **Recording & Editing Mode**:
+  - **Live MIDI Input**: Real-time note display on tablature
   - **Smart Chord Recognition**: Automatically detects and displays chord names (C, Am, G7, etc.)
   - **Chord Shape Library**: Uses predefined guitar chord shapes (open, barre, power chords)
+  - **Note Position Editing**: Click on any recorded note to select alternative string/fret combinations
+  - **Advanced Quantization**:
+    - **Legato Quantization**: Automatically detects hammer-ons/pull-offs for smoother playback
+    - **Intelligent Bar Quantization**: Ensures notes fit perfectly within measure boundaries
   - **Cost-based Position Optimization**: Minimizes hand movement between positions
-  - Recording with DAW bar synchronization
-- **GP5 Export**: Save your recordings as Guitar Pro 5 (.gp5) files compatible with:
-  - Guitar Pro software (all versions)
-  - Soundslice (online tab player/editor)
-  - Other GP5-compatible applications
+  - **Position Lookahead**: Advanced calculation for optimal fretboard positioning
+  - **Seamless Workflow**: Automatically switches to player mode after recording for immediate review
+- **GP5 Export**: Save your recordings as Guitar Pro 5 (.gp5) files with:
+  - **Export Panel**: Edit song title, artist, and track names before exporting
+  - Compatibility with Guitar Pro software (all versions)
+  - Soundslice and other GP5-compatible applications
 - **MIDI Output**: Generates MIDI with expressive articulations:
   - Real-time pitch bend interpolation for bends
   - All bend types: Normal, Bend+Release, Pre-bend, Release
