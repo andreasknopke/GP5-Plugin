@@ -1,0 +1,44 @@
+GP5 VST Editor - Alpha 0.8 Release Notes
+=========================================
+
+Release Date: February 4, 2026
+
+NEW FEATURES:
+-------------
+- Note editing now persists correctly
+  - Manually edited notes are saved in plugin state
+  - Notes persist when plugin UI is closed/reopened
+  - Edited positions are correctly written to GP5 exports
+
+BUG FIXES:
+----------
+- Fixed: Multiple consecutive edits to the same note now work correctly
+  - Previously, only the first edit was saved
+  - Now uses old string position to find notes in recordedNotes
+
+- Fixed: Fret position preference (Low/Mid/High) now works correctly
+  - Removed duplicate optimization code that was overwriting values
+  - ChordMatcher now respects fret preference settings
+
+- Changed defaults:
+  - Fret Position: Mid (5-8) instead of Low
+  - Position Lookahead: 4 instead of 2
+  - Open strings are now strongly preferred (-8.0 cost bonus)
+
+TECHNICAL CHANGES:
+------------------
+- Extended getStateInformation to save recordedNotes with all properties
+- Extended setStateInformation to load recordedNotes from plugin state
+- Changed onNotePositionChanged callback to pass oldString instead of noteIndex
+- updateRecordedNotePosition now searches by old string position before update
+
+INSTALLATION:
+-------------
+Copy the GP5_VST_Editor.vst3 folder to your VST3 plugins directory:
+- Windows: C:\Program Files\Common Files\VST3\
+
+KNOWN ISSUES:
+-------------
+- None reported in this version
+
+Previous versions: See alpha-0.7 and earlier changelogs.

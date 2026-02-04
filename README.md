@@ -14,7 +14,8 @@ The GP5 VST Editor is a JUCE-based VST3 instrument plugin that reads Guitar Pro 
 - **Chord Name Display**: Shows chord names above the tablature (Am, E5+/G#, FM7, etc.)
 - **Tablature Display**: Professional rendering of notes as guitar tablature with effects notation
 - **Rhythm Notation**: Proper beam grouping by metric position (4 eighths per half-measure in 4/4)
-- **integrated Note Editing**: Click on notes to change string/fret positions for optimal playability
+- **Integrated Note Editing**: Click on notes to change string/fret positions with persistent changes
+- **Fret Position Preference**: Choose Low (0-4), Mid (5-8), or High (9-12) fret region for transcription
 - **DAW Synchronization**: Automatic scrolling and position sync during playback
 - **Unified Recording Workflow**: Seamless transition between recording and player modes
 - **Click-to-Seek**: Click anywhere on the tablature to jump to that position
@@ -25,12 +26,21 @@ The GP5 VST Editor is a JUCE-based VST3 instrument plugin that reads Guitar Pro 
   - **Live MIDI Input**: Real-time note display on tablature
   - **Smart Chord Recognition**: Automatically detects and displays chord names (C, Am, G7, etc.)
   - **Chord Shape Library**: Uses predefined guitar chord shapes (open, barre, power chords)
-  - **Note Position Editing**: Click on any recorded note to select alternative string/fret combinations
+  - **Note Position Editing**: 
+    - Click on any recorded note to select alternative string/fret combinations
+    - Changes persist when plugin UI is closed/reopened
+    - Edited positions are saved in GP5 exports
+    - Multiple consecutive edits to the same note work correctly
+  - **Fret Position Preferences**:
+    - **Low (0-4)**: Prefer open position and first frets
+    - **Mid (5-8)**: Prefer middle fret positions (default)
+    - **High (9-12)**: Prefer higher fret positions
+    - **Open String Preference**: Strongly prefers open strings when available
+  - **Position Lookahead**: Adjustable lookahead (1-8 notes) for optimal fretboard positioning
   - **Advanced Quantization**:
     - **Legato Quantization**: Automatically detects hammer-ons/pull-offs for smoother playback
     - **Intelligent Bar Quantization**: Ensures notes fit perfectly within measure boundaries
   - **Cost-based Position Optimization**: Minimizes hand movement between positions
-  - **Position Lookahead**: Advanced calculation for optimal fretboard positioning
   - **Seamless Workflow**: Automatically switches to player mode after recording for immediate review
 - **GP5 Export**: Save your recordings as Guitar Pro 5 (.gp5) files with:
   - **Export Panel**: Edit song title, artist, and track names before exporting
