@@ -1,6 +1,6 @@
 # GP5 VST Editor
 
-A VST3 plugin for loading, displaying, and playing Guitar Pro files (.gp3, .gp4, .gp5, .gp, .gpx) directly in your DAW with realistic MIDI output for guitar samplers like HALion.
+A VST3 plugin for loading, displaying, playing, and editing Guitar Pro files (.gp3, .gp4, .gp5, .gp, .gpx) directly in your DAW with realistic MIDI output for guitar samplers. The plugin also offers MIDI to GP5 transcription and Guitar Pro to MIDI conversion features.
 
 ---
 
