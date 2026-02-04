@@ -183,6 +183,8 @@ NewProjectAudioProcessor::NewProjectAudioProcessor()
      : AudioProcessor (BusesProperties()
                      #if ! JucePlugin_IsMidiEffect
                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
+                       // Sidechain Input für Audio-to-MIDI (VST3 Instrument braucht expliziten Sidechain statt Main Input)
+                       .withInput ("Sidechain", juce::AudioChannelSet::stereo(), false)
                      #endif
                        )
 #endif
@@ -291,20 +293,30 @@ bool NewProjectAudioProcessor::isBusesLayoutSupported (const BusesLayout& layout
     juce::ignoreUnused (layouts);
     return true;
   #else
-    // This is the place where you check if the layout is supported.
-    // In this template code we only support mono or stereo.
-    // Some plugin hosts, such as certain GarageBand versions, will only
-    // load plugins that support stereo bus layouts.
+    // Output muss Mono oder Stereo sein
     if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::mono()
      && layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
         return false;
 
-    // Side-chain input: allow mono, stereo, or disabled
-    auto inputSet = layouts.getMainInputChannelSet();
-    if (!inputSet.isDisabled() 
-        && inputSet != juce::AudioChannelSet::mono()
-        && inputSet != juce::AudioChannelSet::stereo())
+    // Main Input: Bei Instrumenten (isSynth=true) ist der Main Input oft disabled.
+    // Wir erlauben disabled, mono oder stereo.
+    auto mainInputSet = layouts.getMainInputChannelSet();
+    if (!mainInputSet.isDisabled() 
+        && mainInputSet != juce::AudioChannelSet::mono()
+        && mainInputSet != juce::AudioChannelSet::stereo())
         return false;
+
+    // Sidechain Input: Prüfe alle Input-Busse (Index > 0 sind Sidechain/Aux)
+    // Der Host kann den Sidechain aktivieren oder deaktivieren
+    for (int i = 0; i < layouts.inputBuses.size(); ++i)
+    {
+        auto busSet = layouts.inputBuses[i];
+        // Erlaube disabled, mono oder stereo für alle Input-Busse
+        if (!busSet.isDisabled() 
+            && busSet != juce::AudioChannelSet::mono()
+            && busSet != juce::AudioChannelSet::stereo())
+            return false;
+    }
 
     return true;
   #endif
@@ -356,12 +368,24 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     }
 
     // =========================================================================
-    // Audio-to-MIDI - Wenn im Audio-Modus, generiere MIDI aus Audio
+    // Audio-to-MIDI - Wenn im Audio-Modus, generiere MIDI aus Sidechain Audio
     // =========================================================================
-    if (inputMode.load() == static_cast<int>(InputMode::Audio) && totalNumInputChannels > 0)
+    if (inputMode.load() == static_cast<int>(InputMode::Audio))
     {
-        // Verwende ersten Audiokanal für Pitch-Detection
-        audioToMidiProcessor.processBlock(buffer, midiMessages);
+        // Sidechain Audio für Pitch-Detection holen
+        // Bei VST3 Instrumenten ist Sidechain der erste (und einzige) Input Bus
+        auto* sidechainBus = getBus(true, 0);  // Input Bus 0 = unser "Sidechain" Bus
+        
+        if (sidechainBus != nullptr && sidechainBus->isEnabled())
+        {
+            auto sidechainBuffer = sidechainBus->getBusBuffer(buffer);
+            
+            if (sidechainBuffer.getNumChannels() > 0 && sidechainBuffer.getNumSamples() > 0)
+            {
+                // Pitch-Detection mit Sidechain Audio
+                audioToMidiProcessor.processBlock(sidechainBuffer, midiMessages);
+            }
+        }
     }
 
     // =========================================================================
