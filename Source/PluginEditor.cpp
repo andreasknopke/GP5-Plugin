@@ -124,6 +124,9 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
             audioProcessor.setFretPosition(NewProjectAudioProcessor::FretPosition::Mid);
         else if (selectedId == 3)
             audioProcessor.setFretPosition(NewProjectAudioProcessor::FretPosition::High);
+        
+        // Recalculate recorded notes with new settings
+        reoptimizeAndRefreshNotes();
     };
     fretPositionSelector.setVisible(false);  // Nur im Editor-Modus sichtbar
     
@@ -149,6 +152,9 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
         else if (selectedId == 4) threshold = 0.5;   // 1/8
         else if (selectedId == 5) threshold = 1.0;   // 1/4
         audioProcessor.setLegatoQuantization(threshold);
+        
+        // Recalculate recorded notes with new settings
+        reoptimizeAndRefreshNotes();
     };
     legatoQuantizeSelector.setVisible(false);  // Nur im Editor-Modus sichtbar
     
@@ -168,8 +174,18 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     posLookaheadSelector.onChange = [this] {
         int selectedId = posLookaheadSelector.getSelectedId();
         audioProcessor.setPositionLookahead(selectedId);
+        
+        // Recalculate recorded notes with new settings
+        reoptimizeAndRefreshNotes();
     };
     posLookaheadSelector.setVisible(false);  // Nur im Editor-Modus sichtbar
+    
+    // All Tracks Checkbox (Editor Mode only)
+    addAndMakeVisible (allTracksCheckbox);
+    allTracksCheckbox.setColour (juce::ToggleButton::textColourId, juce::Colours::lightgrey);
+    allTracksCheckbox.setColour (juce::ToggleButton::tickColourId, juce::Colours::cyan);
+    allTracksCheckbox.setToggleState(true, juce::dontSendNotification);  // Default: apply to all tracks
+    allTracksCheckbox.setVisible(false);  // Nur im Editor-Modus sichtbar
     
     // Note Edit Toggle Button (Player Mode only)
     addAndMakeVisible (noteEditButton);
@@ -276,6 +292,12 @@ void NewProjectAudioProcessorEditor::resized()
         // Position Lookahead Selector
         posLookaheadLabel.setBounds (bottomBar.removeFromLeft(30));
         posLookaheadSelector.setBounds (bottomBar.removeFromLeft(55));
+        bottomBar.removeFromLeft(30); // Spacer
+        
+        // All Tracks Checkbox
+        allTracksCheckbox.setBounds (bottomBar.removeFromLeft(90));
+        // Disable checkbox when recording is active (settings apply to all during recording)
+        allTracksCheckbox.setEnabled(!audioProcessor.isRecording());
     }
     else
     {
@@ -286,6 +308,7 @@ void NewProjectAudioProcessorEditor::resized()
         legatoQuantizeSelector.setBounds (0, 0, 0, 0);
         posLookaheadLabel.setBounds (0, 0, 0, 0);
         posLookaheadSelector.setBounds (0, 0, 0, 0);
+        allTracksCheckbox.setBounds (0, 0, 0, 0);
     }
     
     // Toolbar (45px hoch) - Buttons
@@ -420,6 +443,7 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         legatoQuantizeSelector.setVisible(false);
         posLookaheadLabel.setVisible(false);
         posLookaheadSelector.setVisible(false);
+        allTracksCheckbox.setVisible(false);
     }
     else if (hasRecordings)
     {
@@ -447,6 +471,7 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         legatoQuantizeSelector.setVisible(true);
         posLookaheadLabel.setVisible(true);
         posLookaheadSelector.setVisible(true);
+        allTracksCheckbox.setVisible(true);
         
         // Track-Selector mit aufgezeichneten Tracks aktualisieren
         updateTrackSelectorForRecording();
@@ -476,6 +501,7 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         legatoQuantizeSelector.setVisible(true);
         posLookaheadLabel.setVisible(true);
         posLookaheadSelector.setVisible(true);
+        allTracksCheckbox.setVisible(false);  // Keine Checkbox ohne mehrere Tracks
     }
 }
 
@@ -1242,5 +1268,41 @@ void NewProjectAudioProcessorEditor::noteEditToggled()
         {
             infoLabel.setText("No file loaded - Play MIDI to see notes on tab", juce::dontSendNotification);
         }
+    }
+}
+
+void NewProjectAudioProcessorEditor::reoptimizeAndRefreshNotes()
+{
+    // Only reoptimize if there are recorded notes
+    if (!audioProcessor.hasRecordedNotes())
+        return;
+    
+    // Remember currently selected track
+    int currentTrackId = trackSelector.getSelectedId();
+    int currentTrackIndex = currentTrackId - 1;  // 0-based
+    
+    // Check if "All Tracks" is enabled
+    bool applyToAllTracks = allTracksCheckbox.getToggleState();
+    
+    if (applyToAllTracks)
+    {
+        // Reoptimize all tracks (all MIDI channels)
+        audioProcessor.reoptimizeRecordedNotes(-1);
+    }
+    else
+    {
+        // Reoptimize only the current track (specific MIDI channel)
+        int midiChannel = audioProcessor.getRecordedTrackMidiChannel(currentTrackIndex);
+        if (midiChannel > 0)
+        {
+            audioProcessor.reoptimizeRecordedNotes(midiChannel);
+        }
+    }
+    
+    // Re-trigger track selection to refresh the view with recalculated notes
+    // This preserves the currently selected track
+    if (currentTrackId > 0)
+    {
+        trackSelectionChanged();
     }
 }

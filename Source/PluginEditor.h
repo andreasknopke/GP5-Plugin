@@ -85,7 +85,10 @@ private:
     juce::ComboBox posLookaheadSelector;
     juce::Label posLookaheadLabel;
     
-    // 8f. Note Edit Toggle (Player Mode)
+    // 8f. Apply to All Tracks Checkbox (Editor Mode only)
+    juce::ToggleButton allTracksCheckbox { "All Tracks" };
+    
+    // 8g. Note Edit Toggle (Player Mode)
     juce::ToggleButton noteEditButton { "Edit Notes" };
     
     // 9. Track Settings Panel (popup)
@@ -113,6 +116,7 @@ private:
     void doSaveMidi();
     void doSaveGp5();
     void noteEditToggled();
+    void reoptimizeAndRefreshNotes();  // Recalculate recorded notes after settings change
     
     // 11. State
     int lastDisplayedMeasure = -1;

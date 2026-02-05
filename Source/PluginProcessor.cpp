@@ -2143,20 +2143,46 @@ void NewProjectAudioProcessor::clearRecording()
     DBG("Recording cleared");
 }
 
-void NewProjectAudioProcessor::reoptimizeRecordedNotes()
+void NewProjectAudioProcessor::reoptimizeRecordedNotes(int midiChannelFilter)
 {
     std::lock_guard<std::mutex> lock(recordingMutex);
     
     if (recordedNotes.empty())
         return;
     
-    DBG("Reoptimizing " << recordedNotes.size() << " recorded notes...");
+    // Get current settings
+    int lookahead = positionLookahead.load();
+    FretPosition pos = getFretPosition();
+    int preferredMinFret, preferredMaxFret;
+    switch (pos)
+    {
+        case FretPosition::Mid:
+            preferredMinFret = 5;
+            preferredMaxFret = 8;
+            break;
+        case FretPosition::High:
+            preferredMinFret = 9;
+            preferredMaxFret = 12;
+            break;
+        case FretPosition::Low:
+        default:
+            preferredMinFret = 0;
+            preferredMaxFret = 4;
+            break;
+    }
+    
+    // Collect indices to process (filtered by channel if specified)
+    std::vector<size_t> sortedIndices;
+    for (size_t i = 0; i < recordedNotes.size(); ++i)
+    {
+        if (midiChannelFilter < 0 || recordedNotes[i].midiChannel == midiChannelFilter)
+            sortedIndices.push_back(i);
+    }
+    
+    if (sortedIndices.empty())
+        return;
     
     // Sortiere Noten nach Startzeit für sequentielle Verarbeitung
-    std::vector<size_t> sortedIndices(recordedNotes.size());
-    for (size_t i = 0; i < sortedIndices.size(); ++i)
-        sortedIndices[i] = i;
-    
     std::sort(sortedIndices.begin(), sortedIndices.end(), [this](size_t a, size_t b) {
         return recordedNotes[a].startBeat < recordedNotes[b].startBeat;
     });
@@ -2164,21 +2190,163 @@ void NewProjectAudioProcessor::reoptimizeRecordedNotes()
     // Reset last played position
     lastPlayedString = -1;
     lastPlayedFret = -1;
+    positionLookaheadCounter = 0;  // Reset counter for lookahead
+    
+    // Tracking variables for lookahead - separate from the mutable class members
+    int referenceString = -1;
+    int referenceFret = -1;
+    int noteCounter = 0;
     
     // Gruppiere Noten nach Beat (simultane Noten = Akkord)
     double currentBeat = -1.0;
     std::vector<size_t> currentGroup;
     
-    auto processGroup = [this](std::vector<size_t>& group) {
+    auto processGroup = [this, &referenceString, &referenceFret, &noteCounter, lookahead, preferredMinFret, preferredMaxFret](std::vector<size_t>& group) {
         if (group.empty()) return;
         
         if (group.size() == 1)
         {
-            // Einzelne Note - verwende midiNoteToTab
+            // Einzelne Note - custom lookahead logic
             size_t idx = group[0];
-            LiveMidiNote tabNote = midiNoteToTab(recordedNotes[idx].midiNote, recordedNotes[idx].velocity);
-            recordedNotes[idx].string = tabNote.string;
-            recordedNotes[idx].fret = tabNote.fret;
+            int midiNote = recordedNotes[idx].midiNote;
+            
+            // Find best position based on reference position
+            auto candidates = getPossiblePositions(midiNote);
+            if (candidates.empty())
+            {
+                recordedNotes[idx].string = 0;
+                recordedNotes[idx].fret = juce::jmax(0, midiNote - standardTuning[5]);
+            }
+            else
+            {
+                GuitarPosition bestPos = candidates[0];
+                
+                // Check if fret 0 is available as an option
+                bool hasFret0Option = false;
+                int fret0String = -1;
+                for (const auto& cand : candidates)
+                {
+                    if (cand.fret == 0)
+                    {
+                        hasFret0Option = true;
+                        fret0String = cand.stringIndex;
+                        break;
+                    }
+                }
+                
+                // Store scores for debug output
+                std::vector<std::pair<GuitarPosition, int>> debugScores;
+                
+                if (referenceString < 0 || referenceFret < 0)
+                {
+                    // No reference - use fret position preference
+                    int bestScore = -1000;
+                    for (const auto& cand : candidates)
+                    {
+                        int score = 0;
+                        
+                        // Open string (fret 0) gets a bonus to be preferred
+                        if (cand.fret == 0)
+                        {
+                            score += 115;  // Bonus for open strings
+                        }
+                        else if (cand.fret >= preferredMinFret && cand.fret <= preferredMaxFret)
+                        {
+                            score += 100;
+                        }
+                        else
+                        {
+                            int dist = (cand.fret < preferredMinFret) ? (preferredMinFret - cand.fret) : (cand.fret - preferredMaxFret);
+                            score -= dist * 5;
+                        }
+                        score += cand.stringIndex * 2;  // Slight preference for higher strings
+                        
+                        debugScores.push_back({cand, score});
+                        
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            bestPos = cand;
+                        }
+                    }
+                    
+                    // Debug: Why was fret 0 not chosen?
+                    if (hasFret0Option && bestPos.fret != 0)
+                    {
+                        DBG("=== FRET 0 NOT CHOSEN (no ref) for MIDI " << midiNote << " ===");
+                        DBG("  Chosen: string=" << bestPos.stringIndex << " fret=" << bestPos.fret);
+                        DBG("  preferredMinFret=" << preferredMinFret << " preferredMaxFret=" << preferredMaxFret);
+                        for (const auto& [pos, score] : debugScores)
+                        {
+                            DBG("    Option: string=" << pos.stringIndex << " fret=" << pos.fret << " -> score=" << score);
+                        }
+                    }
+                }
+                else
+                {
+                    // Have reference - use reference position as dynamic center
+                    // The reference position becomes the new "preferred" position
+                    float bestCost = 99999.0f;
+                    std::vector<std::pair<GuitarPosition, float>> debugCosts;
+                    
+                    for (const auto& cand : candidates)
+                    {
+                        float cost = 0.0f;
+                        
+                        // Open string (fret 0) gets a bonus - subtract from cost
+                        if (cand.fret == 0)
+                        {
+                            cost -= 10.0f;  // Bonus for open strings
+                        }
+                        else
+                        {
+                            // Distance from reference position
+                            int fretDiff = std::abs(cand.fret - referenceFret);
+                            cost += fretDiff * 5.0f;  // Strong penalty for moving away from reference
+                        }
+                        
+                        // String jump penalty
+                        int stringDiff = std::abs(cand.stringIndex - referenceString);
+                        cost += stringDiff * 3.0f;
+                        
+                        // Small preference for staying in original fret position range
+                        if (cand.fret > 0 && cand.fret >= preferredMinFret && cand.fret <= preferredMaxFret)
+                            cost -= 2.0f;
+                        
+                        debugCosts.push_back({cand, cost});
+                        
+                        if (cost < bestCost)
+                        {
+                            bestCost = cost;
+                            bestPos = cand;
+                        }
+                    }
+                    
+                    // Debug: Why was fret 0 not chosen?
+                    if (hasFret0Option && bestPos.fret != 0)
+                    {
+                        DBG("=== FRET 0 NOT CHOSEN (with ref) for MIDI " << midiNote << " ===");
+                        DBG("  Chosen: string=" << bestPos.stringIndex << " fret=" << bestPos.fret);
+                        DBG("  refString=" << referenceString << " refFret=" << referenceFret);
+                        for (const auto& [pos, cost] : debugCosts)
+                        {
+                            DBG("    Option: string=" << pos.stringIndex << " fret=" << pos.fret << " -> cost=" << cost);
+                        }
+                    }
+                }
+                
+                recordedNotes[idx].string = bestPos.stringIndex;
+                recordedNotes[idx].fret = bestPos.fret;
+                
+                // Update reference only every N notes (lookahead)
+                noteCounter++;
+                if (noteCounter >= lookahead)
+                {
+                    referenceString = bestPos.stringIndex;
+                    referenceFret = bestPos.fret;
+                    noteCounter = 0;
+                }
+            }
         }
         else
         {
@@ -2191,27 +2359,6 @@ void NewProjectAudioProcessor::reoptimizeRecordedNotes()
                 ln.midiNote = recordedNotes[idx].midiNote;
                 ln.velocity = recordedNotes[idx].velocity;
                 tempLiveMidi[ln.midiNote] = ln;
-            }
-            
-            // Führe die Multi-Noten-Optimierung durch
-            // (Kopiert die Logik aus getLiveMidiNotes)
-            FretPosition pos = getFretPosition();
-            int preferredMinFret, preferredMaxFret;
-            switch (pos)
-            {
-                case FretPosition::Mid:
-                    preferredMinFret = 5;
-                    preferredMaxFret = 8;
-                    break;
-                case FretPosition::High:
-                    preferredMinFret = 9;
-                    preferredMaxFret = 12;
-                    break;
-                case FretPosition::Low:
-                default:
-                    preferredMinFret = 0;
-                    preferredMaxFret = 4;
-                    break;
             }
             
             // Sammle alle Noten und sortiere nach Tonhöhe
@@ -2235,8 +2382,12 @@ void NewProjectAudioProcessor::reoptimizeRecordedNotes()
                     if (fret >= 0 && fret <= 24)
                     {
                         int score = 0;
-                        if (fret >= preferredMinFret && fret <= preferredMaxFret)
+                        
+                        // Open string (fret 0) is neutral - valid in any fret position range
+                        if (fret == 0 || (fret >= preferredMinFret && fret <= preferredMaxFret))
+                        {
                             score += 100;
+                        }
                         else
                         {
                             int dist = (fret < preferredMinFret) ? (preferredMinFret - fret) : (fret - preferredMaxFret);
@@ -2245,13 +2396,14 @@ void NewProjectAudioProcessor::reoptimizeRecordedNotes()
                                 score -= (dist - 3) * (dist - 3) * 5;
                         }
                         
-                        if (lastPlayedFret >= 7)
+                        // Use reference fret for lookahead consistency (only for fretted notes)
+                        if (fret > 0 && referenceFret >= 7)
                         {
-                            int distFromLast = std::abs(fret - lastPlayedFret);
-                            if (distFromLast <= 3)
+                            int distFromRef = std::abs(fret - referenceFret);
+                            if (distFromRef <= 3)
                                 score += 30;
-                            else if (distFromLast > 5)
-                                score -= (distFromLast - 5) * 8;
+                            else if (distFromRef > 5)
+                                score -= (distFromRef - 5) * 8;
                         }
                         
                         score += s * 2;
@@ -2282,6 +2434,8 @@ void NewProjectAudioProcessor::reoptimizeRecordedNotes()
             }
             
             // Weise die Ergebnisse zu
+            int avgFret = 0;
+            int fretCount = 0;
             for (size_t i = 0; i < notesWithIdx.size(); ++i)
             {
                 size_t groupIdx = notesWithIdx[i].second;
@@ -2290,9 +2444,21 @@ void NewProjectAudioProcessor::reoptimizeRecordedNotes()
                 recordedNotes[recIdx].string = bestAssignment[i].string;
                 recordedNotes[recIdx].fret = bestAssignment[i].fret;
                 
-                // Update lastPlayedFret für nächste Gruppe
+                // Track average fret for chord position reference
                 if (bestAssignment[i].fret > 0)
-                    lastPlayedFret = bestAssignment[i].fret;
+                {
+                    avgFret += bestAssignment[i].fret;
+                    fretCount++;
+                }
+            }
+            
+            // Update reference with lookahead for chords
+            noteCounter++;
+            if (noteCounter >= lookahead && fretCount > 0)
+            {
+                referenceFret = avgFret / fretCount;
+                referenceString = 2;  // Middle string as reference for chords
+                noteCounter = 0;
             }
         }
         group.clear();
@@ -2325,8 +2491,6 @@ void NewProjectAudioProcessor::reoptimizeRecordedNotes()
     // Reset für normale Verwendung
     lastPlayedString = -1;
     lastPlayedFret = -1;
-    
-    DBG("Reoptimization complete");
 }
 
 void NewProjectAudioProcessor::updateRecordedNotesFromLive(const std::vector<LiveMidiNote>& liveNotes)
@@ -3597,6 +3761,29 @@ bool NewProjectAudioProcessor::hasRecordedNotes() const
 {
     std::lock_guard<std::mutex> lock(recordingMutex);
     return !recordedNotes.empty();
+}
+
+int NewProjectAudioProcessor::getRecordedTrackMidiChannel(int trackIndex) const
+{
+    std::lock_guard<std::mutex> lock(recordingMutex);
+    
+    if (recordedNotes.empty())
+        return -1;
+    
+    // Find all unique MIDI channels used (sorted)
+    std::set<int> usedChannels;
+    for (const auto& note : recordedNotes)
+    {
+        usedChannels.insert(note.midiChannel);
+    }
+    
+    // Convert set to vector for indexed access
+    std::vector<int> channelList(usedChannels.begin(), usedChannels.end());
+    
+    if (trackIndex < 0 || trackIndex >= (int)channelList.size())
+        return -1;
+    
+    return channelList[trackIndex];
 }
 
 juce::Array<GP5Track> NewProjectAudioProcessor::getDisplayTracks() const

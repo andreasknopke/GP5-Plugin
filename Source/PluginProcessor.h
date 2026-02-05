@@ -341,7 +341,7 @@ public:
     bool isRecordingEnabled() const { return recordingEnabled.load() || hostIsRecording.load(); }
     bool isRecording() const { return (recordingEnabled.load() || hostIsRecording.load()) && hostIsPlaying.load(); }
     void clearRecording();
-    void reoptimizeRecordedNotes();  // Recalculate string/fret assignments for recorded notes
+    void reoptimizeRecordedNotes(int midiChannelFilter = -1);  // Recalculate string/fret assignments for recorded notes (-1 = all channels)
     void updateRecordedNotesFromLive(const std::vector<LiveMidiNote>& liveNotes);  // Update active recorded notes with live display values
     std::vector<RecordedNote> getRecordedNotes() const;
     TabTrack getRecordedTabTrack() const;  // Convert recorded notes to TabTrack for display (all channels merged)
@@ -380,6 +380,9 @@ public:
     
     // Check if there are recorded notes to export
     bool hasRecordedNotes() const;
+    
+    // Get MIDI channel for a recorded track index (returns -1 if index invalid)
+    int getRecordedTrackMidiChannel(int trackIndex) const;
 
 private:
     //==============================================================================
