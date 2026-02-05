@@ -230,6 +230,30 @@ public:
         float yOffset = (availableHeight - trackHeight) / 2.0f;
         yOffset = juce::jmax(0.0f, yOffset);
         
+        // Set hidden notes for ghost preview (hide original notes when showing alternatives)
+        if (ghostPreview.active && ghostPreview.ghostPos.string >= 0)
+        {
+            std::vector<std::tuple<int, int, int>> hidden;
+            hidden.push_back(std::make_tuple(
+                ghostPreview.originalNote.measureIndex,
+                ghostPreview.originalNote.beatIndex,
+                ghostPreview.originalNote.noteIndex));
+            renderer.setHiddenNotes(hidden);
+        }
+        else if (groupGhostPreview.active && !groupGhostPreview.originalNotes.isEmpty())
+        {
+            std::vector<std::tuple<int, int, int>> hidden;
+            for (const auto& note : groupGhostPreview.originalNotes)
+            {
+                hidden.push_back(std::make_tuple(note.measureIndex, note.beatIndex, note.noteIndex));
+            }
+            renderer.setHiddenNotes(hidden);
+        }
+        else
+        {
+            renderer.clearHiddenNotes();
+        }
+        
         // Draw track FIRST
         juce::Rectangle<float> renderBounds(0, yOffset, static_cast<float>(getWidth()), trackHeight);
         renderer.render(g, track, scaledConfig, renderBounds, scrollOffset, highlightedMeasure);
@@ -262,6 +286,103 @@ public:
                 g.fillRoundedRectangle(bounds.expanded(3.0f), 4.0f);
                 g.setColour(juce::Colours::cyan);
                 g.drawRoundedRectangle(bounds.expanded(2.0f), 4.0f, 2.0f);
+            }
+            
+            // Draw ghost preview for hovered alternative position
+            if (ghostPreview.active && ghostPreview.ghostPos.string >= 0)
+            {
+                // Find the X position of the original note (same beat position)
+                float ghostX = ghostPreview.originalNote.noteBounds.getCentreX();
+                
+                // Calculate Y position based on the alternative string
+                float firstStringY = yOffset + scaledConfig.topMargin;
+                float ghostY = firstStringY + ghostPreview.ghostPos.string * scaledConfig.stringSpacing;
+                
+                // Draw ghost note (semi-transparent)
+                juce::String fretText = juce::String(ghostPreview.ghostPos.fret);
+                float noteRadius = scaledConfig.stringSpacing * 0.45f;
+                // Calculate width based on fret number digits
+                float textWidth = scaledConfig.fretFontSize * (ghostPreview.ghostPos.fret >= 10 ? 1.4f : 0.9f) + 4.0f;
+                float bgWidth = juce::jmax(noteRadius * 2.0f, textWidth);
+                float bgHeight = noteRadius * 2.0f;
+                
+                // Ghost background (semi-transparent white)
+                g.setColour(juce::Colours::white.withAlpha(0.7f));
+                g.fillRoundedRectangle(ghostX - bgWidth / 2.0f, ghostY - bgHeight / 2.0f, bgWidth, bgHeight, 3.0f);
+                
+                // Ghost outline (cyan dashed effect)
+                g.setColour(juce::Colours::cyan.withAlpha(0.8f));
+                g.drawRoundedRectangle(ghostX - bgWidth / 2.0f - 1.0f, ghostY - bgHeight / 2.0f - 1.0f, 
+                                       bgWidth + 2.0f, bgHeight + 2.0f, 4.0f, 2.0f);
+                
+                // Ghost fret text
+                g.setColour(juce::Colours::darkgrey.withAlpha(0.9f));
+                g.setFont(juce::Font(juce::FontOptions(scaledConfig.fretFontSize)));
+                g.drawText(fretText, 
+                           juce::Rectangle<float>(ghostX - bgWidth / 2.0f, ghostY - bgHeight / 2.0f, bgWidth, bgHeight),
+                           juce::Justification::centred, false);
+            }
+            
+            // Draw group ghost preview
+            if (groupGhostPreview.active && !groupGhostPreview.originalNotes.isEmpty())
+            {
+                float firstStringY = yOffset + scaledConfig.topMargin;
+                float noteRadius = scaledConfig.stringSpacing * 0.45f;
+                
+                for (int i = 0; i < groupGhostPreview.originalNotes.size() && 
+                     i < groupGhostPreview.ghostPositions.positions.size(); ++i)
+                {
+                    const auto& origNote = groupGhostPreview.originalNotes[i];
+                    const auto& ghostPos = groupGhostPreview.ghostPositions.positions[i];
+                    
+                    float ghostX = origNote.noteBounds.getCentreX();
+                    float ghostY = firstStringY + ghostPos.string * scaledConfig.stringSpacing;
+                    
+                    juce::String fretText = juce::String(ghostPos.fret);
+                    // Calculate width based on fret number digits
+                    float textWidth = scaledConfig.fretFontSize * (ghostPos.fret >= 10 ? 1.4f : 0.9f) + 4.0f;
+                    float bgWidth = juce::jmax(noteRadius * 2.0f, textWidth);
+                    float bgHeight = noteRadius * 2.0f;
+                    
+                    // Ghost background
+                    g.setColour(juce::Colours::white.withAlpha(0.7f));
+                    g.fillRoundedRectangle(ghostX - bgWidth / 2.0f, ghostY - bgHeight / 2.0f, bgWidth, bgHeight, 3.0f);
+                    
+                    // Ghost outline (orange for group)
+                    g.setColour(juce::Colours::orange.withAlpha(0.8f));
+                    g.drawRoundedRectangle(ghostX - bgWidth / 2.0f - 1.0f, ghostY - bgHeight / 2.0f - 1.0f, 
+                                           bgWidth + 2.0f, bgHeight + 2.0f, 4.0f, 2.0f);
+                    
+                    // Ghost fret text
+                    g.setColour(juce::Colours::darkgrey.withAlpha(0.9f));
+                    g.setFont(juce::Font(juce::FontOptions(scaledConfig.fretFontSize)));
+                    g.drawText(fretText, 
+                               juce::Rectangle<float>(ghostX - bgWidth / 2.0f, ghostY - bgHeight / 2.0f, bgWidth, bgHeight),
+                               juce::Justification::centred, false);
+                }
+            }
+            
+            // Draw selected notes highlight (yellow/orange)
+            for (const auto& note : selectedNotes)
+            {
+                auto bounds = note.noteBounds;
+                g.setColour(juce::Colours::yellow.withAlpha(0.4f));
+                g.fillRoundedRectangle(bounds.expanded(4.0f), 5.0f);
+                g.setColour(juce::Colours::orange);
+                g.drawRoundedRectangle(bounds.expanded(3.0f), 5.0f, 2.0f);
+            }
+            
+            // Draw selection rectangle while dragging
+            if (isDragSelecting && selectionRect.getWidth() > 2 && selectionRect.getHeight() > 2)
+            {
+                g.setColour(juce::Colours::cyan.withAlpha(0.15f));
+                g.fillRect(selectionRect);
+                g.setColour(juce::Colours::cyan.withAlpha(0.8f));
+                float dashLengths[] = { 4.0f, 4.0f };
+                g.drawDashedLine(juce::Line<float>(selectionRect.getTopLeft(), selectionRect.getTopRight()), dashLengths, 2);
+                g.drawDashedLine(juce::Line<float>(selectionRect.getTopRight(), selectionRect.getBottomRight()), dashLengths, 2);
+                g.drawDashedLine(juce::Line<float>(selectionRect.getBottomRight(), selectionRect.getBottomLeft()), dashLengths, 2);
+                g.drawDashedLine(juce::Line<float>(selectionRect.getBottomLeft(), selectionRect.getTopLeft()), dashLengths, 2);
             }
         }
         
@@ -377,20 +498,34 @@ public:
     
     void mouseDown(const juce::MouseEvent& event) override
     {
-        // Prüfe zuerst ob Note-Editing aktiviert ist und eine Note angeklickt wurde
+        // Schließe Popups falls offen
+        if (noteEditPopup.isShowing())
+            noteEditPopup.hide();
+        if (groupEditPopup.isShowing())
+            groupEditPopup.hide();
+        
+        // Prüfe zuerst ob Note-Editing aktiviert ist
         if (noteEditingEnabled)
         {
             auto hitInfo = findNoteAtPosition(event.position);
             if (hitInfo.valid)
             {
+                // Single note clicked - show single note popup
+                selectedNotes.clear();
                 showNoteEditPopup(hitInfo);
                 return;
             }
+            else
+            {
+                // Start rectangle selection
+                isDragSelecting = true;
+                dragStartPoint = event.position;
+                selectionRect = juce::Rectangle<float>(event.position, event.position);
+                selectedNotes.clear();
+                repaint();
+                return;
+            }
         }
-        
-        // Schließe Popup falls offen
-        if (noteEditPopup.isShowing())
-            noteEditPopup.hide();
         
         // Find clicked measure and position within it
         float clickX = event.position.x + scrollOffset - 25.0f;  // Account for clef offset
@@ -425,6 +560,68 @@ public:
         }
     }
     
+    void mouseDrag(const juce::MouseEvent& event) override
+    {
+        if (noteEditingEnabled && isDragSelecting)
+        {
+            // Update selection rectangle
+            float x1 = juce::jmin(dragStartPoint.x, event.position.x);
+            float y1 = juce::jmin(dragStartPoint.y, event.position.y);
+            float x2 = juce::jmax(dragStartPoint.x, event.position.x);
+            float y2 = juce::jmax(dragStartPoint.y, event.position.y);
+            selectionRect = juce::Rectangle<float>(x1, y1, x2 - x1, y2 - y1);
+            
+            // Find notes within selection rectangle
+            selectedNotes.clear();
+            for (const auto& noteInfo : renderer.getRenderedNotes())
+            {
+                if (selectionRect.intersects(noteInfo.bounds))
+                {
+                    NoteHitInfo hitInfo;
+                    hitInfo.valid = true;
+                    hitInfo.measureIndex = noteInfo.measureIndex;
+                    hitInfo.beatIndex = noteInfo.beatIndex;
+                    hitInfo.noteIndex = noteInfo.noteIndex;
+                    hitInfo.stringIndex = noteInfo.stringIndex;
+                    hitInfo.fret = noteInfo.fret;
+                    hitInfo.midiNote = noteInfo.midiNote;
+                    hitInfo.noteBounds = noteInfo.bounds;
+                    selectedNotes.add(hitInfo);
+                }
+            }
+            
+            repaint();
+        }
+    }
+    
+    void mouseUp(const juce::MouseEvent& event) override
+    {
+        if (noteEditingEnabled && isDragSelecting)
+        {
+            isDragSelecting = false;
+            
+            // If we have multiple selected notes, show group edit popup
+            if (selectedNotes.size() > 1)
+            {
+                showGroupEditPopup();
+            }
+            else if (selectedNotes.size() == 1)
+            {
+                // Single note selected via drag - show single note popup
+                showNoteEditPopup(selectedNotes[0]);
+                selectedNotes.clear();
+            }
+            else
+            {
+                // No notes selected - clear selection
+                selectedNotes.clear();
+            }
+            
+            selectionRect = juce::Rectangle<float>();
+            repaint();
+        }
+    }
+    
     void scrollBarMoved(juce::ScrollBar* scrollBarThatHasMoved, double newRangeStart) override
     {
         if (scrollBarThatHasMoved == &horizontalScrollbar)
@@ -445,7 +642,14 @@ public:
         {
             if (noteEditPopup.isShowing())
                 noteEditPopup.hide();
+            if (groupEditPopup.isShowing())
+                groupEditPopup.hide();
             hoveredNoteInfo = NoteHitInfo();
+            ghostPreview.active = false;
+            groupGhostPreview.active = false;
+            selectedNotes.clear();
+            isDragSelecting = false;
+            selectionRect = juce::Rectangle<float>();
         }
         repaint();
     }
@@ -480,7 +684,32 @@ private:
     // Note editing
     bool noteEditingEnabled = false;
     NoteEditPopup noteEditPopup;
+    GroupNoteEditPopup groupEditPopup;
     NoteHitInfo hoveredNoteInfo;   // Note unter dem Mauszeiger
+    
+    // Rectangle selection for group editing
+    bool isDragSelecting = false;
+    juce::Point<float> dragStartPoint;
+    juce::Rectangle<float> selectionRect;
+    juce::Array<NoteHitInfo> selectedNotes;
+    
+    // Ghost preview for alternative note positions
+    struct GhostNotePreview
+    {
+        bool active = false;
+        NoteHitInfo originalNote;   // The note being edited
+        AlternatePosition ghostPos; // The hovered alternative position
+    };
+    GhostNotePreview ghostPreview;
+    
+    // Ghost preview for group alternatives
+    struct GroupGhostPreview
+    {
+        bool active = false;
+        juce::Array<NoteHitInfo> originalNotes;
+        FretPositionCalculator::GroupAlternative ghostPositions;
+    };
+    GroupGhostPreview groupGhostPreview;
     
     juce::ScrollBar horizontalScrollbar { false };
     const int scrollbarHeight = 14;
@@ -533,6 +762,24 @@ private:
         noteEditPopup.onPositionSelected = [this](const NoteHitInfo& info, const AlternatePosition& newPos) {
             applyNotePositionChange(info, newPos);
         };
+        
+        // Callback for ghost preview when hovering over alternative positions
+        noteEditPopup.onHoverPositionChanged = [this](const NoteHitInfo& info, const AlternatePosition& hoverPos) {
+            if (hoverPos.string >= 0)
+            {
+                // Show ghost preview at the hovered position
+                ghostPreview.active = true;
+                ghostPreview.originalNote = info;
+                ghostPreview.ghostPos = hoverPos;
+            }
+            else
+            {
+                // Hide ghost preview
+                ghostPreview.active = false;
+            }
+            repaint();
+        };
+        
         noteEditPopup.showForNote(hitInfo, track.tuning, this);
     }
     
@@ -555,6 +802,99 @@ private:
         if (onNotePositionChanged)
             onNotePositionChanged(info.measureIndex, info.beatIndex, oldString, newPos.string, newPos.fret);
         
+        repaint();
+    }
+    
+    void showGroupEditPopup()
+    {
+        if (selectedNotes.isEmpty()) return;
+        
+        // Calculate group bounds for positioning
+        juce::Rectangle<float> groupBounds;
+        for (const auto& note : selectedNotes)
+        {
+            if (groupBounds.isEmpty())
+                groupBounds = note.noteBounds;
+            else
+                groupBounds = groupBounds.getUnion(note.noteBounds);
+        }
+        
+        // Build GroupNoteInfo array for the calculator
+        juce::Array<FretPositionCalculator::GroupNoteInfo> groupNotes;
+        for (const auto& note : selectedNotes)
+        {
+            FretPositionCalculator::GroupNoteInfo gni;
+            gni.midiNote = note.midiNote;
+            gni.currentString = note.stringIndex;
+            gni.currentFret = note.fret;
+            gni.measureIndex = note.measureIndex;
+            gni.beatIndex = note.beatIndex;
+            gni.noteIndex = note.noteIndex;
+            groupNotes.add(gni);
+        }
+        
+        // Calculate group alternatives
+        fretCalculator.setTuning(track.tuning);
+        auto alternatives = fretCalculator.calculateGroupAlternatives(groupNotes, 5);
+        
+        if (alternatives.isEmpty())
+        {
+            // No alternatives found - clear selection
+            selectedNotes.clear();
+            repaint();
+            return;
+        }
+        
+        // Setup callbacks
+        groupEditPopup.onGroupSelected = [this](const juce::Array<NoteHitInfo>& notes, 
+                                                 const FretPositionCalculator::GroupAlternative& alt) {
+            applyGroupPositionChange(notes, alt);
+        };
+        
+        groupEditPopup.onGroupHoverChanged = [this](const juce::Array<NoteHitInfo>& notes,
+                                                     const FretPositionCalculator::GroupAlternative& alt,
+                                                     bool active) {
+            groupGhostPreview.active = active;
+            if (active)
+            {
+                groupGhostPreview.originalNotes = notes;
+                groupGhostPreview.ghostPositions = alt;
+            }
+            repaint();
+        };
+        
+        groupEditPopup.showForGroup(selectedNotes, alternatives, track.tuning, this, groupBounds);
+    }
+    
+    void applyGroupPositionChange(const juce::Array<NoteHitInfo>& notes, 
+                                   const FretPositionCalculator::GroupAlternative& alt)
+    {
+        if (notes.size() != alt.positions.size()) return;
+        
+        for (int i = 0; i < notes.size(); ++i)
+        {
+            const auto& info = notes[i];
+            const auto& newPos = alt.positions[i];
+            
+            if (info.measureIndex < 0 || info.measureIndex >= track.measures.size()) continue;
+            auto& measure = track.measures.getReference(info.measureIndex);
+            if (info.beatIndex < 0 || info.beatIndex >= measure.beats.size()) continue;
+            auto& beat = measure.beats.getReference(info.beatIndex);
+            if (info.noteIndex < 0 || info.noteIndex >= beat.notes.size()) continue;
+            
+            auto& note = beat.notes.getReference(info.noteIndex);
+            int oldString = note.string;
+            note.string = newPos.string;
+            note.fret = newPos.fret;
+            note.isManuallyEdited = true;
+            if (note.midiNote < 0) note.midiNote = info.midiNote;
+            
+            if (onNotePositionChanged)
+                onNotePositionChanged(info.measureIndex, info.beatIndex, oldString, newPos.string, newPos.fret);
+        }
+        
+        selectedNotes.clear();
+        groupGhostPreview.active = false;
         repaint();
     }
     

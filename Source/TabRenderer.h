@@ -44,6 +44,14 @@ public:
     const juce::Array<RenderedNoteInfo>& getRenderedNotes() const { return renderedNotes; }
     void clearRenderedNotes() { renderedNotes.clear(); }
     
+    /** Set notes to hide (for ghost preview - hide original notes when showing alternatives) */
+    void setHiddenNotes(const std::vector<std::tuple<int, int, int>>& notes)
+    {
+        hiddenNotes = notes;  // Each tuple: measureIndex, beatIndex, noteIndex
+    }
+    
+    void clearHiddenNotes() { hiddenNotes.clear(); }
+    
     /**
      * Zeichnet einen Track in den angegebenen Bereich.
      */
@@ -189,6 +197,13 @@ public:
                             continue;
                         }
                         
+                        // Skip hidden notes (for ghost preview)
+                        if (isNoteHidden(m, b, noteIdx))
+                        {
+                            noteIdx++;
+                            continue;
+                        }
+                        
                         currentNoteIndex = noteIdx;
                         float noteY = firstStringY + note.string * config.stringSpacing;
                         drawNote(g, note, beatX, noteY, nextBeatX, firstStringY);
@@ -327,6 +342,19 @@ private:
     int currentMeasureIndex = 0;
     int currentBeatIndex = 0;
     int currentNoteIndex = 0;
+    std::vector<std::tuple<int, int, int>> hiddenNotes;  // Notes to hide for ghost preview
+    
+    bool isNoteHidden(int measureIdx, int beatIdx, int noteIdx) const
+    {
+        for (const auto& hidden : hiddenNotes)
+        {
+            if (std::get<0>(hidden) == measureIdx && 
+                std::get<1>(hidden) == beatIdx && 
+                std::get<2>(hidden) == noteIdx)
+                return true;
+        }
+        return false;
+    }
     
     void drawNote(juce::Graphics& g, const TabNote& note, float x, float y, float nextBeatX, float firstStringY)
     {

@@ -157,5 +157,180 @@ private:
         
         return cost;
     }
+    
+public:
+    //==========================================================================
+    // Gruppen-Alternativen-Berechnung
+    //==========================================================================
+    
+    /**
+     * Informationen über eine Note in einer Gruppe.
+     */
+    struct GroupNoteInfo
+    {
+        int midiNote = -1;
+        int currentString = 0;
+        int currentFret = 0;
+        int measureIndex = -1;
+        int beatIndex = -1;
+        int noteIndex = -1;
+    };
+    
+    /**
+     * Eine alternative Position für eine Gruppe von Noten.
+     * Enthält für jede Note der Gruppe die neue Position.
+     */
+    struct GroupAlternative
+    {
+        struct NotePosition
+        {
+            int string = 0;
+            int fret = 0;
+        };
+        juce::Array<NotePosition> positions;  // Eine Position pro Note in der Gruppe
+        float totalCost = 0.0f;               // Gesamtkosten dieser Alternative
+        int fretSpan = 0;                     // Maximaler Bund-Abstand in der Gruppe
+        int averageFret = 0;                  // Durchschnittlicher Bund (für Anzeige)
+        
+        bool operator<(const GroupAlternative& other) const { return totalCost < other.totalCost; }
+    };
+    
+    /**
+     * Berechnet alternative Positionierungen für eine Gruppe von Noten.
+     * Findet bis zu maxAlternatives sinnvolle Alternativen, die alle Noten
+     * in einer spielbaren Griffposition halten.
+     * 
+     * @param notes Die Noten der Gruppe mit ihren aktuellen Positionen
+     * @param maxAlternatives Maximale Anzahl der Alternativen (default: 5)
+     * @return Sortierte Liste von Gruppen-Alternativen (niedrigste Kosten zuerst)
+     */
+    juce::Array<GroupAlternative> calculateGroupAlternatives(
+        const juce::Array<GroupNoteInfo>& notes,
+        int maxAlternatives = 5) const
+    {
+        juce::Array<GroupAlternative> alternatives;
+        
+        if (notes.isEmpty() || tuning.isEmpty())
+            return alternatives;
+        
+        // Schritt 1: Berechne für jede Note alle möglichen Positionen
+        std::vector<juce::Array<AlternatePosition>> allPositions;
+        for (const auto& note : notes)
+        {
+            auto positions = calculatePositions(note.midiNote);
+            if (positions.isEmpty())
+                return alternatives;  // Eine Note kann nicht gespielt werden
+            allPositions.push_back(positions);
+        }
+        
+        // Schritt 2: Finde verschiedene Fret-Regionen
+        // Sammle alle möglichen Fret-Positionen
+        std::set<int> allFrets;
+        for (const auto& positions : allPositions)
+        {
+            for (const auto& pos : positions)
+            {
+                allFrets.insert(pos.fret);
+            }
+        }
+        
+        // Schritt 3: Für jede "Anker-Fret-Region" berechne die beste Gruppenposition
+        std::vector<GroupAlternative> candidateAlternatives;
+        
+        for (int anchorFret : allFrets)
+        {
+            // Versuche die Gruppe um diese Fret-Region zu positionieren
+            GroupAlternative alt;
+            alt.totalCost = 0.0f;
+            bool validAlternative = true;
+            int minFret = 999, maxFret = 0, fretSum = 0;
+            
+            for (size_t i = 0; i < notes.size(); ++i)
+            {
+                // Finde die beste Position für diese Note nahe dem Anker-Fret
+                const auto& positions = allPositions[i];
+                AlternatePosition bestPos;
+                float bestScore = 999999.0f;
+                
+                for (const auto& pos : positions)
+                {
+                    // Berechne Score basierend auf Distanz zum Anker und Positionskosten
+                    float distanceCost = std::abs(pos.fret - anchorFret) * 2.0f;
+                    float score = pos.cost + distanceCost;
+                    
+                    if (score < bestScore)
+                    {
+                        bestScore = score;
+                        bestPos = pos;
+                    }
+                }
+                
+                GroupAlternative::NotePosition notePos;
+                notePos.string = bestPos.string;
+                notePos.fret = bestPos.fret;
+                alt.positions.add(notePos);
+                alt.totalCost += bestScore;
+                
+                minFret = juce::jmin(minFret, bestPos.fret);
+                maxFret = juce::jmax(maxFret, bestPos.fret);
+                fretSum += bestPos.fret;
+            }
+            
+            alt.fretSpan = maxFret - minFret;
+            alt.averageFret = fretSum / static_cast<int>(notes.size());
+            
+            // Bevorzuge kleine Fret-Spans (leichter zu greifen)
+            alt.totalCost += alt.fretSpan * 1.5f;
+            
+            // Prüfe ob diese Alternative sich von der aktuellen Position unterscheidet
+            bool isDifferent = false;
+            for (int i = 0; i < notes.size(); ++i)
+            {
+                if (alt.positions[i].string != notes[i].currentString ||
+                    alt.positions[i].fret != notes[i].currentFret)
+                {
+                    isDifferent = true;
+                    break;
+                }
+            }
+            
+            if (isDifferent && validAlternative)
+            {
+                candidateAlternatives.push_back(alt);
+            }
+        }
+        
+        // Schritt 4: Sortiere und entferne Duplikate
+        std::sort(candidateAlternatives.begin(), candidateAlternatives.end());
+        
+        // Entferne identische Alternativen
+        for (size_t i = 0; i < candidateAlternatives.size(); ++i)
+        {
+            bool isDuplicate = false;
+            for (int j = 0; j < alternatives.size(); ++j)
+            {
+                bool same = true;
+                for (int k = 0; k < notes.size(); ++k)
+                {
+                    if (candidateAlternatives[i].positions[k].string != alternatives[j].positions[k].string ||
+                        candidateAlternatives[i].positions[k].fret != alternatives[j].positions[k].fret)
+                    {
+                        same = false;
+                        break;
+                    }
+                }
+                if (same) { isDuplicate = true; break; }
+            }
+            
+            if (!isDuplicate)
+            {
+                alternatives.add(candidateAlternatives[i]);
+                if (alternatives.size() >= maxAlternatives)
+                    break;
+            }
+        }
+        
+        return alternatives;
+    }
 };
 
