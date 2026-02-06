@@ -278,6 +278,19 @@ public:
         // Draw note hover highlight when note editing is enabled
         if (noteEditingEnabled)
         {
+            // Draw hovered chord name highlight (orange glow + underline)
+            if (hoveredChordInfo.measureIndex >= 0)
+            {
+                auto bounds = hoveredChordInfo.bounds;
+                g.setColour(juce::Colours::orange.withAlpha(0.2f));
+                g.fillRoundedRectangle(bounds.expanded(3.0f, 2.0f), 4.0f);
+                g.setColour(juce::Colours::orange.withAlpha(0.8f));
+                g.drawRoundedRectangle(bounds.expanded(2.0f, 1.0f), 4.0f, 1.5f);
+                // Underline
+                g.drawLine(bounds.getX(), bounds.getBottom() + 1.0f, 
+                           bounds.getRight(), bounds.getBottom() + 1.0f, 1.5f);
+            }
+            
             // Draw hovered note highlight (cyan glow)
             if (hoveredNoteInfo.valid)
             {
@@ -476,6 +489,23 @@ public:
     {
         if (noteEditingEnabled)
         {
+            // Prüfe zuerst ob ein Akkordname gehovert wird
+            auto chordHover = findChordAtPosition(event.position);
+            if (chordHover.measureIndex >= 0)
+            {
+                hoveredChordInfo = chordHover;
+                hoveredNoteInfo = NoteHitInfo();  // Reset note hover
+                setMouseCursor(juce::MouseCursor::PointingHandCursor);
+                repaint();
+                return;
+            }
+            else if (hoveredChordInfo.measureIndex >= 0)
+            {
+                hoveredChordInfo = RenderedChordInfo();
+                setMouseCursor(juce::MouseCursor::NormalCursor);
+                repaint();
+            }
+            
             auto newHovered = findNoteAtPosition(event.position);
             if (newHovered.measureIndex != hoveredNoteInfo.measureIndex ||
                 newHovered.beatIndex != hoveredNoteInfo.beatIndex ||
@@ -489,9 +519,11 @@ public:
     
     void mouseExit(const juce::MouseEvent&) override
     {
-        if (hoveredNoteInfo.valid)
+        if (hoveredNoteInfo.valid || hoveredChordInfo.measureIndex >= 0)
         {
             hoveredNoteInfo = NoteHitInfo();
+            hoveredChordInfo = RenderedChordInfo();
+            setMouseCursor(juce::MouseCursor::NormalCursor);
             repaint();
         }
     }
@@ -507,6 +539,16 @@ public:
         // Prüfe zuerst ob Note-Editing aktiviert ist
         if (noteEditingEnabled)
         {
+            // Check if a chord name was clicked first
+            auto chordHit = findChordAtPosition(event.position);
+            if (chordHit.measureIndex >= 0)
+            {
+                // Chord name clicked - collect all notes in chord span and show voicing alternatives
+                selectedNotes.clear();
+                showChordVoicingPopup(chordHit);
+                return;
+            }
+            
             auto hitInfo = findNoteAtPosition(event.position);
             if (hitInfo.valid)
             {
@@ -645,11 +687,13 @@ public:
             if (groupEditPopup.isShowing())
                 groupEditPopup.hide();
             hoveredNoteInfo = NoteHitInfo();
+            hoveredChordInfo = RenderedChordInfo();
             ghostPreview.active = false;
             groupGhostPreview.active = false;
             selectedNotes.clear();
             isDragSelecting = false;
             selectionRect = juce::Rectangle<float>();
+            setMouseCursor(juce::MouseCursor::NormalCursor);
         }
         repaint();
     }
@@ -686,6 +730,7 @@ private:
     NoteEditPopup noteEditPopup;
     GroupNoteEditPopup groupEditPopup;
     NoteHitInfo hoveredNoteInfo;   // Note unter dem Mauszeiger
+    RenderedChordInfo hoveredChordInfo;  // Akkordname unter dem Mauszeiger
     
     // Rectangle selection for group editing
     bool isDragSelecting = false;
@@ -896,6 +941,147 @@ private:
         selectedNotes.clear();
         groupGhostPreview.active = false;
         repaint();
+    }
+    
+    //==========================================================================
+    // Chord Voicing Feature
+    //==========================================================================
+    
+    /** Findet einen Akkordnamen an der Mausposition */
+    RenderedChordInfo findChordAtPosition(juce::Point<float> pos)
+    {
+        for (const auto& chordInfo : renderer.getRenderedChords())
+        {
+            if (chordInfo.bounds.contains(pos))
+                return chordInfo;
+        }
+        return RenderedChordInfo();
+    }
+    
+    /** Sammelt alle Noten vom Akkord-Beat bis zum nächsten Akkord (oder Taktende).
+     *  Gibt NoteHitInfo-Array zurück für das Group-Edit-System.
+     */
+    juce::Array<NoteHitInfo> collectChordSpanNotes(const RenderedChordInfo& chordInfo)
+    {
+        juce::Array<NoteHitInfo> notes;
+        
+        if (chordInfo.measureIndex < 0 || chordInfo.measureIndex >= track.measures.size())
+            return notes;
+        
+        const auto& measure = track.measures[chordInfo.measureIndex];
+        
+        // Sammle Noten ab dem Akkord-Beat bis zum nächsten Akkord (oder Taktende)
+        for (int b = chordInfo.beatIndex; b < measure.beats.size(); ++b)
+        {
+            // Stoppe beim nächsten Akkord (aber nicht beim Start-Akkord selbst)
+            if (b > chordInfo.beatIndex && measure.beats[b].chordName.isNotEmpty())
+                break;
+            
+            const auto& beat = measure.beats[b];
+            if (beat.isRest) continue;
+            
+            for (int n = 0; n < beat.notes.size(); ++n)
+            {
+                const auto& note = beat.notes[n];
+                if (note.fret < 0) continue;  // Leere Slots überspringen
+                
+                NoteHitInfo hitInfo;
+                hitInfo.valid = true;
+                hitInfo.measureIndex = chordInfo.measureIndex;
+                hitInfo.beatIndex = b;
+                hitInfo.noteIndex = n;
+                hitInfo.stringIndex = note.string;
+                hitInfo.fret = note.fret;
+                hitInfo.midiNote = note.midiNote;
+                
+                // Finde die gerenderten Bounds für diese Note
+                for (const auto& rendered : renderer.getRenderedNotes())
+                {
+                    if (rendered.measureIndex == chordInfo.measureIndex &&
+                        rendered.beatIndex == b &&
+                        rendered.noteIndex == n)
+                    {
+                        hitInfo.noteBounds = rendered.bounds;
+                        break;
+                    }
+                }
+                
+                // MIDI-Note berechnen falls nicht gesetzt
+                if (hitInfo.midiNote < 0 && note.string < track.tuning.size())
+                {
+                    hitInfo.midiNote = track.tuning[note.string] + note.fret;
+                }
+                
+                notes.add(hitInfo);
+            }
+        }
+        
+        return notes;
+    }
+    
+    /** Zeigt das Voicing-Popup für einen angeklickten Akkord */
+    void showChordVoicingPopup(const RenderedChordInfo& chordInfo)
+    {
+        // Sammle alle Noten im Akkord-Span
+        auto chordNotes = collectChordSpanNotes(chordInfo);
+        
+        if (chordNotes.isEmpty())
+            return;
+        
+        // Setze selectedNotes für die visuelle Markierung
+        selectedNotes = chordNotes;
+        
+        // Berechne Gruppen-Alternativen
+        juce::Array<FretPositionCalculator::GroupNoteInfo> groupNotes;
+        for (const auto& note : chordNotes)
+        {
+            FretPositionCalculator::GroupNoteInfo gni;
+            gni.midiNote = note.midiNote;
+            gni.currentString = note.stringIndex;
+            gni.currentFret = note.fret;
+            gni.measureIndex = note.measureIndex;
+            gni.beatIndex = note.beatIndex;
+            gni.noteIndex = note.noteIndex;
+            groupNotes.add(gni);
+        }
+        
+        fretCalculator.setTuning(track.tuning);
+        auto alternatives = fretCalculator.calculateGroupAlternatives(groupNotes, 8);
+        
+        if (alternatives.isEmpty())
+        {
+            selectedNotes.clear();
+            repaint();
+            return;
+        }
+        
+        // Berechne Bounds für Popup-Positionierung (Bereich um den Akkordnamen)
+        juce::Rectangle<float> groupBounds = chordInfo.bounds;
+        for (const auto& note : chordNotes)
+        {
+            if (!note.noteBounds.isEmpty())
+                groupBounds = groupBounds.getUnion(note.noteBounds);
+        }
+        
+        // Setup Callbacks (wiederverwendet das Group-Edit-System)
+        groupEditPopup.onGroupSelected = [this](const juce::Array<NoteHitInfo>& notes, 
+                                                 const FretPositionCalculator::GroupAlternative& alt) {
+            applyGroupPositionChange(notes, alt);
+        };
+        
+        groupEditPopup.onGroupHoverChanged = [this](const juce::Array<NoteHitInfo>& notes,
+                                                     const FretPositionCalculator::GroupAlternative& alt,
+                                                     bool active) {
+            groupGhostPreview.active = active;
+            if (active)
+            {
+                groupGhostPreview.originalNotes = notes;
+                groupGhostPreview.ghostPositions = alt;
+            }
+            repaint();
+        };
+        
+        groupEditPopup.showForGroup(selectedNotes, alternatives, track.tuning, this, groupBounds);
     }
     
     void recalculateLayout()

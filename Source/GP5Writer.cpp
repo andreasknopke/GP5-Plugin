@@ -10,6 +10,7 @@
 */
 
 #include "GP5Writer.h"
+#include <map>
 
 //==============================================================================
 // PyGuitarPro-compatible GP5 constants
@@ -956,19 +957,28 @@ void GP5Writer::writeBeat(const TabBeat& beat, int stringCount)
     
     juce::uint8 flags = 0;
     
-    // Count notes
+    // Build string bitmap using note.string (not array index!)
+    // GP5: bit 6 = string 0 (highest), bit 5 = string 1, ..., bit 0 = string 6
     int noteCount = 0;
     juce::uint8 stringBits = 0;
     
-    for (int s = 0; s < stringCount && s < (int)beat.notes.size(); ++s)
+    // Map: string index -> note (for writing in correct order)
+    // After chord voicing changes, notes[i].string may differ from i
+    std::map<int, const TabNote*> stringToNote;
+    
+    for (const auto& note : beat.notes)
     {
-        const auto& note = beat.notes[s];
-        if (note.fret >= 0)
+        if (note.fret >= 0 && note.string >= 0 && note.string < stringCount)
         {
-            noteCount++;
-            // String bits: bit 6 = string 1, bit 5 = string 2, etc.
-            stringBits |= (1 << (6 - s));
+            // If multiple notes claim the same string, the last one wins
+            stringToNote[note.string] = &note;
         }
+    }
+    
+    for (const auto& [stringIdx, notePtr] : stringToNote)
+    {
+        noteCount++;
+        stringBits |= (1 << (6 - stringIdx));
     }
     
     if (noteCount == 0)
@@ -1018,13 +1028,10 @@ void GP5Writer::writeBeat(const TabBeat& beat, int stringCount)
     // So we must always write it
     writeByte(stringBits);
     
-    // Write notes (if any)
-    for (int s = 0; s < stringCount && s < (int)beat.notes.size(); ++s)
+    // Write notes in string order (0 to 6, matching bitmap bit order)
+    for (const auto& [stringIdx, notePtr] : stringToNote)
     {
-        if (beat.notes[s].fret >= 0)
-        {
-            writeNote(beat.notes[s]);
-        }
+        writeNote(*notePtr);
     }
     
     // GP5: flags2 (short)

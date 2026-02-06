@@ -30,6 +30,17 @@ struct RenderedNoteInfo
     int midiNote = -1;
 };
 
+/**
+ * RenderedChordInfo - Speichert Position eines gerenderten Akkordnamens für Hit-Testing.
+ */
+struct RenderedChordInfo
+{
+    juce::Rectangle<float> bounds;   // Klickbarer Bereich des Akkordnamens
+    juce::String chordName;          // Akkordname (z.B. "Am7")
+    int measureIndex = -1;           // Takt-Index
+    int beatIndex = -1;              // Beat-Index wo der Akkord steht
+};
+
 //==============================================================================
 /**
  * TabRenderer
@@ -42,7 +53,8 @@ public:
     TabRenderer() = default;
     
     const juce::Array<RenderedNoteInfo>& getRenderedNotes() const { return renderedNotes; }
-    void clearRenderedNotes() { renderedNotes.clear(); }
+    const juce::Array<RenderedChordInfo>& getRenderedChords() const { return renderedChords; }
+    void clearRenderedNotes() { renderedNotes.clear(); renderedChords.clear(); }
     
     /** Set notes to hide (for ghost preview - hide original notes when showing alternatives) */
     void setHiddenNotes(const std::vector<std::tuple<int, int, int>>& notes)
@@ -69,6 +81,7 @@ public:
         this->bounds = bounds;
         this->currentTrackTuning = track.tuning;
         renderedNotes.clear();
+        renderedChords.clear();
         
         const int stringCount = track.stringCount;
         const float firstStringY = bounds.getY() + config.topMargin;  // Verwende Config-Margin
@@ -164,8 +177,7 @@ public:
                 // Draw chord name above the beat (e.g., "Am7", "C")
                 if (beat.chordName.isNotEmpty())
                 {
-                    DBG("Drawing chord: " << beat.chordName << " at x=" << beatX);
-                    drawChordName(g, beat.chordName, beatX, firstStringY - 40.0f);
+                    drawChordName(g, beat.chordName, beatX, firstStringY - 40.0f, m, b);
                 }
                 
                 // Draw Palm Mute indicator (P.M.)
@@ -338,6 +350,7 @@ private:
     TabLayoutConfig config;
     juce::Rectangle<float> bounds;
     juce::Array<RenderedNoteInfo> renderedNotes;
+    juce::Array<RenderedChordInfo> renderedChords;
     juce::Array<int> currentTrackTuning;
     int currentMeasureIndex = 0;
     int currentBeatIndex = 0;
@@ -775,13 +788,28 @@ private:
     /**
      * Zeichnet Akkordname über dem Beat (z.B. "Am7", "C", "D/F#")
      */
-    void drawChordName(juce::Graphics& g, const juce::String& chordName, float x, float y)
+    void drawChordName(juce::Graphics& g, const juce::String& chordName, float x, float y,
+                        int measureIndex = -1, int beatIndex = -1)
     {
         g.setColour(config.fretTextColour);
         g.setFont(juce::Font(12.0f).boldened());
-        g.drawText(chordName, 
-                   juce::Rectangle<float>(x - 5.0f, y, 60.0f, 16.0f),
-                   juce::Justification::left, false);
+        
+        // Berechne Textbreite für besseren Hit-Test-Bereich
+        float textWidth = juce::jmax(60.0f, static_cast<float>(chordName.length()) * 8.0f + 10.0f);
+        juce::Rectangle<float> chordBounds(x - 5.0f, y, textWidth, 16.0f);
+        
+        g.drawText(chordName, chordBounds, juce::Justification::left, false);
+        
+        // Speichere für Hit-Testing
+        if (measureIndex >= 0)
+        {
+            RenderedChordInfo chordInfo;
+            chordInfo.bounds = chordBounds;
+            chordInfo.chordName = chordName;
+            chordInfo.measureIndex = measureIndex;
+            chordInfo.beatIndex = beatIndex;
+            renderedChords.add(chordInfo);
+        }
     }
     
     /**
