@@ -76,6 +76,10 @@ struct NoteEffects
     
     // Harmonics
     HarmonicType harmonic = HarmonicType::None;
+    int harmonicSemitone = 0;     // For artificial: C=0, D=2, E=4, F=5, G=7, A=9, B=11
+    int harmonicAccidental = 0;   // For artificial: -1=flat, 0=natural, 1=sharp
+    int harmonicOctave = 0;       // For artificial: 0=loco, 1=8va, 2=15ma
+    int harmonicFret = 0;         // For tapped harmonics
     
     // Hammer-On / Pull-Off
     bool hammerOn = false;

@@ -105,6 +105,10 @@ struct GP5Note
     int slideType = 0;
     bool hasHarmonic = false;
     int harmonicType = 0;
+    int harmonicSemitone = 0;     // For artificial harmonics
+    int harmonicAccidental = 0;   // For artificial harmonics
+    int harmonicOctave = 0;       // For artificial harmonics
+    int harmonicFret = 0;         // For tapped harmonics
 };
 
 struct GP5Beat

@@ -112,8 +112,11 @@ bool GP5Writer::writeToFile(const TabTrack& track, const juce::File& outputFile)
         writeByte(0);    // Key signature (0 = C major/A minor)
         writeInt(0);     // Octave (always 0)
         
-        // 10. writeMidiChannels()
-        writeMidiChannels();
+        // 10. writeMidiChannels() - use track instrument
+        {
+            std::vector<TabTrack> singleTrackVec = { track };
+            writeMidiChannels(singleTrackVec);
+        }
         
         // 11. writeDirections()
         writeDirections();
@@ -125,8 +128,11 @@ bool GP5Writer::writeToFile(const TabTrack& track, const juce::File& outputFile)
         writeInt(numMeasures);
         writeInt(1);  // 1 track
         
-        // 14. writeMeasureHeaders()
-        writeMeasureHeaders(numMeasures, numerator, denominator);
+        // 14. writeMeasureHeaders() - use per-measure data for repeats/markers/time sig changes
+        if (!track.measures.isEmpty())
+            writeMeasureHeaders(track.measures);
+        else
+            writeMeasureHeaders(numMeasures, numerator, denominator);
         
         // 15. writeTracks()
         writeTracks(track);
@@ -230,8 +236,11 @@ bool GP5Writer::writeToFile(const std::vector<TabTrack>& tracks, const juce::Fil
         writeInt(numMeasures);
         writeInt(numTracks);
         
-        // 14. writeMeasureHeaders()
-        writeMeasureHeaders(numMeasures, numerator, denominator);
+        // 14. writeMeasureHeaders() - use per-measure data if available
+        if (!tracks.empty() && !tracks[0].measures.isEmpty())
+            writeMeasureHeaders(tracks[0].measures);
+        else
+            writeMeasureHeaders(numMeasures, numerator, denominator);
         
         // 15. writeTracks() - for each track
         for (int t = 0; t < numTracks; ++t)
@@ -497,6 +506,94 @@ void GP5Writer::writeMeasureHeaders(int numMeasures, int numerator, int denomina
     }
 }
 
+void GP5Writer::writeMeasureHeaders(const juce::Array<TabMeasure>& measures)
+{
+    // Per-measure version: writes time signature changes, repeats, markers
+    // Used when saving loaded GP5 files to preserve all measure properties
+    
+    int prevNumerator = 0;
+    int prevDenominator = 0;
+    
+    for (int m = 0; m < measures.size(); ++m)
+    {
+        const auto& measure = measures[m];
+        
+        // Placeholder before each measure (except first)
+        if (m > 0)
+            writeByte(0);
+        
+        juce::uint8 flags = 0;
+        
+        // Check for time signature changes
+        if (m == 0 || measure.timeSignatureNumerator != prevNumerator)
+            flags |= 0x01;  // numerator changed
+        if (m == 0 || measure.timeSignatureDenominator != prevDenominator)
+            flags |= 0x02;  // denominator changed
+        
+        // Repeat open
+        if (measure.isRepeatOpen)
+            flags |= 0x04;
+        
+        // Repeat close
+        if (measure.isRepeatClose)
+            flags |= 0x08;
+        
+        // Repeat alternative (alternate endings)
+        if (measure.alternateEnding > 0)
+            flags |= 0x10;
+        
+        // Marker
+        if (measure.marker.isNotEmpty())
+            flags |= 0x20;
+        
+        // Write flags byte
+        writeByte(flags);
+        
+        // Numerator (if flags & 0x01)
+        if (flags & 0x01)
+            writeByte((juce::uint8)measure.timeSignatureNumerator);
+        
+        // Denominator (if flags & 0x02)
+        if (flags & 0x02)
+            writeByte((juce::uint8)measure.timeSignatureDenominator);
+        
+        // Repeat close count (if flags & 0x08)
+        if (flags & 0x08)
+            writeByte((juce::uint8)juce::jmax(1, measure.repeatCount));
+        
+        // Marker (if flags & 0x20)
+        if (flags & 0x20)
+        {
+            writeStringWithLength(measure.marker);
+            writeColor(juce::Colours::red);  // Marker color
+        }
+        
+        // Repeat alternative (if flags & 0x10)
+        if (flags & 0x10)
+            writeByte((juce::uint8)measure.alternateEnding);
+        
+        // Beams (if time sig changed)
+        if (flags & 0x03)
+        {
+            // 4 beam bytes (eighth note grouping)
+            writeByte(2);
+            writeByte(2);
+            writeByte(2);
+            writeByte(2);
+        }
+        
+        // Placeholder if no repeat alternative (flag 0x10 not set)
+        if ((flags & 0x10) == 0)
+            writeByte(0);
+        
+        // Triplet feel (0 = none)
+        writeByte(0);
+        
+        prevNumerator = measure.timeSignatureNumerator;
+        prevDenominator = measure.timeSignatureDenominator;
+    }
+}
+
 void GP5Writer::writeTracks(const TabTrack& track)
 {
     // PyGuitarPro GP5File.writeTrack():
@@ -759,8 +856,13 @@ void GP5Writer::writeMeasures(const TabTrack& track)
             writeShort(0);     // flags2
         }
         
-        // Voice 2 (empty)
-        writeInt(0);
+        // Voice 2 (empty - but must write 1 empty beat, not 0)
+        writeInt(1);       // 1 beat
+        writeByte(0x40);   // flags: rest/empty
+        writeByte(0x00);   // beat status: 0x00 = Empty
+        writeByte(0);      // duration: quarter note
+        writeByte(0);      // stringFlags: no strings
+        writeShort(0);     // GP5 flags2
         
         // LineBreak
         writeByte(0);
@@ -822,8 +924,14 @@ void GP5Writer::writeMeasuresMultiTrack(const std::vector<TabTrack>& tracks)
                 writeShort(0);     // flags2
             }
             
-            // Voice 2 (empty)
-            writeInt(0);
+            // Voice 2 (empty - but must write 1 empty beat, not 0)
+            // PyGuitarPro writes: 1 beat with status=empty, duration=quarter
+            writeInt(1);       // 1 beat
+            writeByte(0x40);   // flags: rest/empty
+            writeByte(0x00);   // beat status: 0x00 = Empty (NOT 0x02 which is Rest!)
+            writeByte(0);      // duration: quarter note
+            writeByte(0);      // stringFlags: no strings
+            writeShort(0);     // GP5 flags2
             
             // LineBreak - must be after EACH track (not just last)
             writeByte(0);
@@ -993,8 +1101,11 @@ void GP5Writer::writeNote(const TabNote& note)
     // 0x20 = has note type and fret
     flags |= 0x20;
     
-    // 0x10 = has velocity
-    flags |= 0x10;
+    // 0x10 = has velocity (only when non-default)
+    // Default velocity is 95 (forte) in PyGuitarPro
+    static const int DEFAULT_VELOCITY = 95;
+    if (note.velocity != DEFAULT_VELOCITY)
+        flags |= 0x10;
     
     // 0x08 = has note effects
     bool hasEffects = note.effects.bend || 
@@ -1129,6 +1240,19 @@ void GP5Writer::writeNoteEffects(const NoteEffects& effects)
             default: harmonicType = 1; break;
         }
         writeByte(harmonicType);
+        
+        // Artificial harmonic needs extra data: semitone, accidental, octave
+        if (harmonicType == 2)
+        {
+            writeByte((juce::uint8)effects.harmonicSemitone);
+            writeByte((juce::int8)effects.harmonicAccidental);
+            writeByte((juce::uint8)effects.harmonicOctave);
+        }
+        // Tapped harmonic needs fret
+        else if (harmonicType == 3)
+        {
+            writeByte((juce::uint8)effects.harmonicFret);
+        }
     }
 }
 

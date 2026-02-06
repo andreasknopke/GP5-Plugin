@@ -220,7 +220,7 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
         audioProcessor.updateRecordedNotePosition(measureIdx, beatIdx, oldString, newString, newFret);
         
         // Speichere den aktuellen Track-Zustand im Processor
-        audioProcessor.setEditedTrack(tabView.getTrack());
+        audioProcessor.setEditedTrack(audioProcessor.getSelectedTrack(), tabView.getTrack());
     };
 
     // Fenstergröße setzen (größer für die Tab-Ansicht + Header)

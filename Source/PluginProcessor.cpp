@@ -403,36 +403,9 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         int numerator = hostTimeSigNumerator.load();
         int denominator = hostTimeSigDenominator.load();
         
-        // Log file for debugging MIDI input
-        static juce::File midiLogFile = juce::File::getSpecialLocation(juce::File::userDesktopDirectory).getChildFile("gp5_midi_log.txt");
-        static bool logInitialized = false;
-        if (!logInitialized)
-        {
-            midiLogFile.deleteFile();  // Start fresh
-            midiLogFile.appendText("GP5 MIDI Log started\n");
-            logInitialized = true;
-        }
-        
         for (const auto metadata : midiMessages)
         {
             const auto msg = metadata.getMessage();
-            
-            // Log ALL MIDI messages to file
-            {
-                juce::String logLine = "MIDI: status=0x" + juce::String::toHexString(msg.getRawData()[0])
-                    + " ch=" + juce::String(msg.getChannel());
-                if (msg.isNoteOn())
-                    logLine += " NoteOn note=" + juce::String(msg.getNoteNumber()) + " vel=" + juce::String(msg.getVelocity());
-                else if (msg.isNoteOff())
-                    logLine += " NoteOff note=" + juce::String(msg.getNoteNumber());
-                else if (msg.isProgramChange())
-                    logLine += " ProgramChange prog=" + juce::String(msg.getProgramChangeNumber());
-                else if (msg.isController())
-                    logLine += " CC num=" + juce::String(msg.getControllerNumber()) + " val=" + juce::String(msg.getControllerValue());
-                else
-                    logLine += " other";
-                midiLogFile.appendText(logLine + "\n");
-            }
             
             if (msg.isNoteOn())
             {
@@ -566,12 +539,6 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                 {
                     int instrument = msg.getProgramChangeNumber();
                     channelInstruments[channel] = instrument;
-                    
-                    // Log to file (works in Release mode)
-                    juce::File logFile = juce::File::getSpecialLocation(juce::File::userDesktopDirectory).getChildFile("gp5_midi_log.txt");
-                    logFile.appendText(juce::String("Program Change: Channel ") + juce::String(channel + 1) 
-                        + " -> Instrument " + juce::String(instrument) 
-                        + " (" + juce::String(gmInstrumentNames[instrument]) + ")\n");
                 }
             }
             else if (msg.isAllNotesOff() || msg.isAllSoundOff())
@@ -1273,6 +1240,9 @@ void NewProjectAudioProcessor::unloadFile()
     
     // Clear seek position
     clearSeekPosition();
+    
+    // Clear edited tracks
+    editedTracks.clear();
     
     DBG("Processor: File unloaded");
 }
@@ -2690,10 +2660,9 @@ void NewProjectAudioProcessor::updateRecordedNotePosition(int measureIndex, int 
     }
 }
 
-void NewProjectAudioProcessor::setEditedTrack(const TabTrack& track)
+void NewProjectAudioProcessor::setEditedTrack(int trackIndex, const TabTrack& track)
 {
-    editedTrack = track;
-    editedTrackValid = true;
+    editedTracks[trackIndex] = track;
 }
 
 TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
@@ -3899,15 +3868,35 @@ juce::String NewProjectAudioProcessor::getDisplayTrackName(int trackIndex) const
 
 bool NewProjectAudioProcessor::exportRecordingToGP5(const juce::File& outputFile, const juce::String& title)
 {
-    // No reoptimization needed - string/fret values are set during recording
-    // to match exactly what is shown in the live display
+    std::vector<TabTrack> tracks;
     
-    // Get recorded tracks (one per MIDI channel, or merged if only one channel)
-    std::vector<TabTrack> tracks = getRecordedTabTracks();
+    if (isFileLoaded())
+    {
+        // Use edited tracks if available, otherwise convert from original GP5 data
+        const auto& loadedTracks = getActiveTracks();
+        for (int i = 0; i < loadedTracks.size(); ++i)
+        {
+            if (hasEditedTrack(i))
+            {
+                tracks.push_back(getEditedTrack(i));
+                DBG("Track " << i << ": using edited version");
+            }
+            else
+            {
+                tracks.push_back(gp5Parser.convertToTabTrack(i));
+                DBG("Track " << i << ": using original GP5 data");
+            }
+        }
+    }
+    else
+    {
+        // Get recorded tracks (one per MIDI channel, or merged if only one channel)
+        tracks = getRecordedTabTracks();
+    }
     
     if (tracks.empty() || (tracks.size() == 1 && tracks[0].measures.isEmpty()))
     {
-        DBG("No recorded notes to export");
+        DBG("No notes to export");
         return false;
     }
     
@@ -3938,12 +3927,36 @@ bool NewProjectAudioProcessor::exportRecordingToGP5WithMetadata(
     const juce::String& title,
     const std::vector<std::pair<juce::String, int>>& trackData)
 {
-    // Get recorded tracks (one per MIDI channel)
-    std::vector<TabTrack> tracks = getRecordedTabTracks();
+    std::vector<TabTrack> tracks;
+    
+    if (isFileLoaded())
+    {
+        // Use edited tracks if available, otherwise convert from original GP5 data
+        const auto& loadedTracks = getActiveTracks();
+        for (int i = 0; i < loadedTracks.size(); ++i)
+        {
+            if (hasEditedTrack(i))
+            {
+                tracks.push_back(getEditedTrack(i));
+                DBG("Track " << i << ": using edited version");
+            }
+            else
+            {
+                tracks.push_back(gp5Parser.convertToTabTrack(i));
+                DBG("Track " << i << ": using original GP5 data");
+            }
+        }
+        DBG("Exporting from loaded GP5 file: " << loadedTracks.size() << " tracks");
+    }
+    else
+    {
+        // Get recorded tracks (one per MIDI channel)
+        tracks = getRecordedTabTracks();
+    }
     
     if (tracks.empty() || (tracks.size() == 1 && tracks[0].measures.isEmpty()))
     {
-        DBG("No recorded notes to export");
+        DBG("No notes to export");
         return false;
     }
     

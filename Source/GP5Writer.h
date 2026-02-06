@@ -49,6 +49,7 @@ private:
     void writeMidiChannels(const std::vector<TabTrack>& tracks);  // With track instruments
     void writeDirections();         // 19 direction signs
     void writeMeasureHeaders(int numMeasures, int numerator, int denominator);
+    void writeMeasureHeaders(const juce::Array<TabMeasure>& measures);  // Per-measure time sig, repeats, markers
     void writeTracks(const TabTrack& track);
     void writeTrack(const TabTrack& track, int trackIndex, int totalTracks);
     void writeMeasures(const TabTrack& track);

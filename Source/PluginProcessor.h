@@ -352,9 +352,10 @@ public:
     void updateRecordedNotePosition(int measureIndex, int beatIndex, int oldString, int newString, int newFret);
     
     // Speichere editierten Track (für Plugin-State)
-    void setEditedTrack(const TabTrack& track);
-    const TabTrack& getEditedTrack() const { return editedTrack; }
-    bool hasEditedTrack() const { return editedTrackValid; }
+    void setEditedTrack(int trackIndex, const TabTrack& track);
+    bool hasEditedTrack(int trackIndex) const { return editedTracks.count(trackIndex) > 0; }
+    const TabTrack& getEditedTrack(int trackIndex) const { return editedTracks.at(trackIndex); }
+    bool hasAnyEditedTrack() const { return !editedTracks.empty(); }
     
     //==============================================================================
     // MIDI Export Functionality
@@ -475,9 +476,8 @@ private:
     bool recordingStartSet = false;   // Whether recordingStartBeat has been set
     FretPosition recordingFretPosition = FretPosition::Low;  // Fret position at recording start
     
-    // Editierter Track (speichert manuelle Änderungen)
-    TabTrack editedTrack;
-    bool editedTrackValid = false;
+    // Editierte Tracks (speichert manuelle Änderungen pro Track-Index)
+    std::map<int, TabTrack> editedTracks;
     
     // Recording playback state (for MIDI-out of recorded notes)
     std::set<int> activePlaybackNotes;  // Currently playing recorded notes (MIDI note numbers)

@@ -700,8 +700,12 @@ void GP5Parser::readNote(GP5Note& note)
     // Dynamics (flags & 0x10)
     if (flags & 0x10)
     {
-        note.velocity = readI8();
-        DBG("            -> velocity=" << note.velocity);
+        juce::int8 dyn = readI8();
+        // Convert GP dynamic value (1-8) to MIDI velocity (15-127)
+        // PyGuitarPro: velocity = minVelocity + velocityIncrement * dyn - velocityIncrement
+        // where minVelocity=15, velocityIncrement=16
+        note.velocity = 15 + 16 * dyn - 16;
+        DBG("            -> dynamic=" << (int)dyn << " velocity=" << note.velocity);
     }
     
     // Fret (flags & 0x20)
@@ -830,11 +834,13 @@ void GP5Parser::readNoteEffects(GP5Note& note)
         
         if (note.harmonicType == 2)  // Artificial
         {
-            readU8(); readI8(); readU8();  // note, accidental, octave
+            note.harmonicSemitone = readU8();
+            note.harmonicAccidental = readI8();
+            note.harmonicOctave = readU8();
         }
         else if (note.harmonicType == 3)  // Tapped
         {
-            readU8();  // fret
+            note.harmonicFret = readU8();
         }
     }
     
@@ -1063,6 +1069,17 @@ TabTrack GP5Parser::convertToTabTrack(int trackIndex) const
     tabTrack.capo = gp5Track.capo;
     tabTrack.colour = gp5Track.colour;
     
+    // Carry over MIDI channel and instrument info
+    // GP5Track.midiChannel is 1-based, TabTrack.midiChannel is 0-based
+    tabTrack.midiChannel = gp5Track.midiChannel - 1;
+    
+    // Get instrument from MIDI channels table
+    int channelIdx = gp5Track.channelIndex;
+    if (channelIdx >= 0 && channelIdx < midiChannels.size())
+    {
+        tabTrack.midiInstrument = midiChannels[channelIdx].instrument;
+    }
+    
     // Tracker für letzten Fret pro Saite (für tied notes)
     std::map<int, int> lastFretPerString;
     
@@ -1093,6 +1110,7 @@ TabTrack GP5Parser::convertToTabTrack(int trackIndex) const
         tabMeasure.timeSignatureNumerator = header.numerator;
         tabMeasure.timeSignatureDenominator = header.denominator;
         tabMeasure.isRepeatOpen = header.isRepeatOpen;
+        tabMeasure.isRepeatClose = (header.repeatClose > 0);
         tabMeasure.repeatCount = header.repeatClose;
         tabMeasure.alternateEnding = header.repeatAlternative;
         tabMeasure.marker = header.marker;
@@ -1123,63 +1141,80 @@ TabTrack GP5Parser::convertToTabTrack(int trackIndex) const
                                             gp5Beat.tupletN - 1;
             }
             
-            // Convert notes - aber NICHT wenn es eine Pause ist!
-            if (!gp5Beat.isRest)
+            // === UNIFIED FORMAT: Always create one TabNote per string ===
+            // This matches the format used by getRecordedTabTrack() so the
+            // GP5Writer can save correctly. Unused strings have fret = -1.
+            for (int s = 0; s < gp5Track.stringCount; ++s)
             {
-              for (const auto& [stringIndex, gp5Note] : gp5Beat.notes)
-              {
                 TabNote tabNote;
-                tabNote.string = stringIndex;
-                tabNote.velocity = gp5Note.velocity;
-                tabNote.isTied = gp5Note.isTied;
+                tabNote.string = s;
+                tabNote.fret = -1;  // Default: unused string
                 
-                // Bei tied notes: Fret von der vorherigen Note auf dieser Saite übernehmen
-                if (gp5Note.isTied && lastFretPerString.count(stringIndex))
+                // Check if this string has a note in this beat
+                if (!gp5Beat.isRest)
                 {
-                    tabNote.fret = lastFretPerString[stringIndex];
+                    auto noteIt = gp5Beat.notes.find(s);
+                    if (noteIt != gp5Beat.notes.end())
+                    {
+                        const auto& gp5Note = noteIt->second;
+                        
+                        tabNote.velocity = gp5Note.velocity;
+                        tabNote.isTied = gp5Note.isTied;
+                        
+                        // Bei tied notes: Fret von der vorherigen Note auf dieser Saite übernehmen
+                        if (gp5Note.isTied && lastFretPerString.count(s))
+                        {
+                            tabNote.fret = lastFretPerString[s];
+                        }
+                        else
+                        {
+                            tabNote.fret = gp5Note.fret;
+                        }
+                        
+                        // Aktualisiere den letzten Fret für diese Saite
+                        if (!gp5Note.isTied)
+                        {
+                            lastFretPerString[s] = gp5Note.fret;
+                        }
+                        
+                        // Effects
+                        tabNote.effects.vibrato = gp5Note.hasVibrato;
+                        tabNote.effects.ghostNote = gp5Note.isGhost;
+                        tabNote.effects.deadNote = gp5Note.isDead;
+                        tabNote.effects.accentuatedNote = gp5Note.hasAccent;
+                        tabNote.effects.heavyAccentuatedNote = gp5Note.hasHeavyAccent;
+                        tabNote.effects.hammerOn = gp5Note.hasHammerOn;
+                        tabNote.effects.bend = gp5Note.hasBend;
+                        tabNote.effects.bendValue = gp5Note.bendValue / 100.0f;
+                        tabNote.effects.bendType = gp5Note.bendType;
+                        tabNote.effects.releaseBend = gp5Note.hasReleaseBend;
+                        
+                        // Copy detailed bend points
+                        for (const auto& bp : gp5Note.bendPoints)
+                        {
+                            TabBendPoint tbp;
+                            tbp.position = bp.position;
+                            tbp.value = bp.value;
+                            tbp.vibrato = bp.vibrato;
+                            tabNote.effects.bendPoints.push_back(tbp);
+                        }
+                        
+                        if (gp5Note.hasSlide)
+                            tabNote.effects.slideType = convertSlideType(gp5Note.slideType);
+                        
+                        if (gp5Note.hasHarmonic)
+                        {
+                            tabNote.effects.harmonic = static_cast<HarmonicType>(gp5Note.harmonicType);
+                            tabNote.effects.harmonicSemitone = gp5Note.harmonicSemitone;
+                            tabNote.effects.harmonicAccidental = gp5Note.harmonicAccidental;
+                            tabNote.effects.harmonicOctave = gp5Note.harmonicOctave;
+                            tabNote.effects.harmonicFret = gp5Note.harmonicFret;
+                        }
+                    }
                 }
-                else
-                {
-                    tabNote.fret = gp5Note.fret;
-                }
-                
-                // Aktualisiere den letzten Fret für diese Saite
-                if (!gp5Note.isTied)
-                {
-                    lastFretPerString[stringIndex] = gp5Note.fret;
-                }
-                
-                // Effects
-                tabNote.effects.vibrato = gp5Note.hasVibrato;
-                tabNote.effects.ghostNote = gp5Note.isGhost;
-                tabNote.effects.deadNote = gp5Note.isDead;
-                tabNote.effects.accentuatedNote = gp5Note.hasAccent;
-                tabNote.effects.heavyAccentuatedNote = gp5Note.hasHeavyAccent;
-                tabNote.effects.hammerOn = gp5Note.hasHammerOn;
-                tabNote.effects.bend = gp5Note.hasBend;
-                tabNote.effects.bendValue = gp5Note.bendValue / 100.0f;  // Convert to semitones (100 = 0.5, 200 = 1.0)
-                tabNote.effects.bendType = gp5Note.bendType;
-                tabNote.effects.releaseBend = gp5Note.hasReleaseBend;
-                
-                // Copy detailed bend points
-                for (const auto& bp : gp5Note.bendPoints)
-                {
-                    TabBendPoint tbp;
-                    tbp.position = bp.position;
-                    tbp.value = bp.value;
-                    tbp.vibrato = bp.vibrato;
-                    tabNote.effects.bendPoints.push_back(tbp);
-                }
-                
-                if (gp5Note.hasSlide)
-                    tabNote.effects.slideType = convertSlideType(gp5Note.slideType);
-                
-                if (gp5Note.hasHarmonic)
-                    tabNote.effects.harmonic = static_cast<HarmonicType>(gp5Note.harmonicType);
                 
                 tabBeat.notes.add(tabNote);
-              }
-            } // Ende if (!gp5Beat.isRest)
+            }
             
             tabMeasure.beats.add(tabBeat);
         }
