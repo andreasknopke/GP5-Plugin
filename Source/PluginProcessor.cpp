@@ -557,7 +557,20 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                     // Quantisiere startBeat auf 1/64-Noten (0.0625 Beats) um Floating-Point-Fehler zu beheben
                     // 7.99887 wird zu 8.0, 8.51234 bleibt ca. 8.5
                     double quantizeGrid = 0.0625;  // 1/64 Note
+                    double rawBeat = currentBeat;
                     recNote.startBeat = std::round(currentBeat / quantizeGrid) * quantizeGrid;
+                    
+                    // Prevent quantization from pushing notes across measure boundaries
+                    {
+                        double beatsPerBar = numerator * (4.0 / denominator);
+                        if (beatsPerBar > 0.0)
+                        {
+                            int rawBar = static_cast<int>(rawBeat / beatsPerBar);
+                            int quantizedBar = static_cast<int>(recNote.startBeat / beatsPerBar);
+                            if (quantizedBar > rawBar)
+                                recNote.startBeat -= quantizeGrid;
+                        }
+                    }
                     recNote.endBeat = recNote.startBeat;  // Wird beim Note-Off aktualisiert
                     recNote.isActive = true;
                     
@@ -2868,7 +2881,7 @@ void NewProjectAudioProcessor::updateRecordedNotePosition(int measureIndex, int 
             double distanceToNextBar = beatsPerMeasure - positionInMeasure;
             double originalDuration = note.endBeat - note.startBeat;
             
-            if (distanceToNextBar < 0.5 && distanceToNextBar > 0.001)
+            if (measureQuantizationEnabled.load() && distanceToNextBar < 0.5 && distanceToNextBar > 0.001)
             {
                 double truncatedDuration = distanceToNextBar;
                 double truncationRatio = truncatedDuration / std::max(0.001, originalDuration);
@@ -3034,7 +3047,7 @@ void NewProjectAudioProcessor::deleteRecordedNote(int measureIndex, int beatInde
         double distanceToNextBar = beatsPerMeasure - positionInMeasure;
         double originalDuration = note.endBeat - note.startBeat;
         
-        if (distanceToNextBar < 0.5 && distanceToNextBar > 0.001)
+        if (measureQuantizationEnabled.load() && distanceToNextBar < 0.5 && distanceToNextBar > 0.001)
         {
             double truncationRatio = distanceToNextBar / std::max(0.001, originalDuration);
             if (truncationRatio < 0.25 && originalDuration > 0.25)
@@ -3170,7 +3183,7 @@ void NewProjectAudioProcessor::updateRecordedNoteDuration(int measureIndex, int 
         double distanceToNextBar = beatsPerMeasure - positionInMeasure;
         double originalDuration = note.endBeat - note.startBeat;
         
-        if (distanceToNextBar < 0.5 && distanceToNextBar > 0.001)
+        if (measureQuantizationEnabled.load() && distanceToNextBar < 0.5 && distanceToNextBar > 0.001)
         {
             double truncationRatio = distanceToNextBar / std::max(0.001, originalDuration);
             if (truncationRatio < 0.25 && originalDuration > 0.25)
@@ -3432,8 +3445,8 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
             
             // Wenn die Note weniger als 1/8-Note (0.5 Beats) vor dem nächsten Takt beginnt
             // UND die Note auf weniger als 25% ihrer Originallänge gekürzt werden müsste
-            // -> verschiebe sie in den nächsten Takt
-            if (distanceToNextBar < 0.5 && distanceToNextBar > 0.001)
+            // -> verschiebe sie in den nächsten Takt (nur wenn Takt-Quantisierung aktiv)
+            if (measureQuantizationEnabled.load() && distanceToNextBar < 0.5 && distanceToNextBar > 0.001)
             {
                 double truncatedDuration = distanceToNextBar;
                 double truncationRatio = truncatedDuration / std::max(0.001, originalDuration);
@@ -3531,7 +3544,8 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
         std::map<int, std::vector<const RecordedNote*>> noteGroups;
         int lastOccupiedSlot = -1;
 
-        for (const auto& evt : events) {
+        for (int evtIdx = 0; evtIdx < (int)events.size(); ++evtIdx) {
+            const auto& evt = events[evtIdx];
             double posInMeasure = evt.getStartTime() - measureStartBeat;
             
             // Wenn die Position negativ ist (Note wurde aus dem vorherigen Takt verschoben),
@@ -3577,7 +3591,11 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
                 // Bestimme die Dauer basierend auf den Noten und dem nächsten Event
                 double minNoteLen = std::numeric_limits<double>::max();
                 for (const auto* note : group)
-                     minNoteLen = std::min(minNoteLen, note->endBeat - note->startBeat);
+                {
+                     double noteLen = note->endBeat - note->startBeat;
+                     if (noteLen < 0.001) noteLen = 0.001; // safety
+                     minNoteLen = std::min(minNoteLen, noteLen);
+                }
                 
                 int desiredSlots = (int)(minNoteLen / subdivision + 0.5);
                 if (desiredSlots < 1) desiredSlots = 1;

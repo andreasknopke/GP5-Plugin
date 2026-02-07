@@ -85,6 +85,9 @@ private:
     // 8f. Apply to All Tracks Checkbox (Editor Mode only)
     juce::ToggleButton allTracksCheckbox { "All Tracks" };
     
+    // 8h. Measure Quantization Toggle (Editor Mode only)
+    juce::ToggleButton measureQuantizeButton { "Bar Quantize" };
+    
     // 8g. Note Edit Toggle (Player Mode)
     juce::ToggleButton noteEditButton { "Edit Notes" };
     

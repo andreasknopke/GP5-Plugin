@@ -276,6 +276,11 @@ public:
     void setPositionLookahead(int notes) { positionLookahead.store(juce::jlimit(1, 4, notes)); }
     int getPositionLookahead() const { return positionLookahead.load(); }
     
+    // Measure quantization: moves notes that would be heavily truncated at measure end
+    // into the next measure (intelligent bar-boundary correction)
+    void setMeasureQuantizationEnabled(bool enabled) { measureQuantizationEnabled.store(enabled); }
+    bool isMeasureQuantizationEnabled() const { return measureQuantizationEnabled.load(); }
+    
     //==============================================================================
     // Audio-to-MIDI Mode
     //==============================================================================
@@ -515,6 +520,9 @@ private:
     // Position lookahead: Update position every N notes (1=every note, 4=every 4th note)
     std::atomic<int> positionLookahead { 4 };  // Default: 4 notes
     mutable int positionLookaheadCounter = 0;  // Counter for tracking notes
+    
+    // Measure quantization: moves notes near bar end into next measure
+    std::atomic<bool> measureQuantizationEnabled { true };  // Default: enabled
     
     // Audio-to-MIDI mode (auto-detected: 0=Player, 1=MIDI, 2=Audio)
     std::atomic<int> inputMode { 0 };

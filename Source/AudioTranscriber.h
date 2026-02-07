@@ -177,7 +177,7 @@ private:
     // Parameters (atomic for thread safety)
     std::atomic<float> mNoteSensitivity{0.7f};
     std::atomic<float> mSplitSensitivity{0.5f};
-    std::atomic<float> mMinNoteDurationMs{125.0f};
+    std::atomic<float> mMinNoteDurationMs{100.0f};
     std::atomic<int> mMidiChannel{1};
 
     // State

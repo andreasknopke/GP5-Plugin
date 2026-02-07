@@ -111,7 +111,7 @@ std::vector<Notes::Event> Notes::convert(const std::vector<std::vector<float>>& 
             i -= k; // go back to frame above threshold
 
             // if the note is too short, skip it
-            if (i - frame_idx <= inParams.minNoteLength) {
+            if (i - frame_idx < inParams.minNoteLength) {
                 continue;
             }
 
@@ -201,7 +201,7 @@ std::vector<Notes::Event> Notes::convert(const std::vector<std::vector<float>>& 
             const auto i_start = i + 1 + k;
 
             // if the note is too short, skip it
-            if (i_end - i_start <= inParams.minNoteLength) {
+            if (i_end - i_start < inParams.minNoteLength) {
                 continue;
             }
 

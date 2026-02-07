@@ -227,6 +227,18 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     allTracksCheckbox.setToggleState(true, juce::dontSendNotification);  // Default: apply to all tracks
     allTracksCheckbox.setVisible(false);  // Nur im Editor-Modus sichtbar
     
+    // Measure Quantization Toggle (Editor Mode only)
+    addAndMakeVisible (measureQuantizeButton);
+    measureQuantizeButton.setColour (juce::ToggleButton::textColourId, juce::Colours::lightgrey);
+    measureQuantizeButton.setColour (juce::ToggleButton::tickColourId, juce::Colours::orange);
+    measureQuantizeButton.setToggleState(audioProcessor.isMeasureQuantizationEnabled(), juce::dontSendNotification);
+    measureQuantizeButton.onClick = [this] {
+        audioProcessor.setMeasureQuantizationEnabled(measureQuantizeButton.getToggleState());
+        // Recalculate recorded notes with new setting
+        reoptimizeAndRefreshNotes();
+    };
+    measureQuantizeButton.setVisible(false);  // Nur im Editor-Modus sichtbar
+    
     // Note Edit Toggle Button (Player Mode only)
     addAndMakeVisible (noteEditButton);
     noteEditButton.setColour (juce::ToggleButton::textColourId, juce::Colours::cyan);
@@ -356,6 +368,10 @@ void NewProjectAudioProcessorEditor::resized()
         allTracksCheckbox.setBounds (bottomBar.removeFromLeft(90));
         // Disable checkbox when recording is active (settings apply to all during recording)
         allTracksCheckbox.setEnabled(!audioProcessor.isRecording());
+        bottomBar.removeFromLeft(20); // Spacer
+        
+        // Measure Quantization Toggle
+        measureQuantizeButton.setBounds (bottomBar.removeFromLeft(110));
     }
     else
     {
@@ -367,6 +383,7 @@ void NewProjectAudioProcessorEditor::resized()
         posLookaheadLabel.setBounds (0, 0, 0, 0);
         posLookaheadSelector.setBounds (0, 0, 0, 0);
         allTracksCheckbox.setBounds (0, 0, 0, 0);
+        measureQuantizeButton.setBounds (0, 0, 0, 0);
     }
     
     // Toolbar (45px hoch) - Buttons
@@ -495,6 +512,7 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         posLookaheadLabel.setVisible(false);
         posLookaheadSelector.setVisible(false);
         allTracksCheckbox.setVisible(false);
+        measureQuantizeButton.setVisible(false);
     }
     else if (hasRecordings)
     {
@@ -519,6 +537,7 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         posLookaheadLabel.setVisible(true);
         posLookaheadSelector.setVisible(true);
         allTracksCheckbox.setVisible(true);
+        measureQuantizeButton.setVisible(true);
         
         // Track-Selector mit aufgezeichneten Tracks aktualisieren
         updateTrackSelectorForRecording();
@@ -546,6 +565,7 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         posLookaheadLabel.setVisible(true);
         posLookaheadSelector.setVisible(true);
         allTracksCheckbox.setVisible(false);  // Keine Checkbox ohne mehrere Tracks
+        measureQuantizeButton.setVisible(true);
     }
 }
 

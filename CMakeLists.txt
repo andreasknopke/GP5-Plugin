@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(GP5_VST_Editor VERSION 1.0.0)
+project(GP5_VST_Editor VERSION 1.0.1)
 
 # JUCE Pfad konfigurieren
 set(JUCE_PATH "D:/GitHub/JUCE" CACHE PATH "Path to JUCE")
