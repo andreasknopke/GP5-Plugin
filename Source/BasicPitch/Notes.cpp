@@ -268,9 +268,9 @@ void Notes::_addPitchBends(std::vector<Event>& inOutEvents,
                 float x = gauss_start + static_cast<float>(k);
                 float n = x - static_cast<float>(inNumBinsTolerance);
 
-                static constexpr float std = 5.0f;
+                static constexpr float std = 1.5f;
 
-                // Gaussian
+                // Gaussian (tight weighting to reduce false bend detection from harmonics)
                 float w = std::exp(-(n * n) / (2.0f * std * std)) * inContoursPG[i][j];
 
                 if (w > max) {

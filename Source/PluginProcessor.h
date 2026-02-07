@@ -296,6 +296,12 @@ public:
     AudioTranscriber& getAudioTranscriber() { return audioTranscriber; }
     const AudioTranscriber& getAudioTranscriber() const { return audioTranscriber; }
     
+    /** True when Audio mode is actively recording (REC+Play with sidechain) */
+    bool isAudioRecording() const { return wasRecordingAudio; }
+    
+    /** True when BasicPitch transcription is running in background */
+    bool isAudioTranscribing() const { return audioTranscriber.isTranscribing(); }
+    
     // Get live MIDI notes for display (thread-safe)
     struct LiveMidiNote {
         int midiNote = 0;
@@ -358,6 +364,12 @@ public:
     // Update a specific note's position (from manual editing)
     // oldString: the string position BEFORE the change (to find the note in recordedNotes)
     void updateRecordedNotePosition(int measureIndex, int beatIndex, int oldString, int newString, int newFret);
+    
+    // Delete a specific note from recordedNotes (from manual editing)
+    void deleteRecordedNote(int measureIndex, int beatIndex, int stringIndex);
+    
+    // Update a beat's duration in recordedNotes (from manual editing)
+    void updateRecordedNoteDuration(int measureIndex, int beatIndex, int newDurationValue, bool isDotted);
     
     // Speichere editierten Track (für Plugin-State)
     void setEditedTrack(int trackIndex, const TabTrack& track);
@@ -490,6 +502,8 @@ private:
     // Recording playback state (for MIDI-out of recorded notes)
     std::set<int> activePlaybackNotes;  // Currently playing recorded notes (MIDI note numbers)
     double lastPlaybackBeat = -1.0;     // Last processed beat for playback
+    int lastProcessedRecMeasure = -1;   // Last processed measure index for edited track playback
+    int lastProcessedRecBeat = -1;      // Last processed beat index for edited track playback
     
     // Fret position preference (0=Low, 1=Mid, 2=High)
     std::atomic<int> fretPosition { 1 };  // Default: Mid (0=Low, 1=Mid, 2=High)

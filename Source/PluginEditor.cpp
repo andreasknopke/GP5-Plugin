@@ -22,10 +22,6 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     unloadButton.onClick = [this] { unloadButtonClicked(); };
     unloadButton.setVisible(false);
     
-    // Mode Label
-    addAndMakeVisible (modeLabel);
-    modeLabel.setFont (juce::FontOptions(12.0f, juce::Font::bold));
-    modeLabel.setJustificationType(juce::Justification::centred);
     updateModeDisplay();
     
     // Zoom Buttons
@@ -90,15 +86,59 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
         if (audioProcessor.isFileLoaded())
         {
             // Im Player-Modus: Datei entladen und zum Editor wechseln
-            audioProcessor.unloadFile();
-            tabView.resetScrollPosition();
+            auto options = juce::MessageBoxOptions()
+                .withIconType(juce::MessageBoxIconType::QuestionIcon)
+                .withTitle("Clear")
+                .withMessage("Unload the current file?")
+                .withButton("Yes")
+                .withButton("No")
+                .withAssociatedComponent(this);
+            juce::AlertWindow::showAsync(options, [this](int result) {
+                if (result == 1) // Yes
+                {
+                    audioProcessor.unloadFile();
+                    tabView.resetScrollPosition();
+                    refreshFromProcessor();
+                }
+            });
         }
-        else
+        else if (audioProcessor.hasRecordedNotes() || audioProcessor.isAudioRecording() || audioProcessor.isAudioTranscribing())
         {
-            // Im Editor-Modus: Nur Aufnahme löschen
-            audioProcessor.clearRecording();
+            // Im Editor-Modus: Nachfragen bevor Aufnahme gelöscht wird
+            auto options = juce::MessageBoxOptions()
+                .withIconType(juce::MessageBoxIconType::QuestionIcon)
+                .withTitle("Clear")
+                .withMessage("Clear the entire recording?")
+                .withButton("Yes")
+                .withButton("No")
+                .withAssociatedComponent(this);
+            juce::AlertWindow::showAsync(options, [this](int result) {
+                if (result == 1) // Yes
+                {
+                    // Disable recording toggle
+                    recordButton.setToggleState(false, juce::dontSendNotification);
+                    audioProcessor.setRecordingEnabled(false);
+                    
+                    // Full clear
+                    audioProcessor.clearRecording();
+                    
+                    // Force empty track in UI
+                    TabTrack emptyTrack = audioProcessor.getEmptyTabTrack();
+                    tabView.setTrack(emptyTrack);
+                    tabView.setEditorMode(true);
+                    tabView.setOverlayMessage({});
+                    tabView.setLiveNotes({});
+                    tabView.setLiveChordName({});
+                    tabView.resetScrollPosition();
+                    
+                    // Reset tracking flags
+                    hadRecordedNotes = false;
+                    wasRecording = false;
+                    
+                    updateModeDisplay();
+                }
+            });
         }
-        refreshFromProcessor();
     };
     clearRecordingButton.setVisible(false);  // Wird in updateModeDisplay() gesteuert
     
@@ -222,6 +262,24 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
         // Speichere den aktuellen Track-Zustand im Processor
         audioProcessor.setEditedTrack(audioProcessor.getSelectedTrack(), tabView.getTrack());
     };
+    
+    // Note-Deleted Callback
+    tabView.onNoteDeleted = [this](int measureIdx, int beatIdx, int stringIndex) {
+        DBG("Note gelöscht: Takt " << (measureIdx + 1) << ", Beat " << (beatIdx + 1) 
+            << ", Saite " << (stringIndex + 1));
+        
+        audioProcessor.deleteRecordedNote(measureIdx, beatIdx, stringIndex);
+        audioProcessor.setEditedTrack(audioProcessor.getSelectedTrack(), tabView.getTrack());
+    };
+    
+    // Beat-Duration-Changed Callback
+    tabView.onBeatDurationChanged = [this](int measureIdx, int beatIdx, int newDurationValue, bool isDotted) {
+        DBG("Beat-Dauer geändert: Takt " << (measureIdx + 1) << ", Beat " << (beatIdx + 1) 
+            << ", Dauer " << newDurationValue << (isDotted ? " (dotted)" : ""));
+        
+        audioProcessor.updateRecordedNoteDuration(measureIdx, beatIdx, newDurationValue, isDotted);
+        audioProcessor.setEditedTrack(audioProcessor.getSelectedTrack(), tabView.getTrack());
+    };
 
     // Fenstergröße setzen (größer für die Tab-Ansicht + Header)
     setSize (900, 480);
@@ -321,10 +379,6 @@ void NewProjectAudioProcessorEditor::resized()
     unloadButton.setBounds (toolbar.removeFromLeft(25));
     toolbar.removeFromLeft(5); // Spacer
     
-    // Mode Label (mit Symbol)
-    modeLabel.setBounds (toolbar.removeFromLeft(85));
-    toolbar.removeFromLeft(5); // Spacer
-    
     // Zoom Buttons
     zoomOutButton.setBounds (toolbar.removeFromLeft(30));
     toolbar.removeFromLeft(5);
@@ -422,9 +476,6 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
     if (audioProcessor.isFileLoaded())
     {
         // Player-Modus (File geladen)
-        modeLabel.setText(juce::String(juce::CharPointer_UTF8("\xf0\x9f\x94\x8a")) + "  Play", juce::dontSendNotification);
-        modeLabel.setColour(juce::Label::textColourId, juce::Colours::lightgreen);
-        modeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF1E5631));
         unloadButton.setVisible(true);
         saveButton.setVisible(true);  // Save Button im Player-Modus immer sichtbar (Datei geladen = Noten vorhanden)
         
@@ -448,10 +499,6 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
     else if (hasRecordings)
     {
         // Editor-Modus MIT Aufnahmen - hybride Ansicht
-        // Zeigt sowohl Editor- als auch Player-Features
-        modeLabel.setText(juce::String(juce::CharPointer_UTF8("\xf0\x9f\x91\x82")) + "  Listen", juce::dontSendNotification);
-        modeLabel.setColour(juce::Label::textColourId, juce::Colours::orange);
-        modeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF5C3D00));
         unloadButton.setVisible(false);
         saveButton.setVisible(true);  // Save Button sichtbar wenn Aufnahmen vorhanden
         
@@ -479,9 +526,6 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
     else
     {
         // Editor-Modus OHNE Aufnahmen - nur Recording-Features
-        modeLabel.setText(juce::String(juce::CharPointer_UTF8("\xf0\x9f\x91\x82")) + "  Listen", juce::dontSendNotification);
-        modeLabel.setColour(juce::Label::textColourId, juce::Colours::orange);
-        modeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF5C3D00));
         unloadButton.setVisible(false);
         saveButton.setVisible(false);  // Kein Save Button ohne Noten
         
@@ -676,21 +720,26 @@ void NewProjectAudioProcessorEditor::trackSelectionChanged()
     }
     else if (audioProcessor.hasRecordedNotes())
     {
-        // Editor-Modus mit Aufnahmen: Verwende aufgezeichnete Tracks
-        auto recordedTracks = audioProcessor.getRecordedTabTracks();
-        int trackCount = (int)recordedTracks.size();
-        
-        if (trackIndex >= 0 && trackIndex < trackCount)
+        // Editor-Modus mit Aufnahmen: Verwende editierten Track wenn vorhanden
+        if (audioProcessor.hasEditedTrack(trackIndex))
         {
-            // Tab-Ansicht mit aufgezeichnetem Track aktualisieren
-            tabView.setTrack(recordedTracks[trackIndex]);
+            tabView.setTrack(audioProcessor.getEditedTrack(trackIndex));
             tabView.setEditorMode(true);
-            
-            // Ausgewählten Track für MIDI-Output setzen
             audioProcessor.setSelectedTrack(trackIndex);
-            
-            DBG("Aufgezeichneter Track " << (trackIndex + 1) << " ausgewählt: " 
-                << recordedTracks[trackIndex].name);
+            DBG("Aufgezeichneter Track " << (trackIndex + 1) << " ausgewählt (edited)");
+        }
+        else
+        {
+            auto recordedTracks = audioProcessor.getRecordedTabTracks();
+            int trackCount = (int)recordedTracks.size();
+            if (trackIndex >= 0 && trackIndex < trackCount)
+            {
+                tabView.setTrack(recordedTracks[trackIndex]);
+                tabView.setEditorMode(true);
+                audioProcessor.setSelectedTrack(trackIndex);
+                DBG("Aufgezeichneter Track " << (trackIndex + 1) << " ausgewählt: " 
+                    << recordedTracks[trackIndex].name);
+            }
         }
     }
 }
@@ -768,6 +817,30 @@ void NewProjectAudioProcessorEditor::timerCallback()
             recordButton.setColour(juce::ToggleButton::tickColourId, juce::Colours::grey);
         }
         
+        // =====================================================================
+        // Audio-to-MIDI Overlay: Zeige Status-Nachricht statt Live-Noten
+        // =====================================================================
+        bool audioRecordingActive = audioProcessor.isAudioRecording();
+        bool audioTranscribing = audioProcessor.isAudioTranscribing();
+        
+        if (audioRecordingActive)
+        {
+            tabView.setOverlayMessage(juce::CharPointer_UTF8("🎙 Audio-to-MIDI Recording..."));
+            tabView.setLiveNotes({});
+            tabView.setLiveChordName({});
+        }
+        else if (audioTranscribing)
+        {
+            tabView.setOverlayMessage(juce::CharPointer_UTF8("⏳ Audio-to-MIDI Processing. Please wait..."));
+            tabView.setLiveNotes({});
+            tabView.setLiveChordName({});
+        }
+        else
+        {
+            // Kein Audio-Recording/Transcription - Overlay entfernen
+            tabView.setOverlayMessage({});
+        }
+        
         // Zeige aufgezeichnete Noten wenn Recording aktiv oder Aufnahmen vorhanden
         auto recordedNotes = audioProcessor.getRecordedNotes();
         if (!recordedNotes.empty())
@@ -776,42 +849,47 @@ void NewProjectAudioProcessorEditor::timerCallback()
             // Nach Recording (Record deaktiviert): Zeige gewählten Track
             if (isRecording || isRecordEnabled)
             {
-                // Recording aktiv - zeige kombinierte Live-Aufnahme
-                TabTrack recordedTrack = audioProcessor.getRecordedTabTrack();
-                tabView.setTrack(recordedTrack);
-                tabView.setEditorMode(true);
+                // Im Audio-Modus während REC: Kein Live-Tab-Update (Overlay wird angezeigt)
+                if (!audioRecordingActive)
+                {
+                    // MIDI-Recording: zeige kombinierte Live-Aufnahme
+                    TabTrack recordedTrack = audioProcessor.getRecordedTabTrack();
+                    tabView.setTrack(recordedTrack);
+                    tabView.setEditorMode(true);
+                }
             }
             // Sonst: Der gewählte Track wird bereits durch trackSelectionChanged() gesetzt
             // Timer soll nicht überschreiben!
         }
         else
         {
-            // Setze leeren Track mit DAW-Taktart
-            static bool emptyTrackSet = false;
-            if (!emptyTrackSet || tabView.isEditorMode() == false)
+            // Keine aufgenommenen Noten - leeren Track anzeigen
+            if (!tabView.isEditorMode())
             {
                 TabTrack emptyTrack = audioProcessor.getEmptyTabTrack();
                 tabView.setTrack(emptyTrack);
                 tabView.setEditorMode(true);
-                emptyTrackSet = true;
             }
         }
         
-        // Live-MIDI-Noten aktualisieren (werden über den aufgezeichneten Noten angezeigt)
-        auto midiNotes = audioProcessor.getLiveMidiNotes();
-        std::vector<TabViewComponent::LiveNote> liveNotes;
-        for (const auto& note : midiNotes)
+        // Live-MIDI-Noten aktualisieren (nur wenn kein Audio-Recording-Overlay aktiv)
+        if (!audioRecordingActive && !audioTranscribing)
         {
-            TabViewComponent::LiveNote ln;
-            ln.string = note.string;
-            ln.fret = note.fret;
-            ln.velocity = note.velocity;
-            liveNotes.push_back(ln);
+            auto midiNotes = audioProcessor.getLiveMidiNotes();
+            std::vector<TabViewComponent::LiveNote> liveNotes;
+            for (const auto& note : midiNotes)
+            {
+                TabViewComponent::LiveNote ln;
+                ln.string = note.string;
+                ln.fret = note.fret;
+                ln.velocity = note.velocity;
+                liveNotes.push_back(ln);
+            }
+            tabView.setLiveNotes(liveNotes);
+            
+            // Erkannten Akkordnamen anzeigen
+            tabView.setLiveChordName(audioProcessor.getDetectedChordName());
         }
-        tabView.setLiveNotes(liveNotes);
-        
-        // Erkannten Akkordnamen anzeigen
-        tabView.setLiveChordName(audioProcessor.getDetectedChordName());
         
         // Auch im Editor-Modus: Playhead-Position aktualisieren und bei Start zum ersten Takt scrollen
         double positionInBeats = audioProcessor.getHostPositionInBeats();
@@ -1137,8 +1215,15 @@ void NewProjectAudioProcessorEditor::showExportPanel()
     }
     else
     {
-        // Editor-Modus: Verwende aufgezeichnete Tracks
-        tracks = audioProcessor.getRecordedTabTracks();
+        // Editor-Modus: Verwende editierte Tracks wenn vorhanden, sonst aufgezeichnete
+        auto baseTracks = audioProcessor.getRecordedTabTracks();
+        for (int i = 0; i < (int)baseTracks.size(); ++i)
+        {
+            if (audioProcessor.hasEditedTrack(i))
+                tracks.push_back(audioProcessor.getEditedTrack(i));
+            else
+                tracks.push_back(baseTracks[i]);
+        }
     }
     
     if (tracks.empty())

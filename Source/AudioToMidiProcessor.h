@@ -75,6 +75,9 @@ public:
     /** Set MIDI output channel (1-16, default: 1) */
     void setMidiChannel(int channel) { midiChannel = juce::jlimit(1, 16, channel); }
     
+    /** Get MIDI output channel */
+    int getMidiChannel() const { return midiChannel; }
+    
     //==========================================================================
     // State
     //==========================================================================

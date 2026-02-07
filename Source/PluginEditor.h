@@ -36,9 +36,6 @@ private:
     juce::TextButton loadButton { "Load GuitarPro File" };
     juce::TextButton unloadButton { "-" };
     
-    // Mode Label (Player/Editor)
-    juce::Label modeLabel;
-    
     // 2. Zoom Buttons
     juce::TextButton zoomInButton { "+" };
     juce::TextButton zoomOutButton { "-" };

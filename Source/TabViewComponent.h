@@ -42,6 +42,14 @@ public:
         repaint();
     }
     
+    // Set overlay message (e.g. "Audio-to-MIDI recording..." or "Processing...")
+    // Empty string = no overlay
+    void setOverlayMessage(const juce::String& msg)
+    {
+        overlayMessage = msg;
+        repaint();
+    }
+    
     TabViewComponent()
     {
         // Horizontal scrollbar
@@ -145,9 +153,10 @@ public:
         playheadPositionInMeasure = positionInMeasure;
         
         // Berechne die exakte X-Position des Playheads
+        // xPosition/calculatedWidth sind bereits gezoomt (recalculateLayout verwendet scaledConfig)
         const auto& measure = track.measures[measureIndex];
-        float measureX = measure.xPosition * zoom;
-        float measureWidth = measure.calculatedWidth * zoom;
+        float measureX = measure.xPosition;
+        float measureWidth = measure.calculatedWidth;
         float playheadX = measureX + static_cast<float>(positionInMeasure) * measureWidth;
         
         // Sichtbare Breite
@@ -198,8 +207,9 @@ public:
         
         // Diese Methode wird nicht mehr direkt verwendet,
         // stattdessen updateSmoothScroll benutzen für flüssiges Scrolling
-        float measureX = track.measures[measureIndex].xPosition * zoom;
-        float measureWidth = track.measures[measureIndex].calculatedWidth * zoom;
+        // xPosition/calculatedWidth sind bereits gezoomt (recalculateLayout verwendet scaledConfig)
+        float measureX = track.measures[measureIndex].xPosition;
+        float measureWidth = track.measures[measureIndex].calculatedWidth;
         float viewWidth = static_cast<float>(getWidth()) - 20.0f;
         
         // Scroll so dass der Playhead in der Mitte ist
@@ -262,8 +272,9 @@ public:
         if (currentPlayingMeasure >= 0 && currentPlayingMeasure < track.measures.size())
         {
             const auto& measure = track.measures[currentPlayingMeasure];
-            float measureX = 25.0f + measure.xPosition * zoom - scrollOffset;
-            float measureWidth = measure.calculatedWidth * zoom;
+            // xPosition und calculatedWidth sind bereits gezoomt (recalculateLayout verwendet scaledConfig)
+            float measureX = 25.0f + measure.xPosition - scrollOffset;
+            float measureWidth = measure.calculatedWidth;
             
             // Semi-transparent green overlay fuer aktuellen Takt
             g.setColour(juce::Colour(0x2000FF00));  // Transparentes Gruen
@@ -299,6 +310,16 @@ public:
                 g.fillRoundedRectangle(bounds.expanded(3.0f), 4.0f);
                 g.setColour(juce::Colours::cyan);
                 g.drawRoundedRectangle(bounds.expanded(2.0f), 4.0f, 2.0f);
+            }
+            
+            // Draw hovered rest highlight (orange glow - indicates clickable)
+            if (hoveredRestInfo.measureIndex >= 0)
+            {
+                auto bounds = hoveredRestInfo.bounds;
+                g.setColour(juce::Colour(0xFFD9904A).withAlpha(0.25f));
+                g.fillRoundedRectangle(bounds.expanded(4.0f), 5.0f);
+                g.setColour(juce::Colour(0xFFD9904A).withAlpha(0.8f));
+                g.drawRoundedRectangle(bounds.expanded(3.0f), 5.0f, 2.0f);
             }
             
             // Draw ghost preview for hovered alternative position
@@ -459,6 +480,36 @@ public:
                            juce::Justification::centred, false);
             }
         }
+        
+        // Draw overlay message (Audio-to-MIDI recording / processing)
+        if (overlayMessage.isNotEmpty())
+        {
+            float overlayHeight = availableHeight;
+            
+            // Semi-transparent dark background over entire TAB area
+            g.setColour(juce::Colour(0xCC1A1A2E));  // Dark blue-black, 80% opaque
+            g.fillRect(0.0f, 0.0f, static_cast<float>(getWidth()), overlayHeight);
+            
+            // Centered message box
+            float boxWidth = juce::jmin(400.0f, static_cast<float>(getWidth()) - 40.0f);
+            float boxHeight = 80.0f;
+            float boxX = (static_cast<float>(getWidth()) - boxWidth) / 2.0f;
+            float boxY = (overlayHeight - boxHeight) / 2.0f;
+            
+            // Rounded box background
+            g.setColour(juce::Colour(0xFF2D2D44));
+            g.fillRoundedRectangle(boxX, boxY, boxWidth, boxHeight, 12.0f);
+            g.setColour(juce::Colour(0xFF5588FF));
+            g.drawRoundedRectangle(boxX, boxY, boxWidth, boxHeight, 12.0f, 2.0f);
+            
+            // Message text
+            g.setColour(juce::Colours::white);
+            g.setFont(juce::Font(juce::FontOptions(18.0f)).boldened());
+            g.drawText(overlayMessage, 
+                       static_cast<int>(boxX), static_cast<int>(boxY),
+                       static_cast<int>(boxWidth), static_cast<int>(boxHeight),
+                       juce::Justification::centred, false);
+        }
     }
     
     void resized() override
@@ -495,6 +546,7 @@ public:
             {
                 hoveredChordInfo = chordHover;
                 hoveredNoteInfo = NoteHitInfo();  // Reset note hover
+                hoveredRestInfo = RenderedRestInfo(); // Reset rest hover
                 setMouseCursor(juce::MouseCursor::PointingHandCursor);
                 repaint();
                 return;
@@ -507,11 +559,41 @@ public:
             }
             
             auto newHovered = findNoteAtPosition(event.position);
-            if (newHovered.measureIndex != hoveredNoteInfo.measureIndex ||
-                newHovered.beatIndex != hoveredNoteInfo.beatIndex ||
-                newHovered.noteIndex != hoveredNoteInfo.noteIndex)
+            if (newHovered.valid)
             {
-                hoveredNoteInfo = newHovered;
+                if (newHovered.measureIndex != hoveredNoteInfo.measureIndex ||
+                    newHovered.beatIndex != hoveredNoteInfo.beatIndex ||
+                    newHovered.noteIndex != hoveredNoteInfo.noteIndex)
+                {
+                    hoveredNoteInfo = newHovered;
+                    hoveredRestInfo = RenderedRestInfo(); // Reset rest hover
+                    setMouseCursor(juce::MouseCursor::PointingHandCursor);
+                    repaint();
+                }
+                return;
+            }
+            
+            // Check if a rest is hovered
+            auto restHover = findRestAtPosition(event.position);
+            if (restHover.measureIndex >= 0)
+            {
+                hoveredNoteInfo = NoteHitInfo();
+                if (restHover.measureIndex != hoveredRestInfo.measureIndex ||
+                    restHover.beatIndex != hoveredRestInfo.beatIndex)
+                {
+                    hoveredRestInfo = restHover;
+                    setMouseCursor(juce::MouseCursor::PointingHandCursor);
+                    repaint();
+                }
+                return;
+            }
+            
+            // Nothing hovered - clear all
+            if (hoveredNoteInfo.valid || hoveredRestInfo.measureIndex >= 0)
+            {
+                hoveredNoteInfo = NoteHitInfo();
+                hoveredRestInfo = RenderedRestInfo();
+                setMouseCursor(juce::MouseCursor::NormalCursor);
                 repaint();
             }
         }
@@ -519,10 +601,11 @@ public:
     
     void mouseExit(const juce::MouseEvent&) override
     {
-        if (hoveredNoteInfo.valid || hoveredChordInfo.measureIndex >= 0)
+        if (hoveredNoteInfo.valid || hoveredChordInfo.measureIndex >= 0 || hoveredRestInfo.measureIndex >= 0)
         {
             hoveredNoteInfo = NoteHitInfo();
             hoveredChordInfo = RenderedChordInfo();
+            hoveredRestInfo = RenderedRestInfo();
             setMouseCursor(juce::MouseCursor::NormalCursor);
             repaint();
         }
@@ -535,6 +618,8 @@ public:
             noteEditPopup.hide();
         if (groupEditPopup.isShowing())
             groupEditPopup.hide();
+        if (restEditPopup.isShowing())
+            restEditPopup.hide();
         
         // Prüfe zuerst ob Note-Editing aktiviert ist
         if (noteEditingEnabled)
@@ -554,7 +639,17 @@ public:
             {
                 // Single note clicked - show single note popup
                 selectedNotes.clear();
+                lastSelectedNote = hitInfo;  // Remember for keyboard shortcuts
                 showNoteEditPopup(hitInfo);
+                return;
+            }
+            
+            // Check if a rest was clicked
+            auto restHit = findRestAtPosition(event.position);
+            if (restHit.measureIndex >= 0)
+            {
+                // Show rest edit popup
+                showRestEditPopup(restHit);
                 return;
             }
             else
@@ -575,8 +670,9 @@ public:
         for (int m = 0; m < track.measures.size(); ++m)
         {
             const auto& measure = track.measures[m];
-            float measureStart = measure.xPosition * zoom;
-            float measureWidth = measure.calculatedWidth * zoom;
+            // xPosition/calculatedWidth sind bereits gezoomt
+            float measureStart = measure.xPosition;
+            float measureWidth = measure.calculatedWidth;
             float measureEnd = measureStart + measureWidth;
             
             if (clickX >= measureStart && clickX < measureEnd)
@@ -673,6 +769,101 @@ public:
         }
     }
     
+    bool keyPressed(const juce::KeyPress& key) override
+    {
+        if (!noteEditingEnabled) return false;
+        
+        // If a popup is showing, let it handle the key
+        if (noteEditPopup.isShowing() || groupEditPopup.isShowing() || restEditPopup.isShowing())
+            return false;
+        
+        // Keyboard shortcuts only work when we have a lastSelectedNote
+        if (!lastSelectedNote.valid) return false;
+        
+        // Delete key - delete selected note
+        if (key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey)
+        {
+            deleteNoteAtSelection(lastSelectedNote);
+            return true;
+        }
+        
+        // Duration keys 1-6
+        NoteDuration durations[] = { NoteDuration::Whole, NoteDuration::Half, NoteDuration::Quarter,
+                                      NoteDuration::Eighth, NoteDuration::Sixteenth, NoteDuration::ThirtySecond };
+        for (int i = 0; i < 6; ++i)
+        {
+            if (key.getTextCharacter() == ('1' + i))
+            {
+                changeBeatDuration(lastSelectedNote, durations[i], false);
+                return true;
+            }
+        }
+        
+        // Dot toggle
+        if (key.getTextCharacter() == '.')
+        {
+            if (lastSelectedNote.measureIndex >= 0 && lastSelectedNote.measureIndex < track.measures.size())
+            {
+                auto& measure = track.measures.getReference(lastSelectedNote.measureIndex);
+                if (lastSelectedNote.beatIndex >= 0 && lastSelectedNote.beatIndex < measure.beats.size())
+                {
+                    auto& beat = measure.beats[lastSelectedNote.beatIndex];
+                    changeBeatDuration(lastSelectedNote, beat.duration, !beat.isDotted);
+                }
+            }
+            return true;
+        }
+        
+        // +/- change duration
+        if (key.getTextCharacter() == '+' || key.getTextCharacter() == '=')
+        {
+            if (lastSelectedNote.measureIndex >= 0 && lastSelectedNote.measureIndex < track.measures.size())
+            {
+                auto& measure = track.measures[lastSelectedNote.measureIndex];
+                if (lastSelectedNote.beatIndex >= 0 && lastSelectedNote.beatIndex < measure.beats.size())
+                {
+                    auto& beat = measure.beats[lastSelectedNote.beatIndex];
+                    auto newDur = getNextLongerDuration(beat.duration);
+                    if (newDur != beat.duration)
+                        changeBeatDuration(lastSelectedNote, newDur, false);
+                }
+            }
+            return true;
+        }
+        if (key.getTextCharacter() == '-')
+        {
+            if (lastSelectedNote.measureIndex >= 0 && lastSelectedNote.measureIndex < track.measures.size())
+            {
+                auto& measure = track.measures[lastSelectedNote.measureIndex];
+                if (lastSelectedNote.beatIndex >= 0 && lastSelectedNote.beatIndex < measure.beats.size())
+                {
+                    auto& beat = measure.beats[lastSelectedNote.beatIndex];
+                    auto newDur = getNextShorterDuration(beat.duration);
+                    if (newDur != beat.duration)
+                        changeBeatDuration(lastSelectedNote, newDur, false);
+                }
+            }
+            return true;
+        }
+        
+        // Ctrl+Up/Down - move note to adjacent string
+        if (key.getModifiers().isCtrlDown())
+        {
+            if (key.isKeyCode(juce::KeyPress::upKey))
+            {
+                moveNoteToAdjacentString(lastSelectedNote, -1);  // Up = lower string index
+                return true;
+            }
+            if (key.isKeyCode(juce::KeyPress::downKey))
+            {
+                moveNoteToAdjacentString(lastSelectedNote, +1);  // Down = higher string index
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
     //==========================================================================
     // Note Editing API
     //==========================================================================
@@ -686,14 +877,23 @@ public:
                 noteEditPopup.hide();
             if (groupEditPopup.isShowing())
                 groupEditPopup.hide();
+            if (restEditPopup.isShowing())
+                restEditPopup.hide();
             hoveredNoteInfo = NoteHitInfo();
             hoveredChordInfo = RenderedChordInfo();
+            hoveredRestInfo = RenderedRestInfo();
             ghostPreview.active = false;
             groupGhostPreview.active = false;
             selectedNotes.clear();
+            lastSelectedNote = NoteHitInfo();
             isDragSelecting = false;
             selectionRect = juce::Rectangle<float>();
             setMouseCursor(juce::MouseCursor::NormalCursor);
+        }
+        else
+        {
+            setWantsKeyboardFocus(true);
+            grabKeyboardFocus();
         }
         repaint();
     }
@@ -702,6 +902,12 @@ public:
     
     /** Callback wenn eine Note-Position geändert wird: measureIdx, beatIdx, oldString, newString, newFret */
     std::function<void(int, int, int, int, int)> onNotePositionChanged;
+    
+    /** Callback wenn eine Note gelöscht wird: measureIdx, beatIdx, stringIndex */
+    std::function<void(int, int, int)> onNoteDeleted;
+    
+    /** Callback wenn eine Beat-Dauer geändert wird: measureIdx, beatIdx, newDuration(int), isDotted */
+    std::function<void(int, int, int, bool)> onBeatDurationChanged;
     
     TabTrack& getTrackForEditing() { return track; }
     
@@ -724,19 +930,25 @@ private:
     bool editorMode = false;
     std::vector<LiveNote> liveNotes;
     juce::String liveChordName;
+    juce::String overlayMessage;  // Overlay-Nachricht (z.B. "Audio-to-MIDI recording...")
     
     // Note editing
     bool noteEditingEnabled = false;
     NoteEditPopup noteEditPopup;
     GroupNoteEditPopup groupEditPopup;
+    RestEditPopup restEditPopup;
     NoteHitInfo hoveredNoteInfo;   // Note unter dem Mauszeiger
     RenderedChordInfo hoveredChordInfo;  // Akkordname unter dem Mauszeiger
+    RenderedRestInfo hoveredRestInfo;    // Pause unter dem Mauszeiger
     
     // Rectangle selection for group editing
     bool isDragSelecting = false;
     juce::Point<float> dragStartPoint;
     juce::Rectangle<float> selectionRect;
     juce::Array<NoteHitInfo> selectedNotes;
+    
+    // Last selected note for keyboard shortcuts (even when popup is closed)
+    NoteHitInfo lastSelectedNote;
     
     // Ghost preview for alternative note positions
     struct GhostNotePreview
@@ -800,9 +1012,22 @@ private:
         return hitInfo;
     }
     
+    RenderedRestInfo findRestAtPosition(juce::Point<float> pos)
+    {
+        for (const auto& restInfo : renderer.getRenderedRests())
+        {
+            if (restInfo.bounds.contains(pos))
+                return restInfo;
+        }
+        return RenderedRestInfo();
+    }
+    
     void showNoteEditPopup(const NoteHitInfo& hitInfo)
     {
         if (!hitInfo.valid) return;
+        
+        // Remember this note for keyboard shortcuts
+        lastSelectedNote = hitInfo;
         
         noteEditPopup.onPositionSelected = [this](const NoteHitInfo& info, const AlternatePosition& newPos) {
             applyNotePositionChange(info, newPos);
@@ -812,20 +1037,149 @@ private:
         noteEditPopup.onHoverPositionChanged = [this](const NoteHitInfo& info, const AlternatePosition& hoverPos) {
             if (hoverPos.string >= 0)
             {
-                // Show ghost preview at the hovered position
                 ghostPreview.active = true;
                 ghostPreview.originalNote = info;
                 ghostPreview.ghostPos = hoverPos;
             }
             else
             {
-                // Hide ghost preview
                 ghostPreview.active = false;
             }
             repaint();
         };
         
-        noteEditPopup.showForNote(hitInfo, track.tuning, this);
+        // Callback for note deletion
+        noteEditPopup.onNoteDeleteRequested = [this](const NoteHitInfo& info) {
+            deleteNoteAtSelection(info);
+        };
+        
+        // Callback for duration change
+        noteEditPopup.onDurationChangeRequested = [this](const NoteHitInfo& info, NoteDuration newDur, bool dotted) {
+            changeBeatDuration(info, newDur, dotted);
+        };
+        
+        // Get current beat duration for the popup
+        NoteDuration currentDur = NoteDuration::Quarter;
+        bool currentDotted = false;
+        if (hitInfo.measureIndex >= 0 && hitInfo.measureIndex < track.measures.size())
+        {
+            const auto& measure = track.measures[hitInfo.measureIndex];
+            if (hitInfo.beatIndex >= 0 && hitInfo.beatIndex < measure.beats.size())
+            {
+                currentDur = measure.beats[hitInfo.beatIndex].duration;
+                currentDotted = measure.beats[hitInfo.beatIndex].isDotted;
+            }
+        }
+        
+        noteEditPopup.showForNote(hitInfo, track.tuning, this, currentDur, currentDotted);
+    }
+    
+    void showRestEditPopup(const RenderedRestInfo& restInfo)
+    {
+        if (restInfo.measureIndex < 0) return;
+        
+        // Callback for rest deletion
+        restEditPopup.onRestDeleteRequested = [this](int measureIdx, int beatIdx) {
+            deleteRestAndAdjust(measureIdx, beatIdx);
+        };
+        
+        // Callback for rest duration change
+        restEditPopup.onRestDurationChangeRequested = [this](int measureIdx, int beatIdx, NoteDuration newDur, bool dotted) {
+            changeRestDuration(measureIdx, beatIdx, newDur, dotted);
+        };
+        
+        restEditPopup.showForRest(restInfo, this);
+    }
+    
+    void changeRestDuration(int measureIndex, int beatIndex, NoteDuration newDuration, bool isDotted)
+    {
+        if (measureIndex < 0 || measureIndex >= track.measures.size()) return;
+        auto& measure = track.measures.getReference(measureIndex);
+        if (beatIndex < 0 || beatIndex >= measure.beats.size()) return;
+        
+        auto& beat = measure.beats.getReference(beatIndex);
+        if (!beat.isRest) return;
+        
+        float oldDurQ = beat.getDurationInQuarters();
+        
+        // Apply new duration
+        beat.duration = newDuration;
+        beat.isDotted = isDotted;
+        beat.isDoubleDotted = false;
+        
+        float newDurQ = beat.getDurationInQuarters();
+        float diff = newDurQ - oldDurQ;
+        
+        float measureCapacity = (float)measure.timeSignatureNumerator * (4.0f / (float)measure.timeSignatureDenominator);
+        
+        // Calculate total duration of all beats
+        float totalDuration = 0.0f;
+        for (const auto& b : measure.beats)
+            totalDuration += b.getDurationInQuarters();
+        
+        if (totalDuration > measureCapacity + 0.001f)
+        {
+            // Need to shrink subsequent beats/rests
+            float excess = totalDuration - measureCapacity;
+            for (int b = beatIndex + 1; b < measure.beats.size() && excess > 0.001f; )
+            {
+                auto& nextBeat = measure.beats.getReference(b);
+                float nextDur = nextBeat.getDurationInQuarters();
+                
+                if (nextDur <= excess + 0.001f)
+                {
+                    excess -= nextDur;
+                    measure.beats.remove(b);
+                }
+                else
+                {
+                    auto shorterDur = findClosestDuration(nextDur - excess);
+                    nextBeat.duration = shorterDur.first;
+                    nextBeat.isDotted = shorterDur.second;
+                    nextBeat.isDoubleDotted = false;
+                    excess = 0.0f;
+                    ++b;
+                }
+            }
+            
+            // Verify - if still overflowing, revert
+            totalDuration = 0.0f;
+            for (const auto& b : measure.beats)
+                totalDuration += b.getDurationInQuarters();
+            if (totalDuration > measureCapacity + 0.01f)
+            {
+                // Revert
+                beat.duration = findClosestDuration(oldDurQ).first;
+                beat.isDotted = findClosestDuration(oldDurQ).second;
+                repaint();
+                return;
+            }
+        }
+        else if (totalDuration < measureCapacity - 0.001f)
+        {
+            // Fill gap with rest(s) after current beat
+            float gap = measureCapacity - totalDuration;
+            while (gap > 0.01f)
+            {
+                auto restDur = findClosestDuration(gap);
+                TabBeat restBeat;
+                restBeat.isRest = true;
+                restBeat.duration = restDur.first;
+                restBeat.isDotted = restDur.second;
+                float restLen = restBeat.getDurationInQuarters();
+                gap -= restLen;
+                int insertPos = beatIndex + 1;
+                if (insertPos > measure.beats.size()) insertPos = measure.beats.size();
+                measure.beats.insert(insertPos, restBeat);
+            }
+        }
+        
+        // Notify processor
+        if (onBeatDurationChanged)
+            onBeatDurationChanged(measureIndex, beatIndex, static_cast<int>(newDuration), isDotted);
+        
+        recalculateLayout();
+        repaint();
     }
     
     void applyNotePositionChange(const NoteHitInfo& info, const AlternatePosition& newPos)
@@ -941,6 +1295,389 @@ private:
         selectedNotes.clear();
         groupGhostPreview.active = false;
         repaint();
+    }
+    
+    //==========================================================================
+    // Note Delete, Duration Change, String Move
+    //==========================================================================
+    
+    void deleteNoteAtSelection(const NoteHitInfo& info)
+    {
+        if (info.measureIndex < 0 || info.measureIndex >= track.measures.size()) return;
+        auto& measure = track.measures.getReference(info.measureIndex);
+        if (info.beatIndex < 0 || info.beatIndex >= measure.beats.size()) return;
+        auto& beat = measure.beats.getReference(info.beatIndex);
+        if (info.noteIndex < 0 || info.noteIndex >= beat.notes.size()) return;
+        
+        int stringIndex = beat.notes[info.noteIndex].string;
+        
+        // Remove the note from the beat
+        beat.notes.remove(info.noteIndex);
+        
+        // If beat has no more notes, make it a rest
+        if (beat.notes.isEmpty())
+            beat.isRest = true;
+        
+        // Clear selection
+        lastSelectedNote = NoteHitInfo();
+        
+        // Notify processor
+        if (onNoteDeleted)
+            onNoteDeleted(info.measureIndex, info.beatIndex, stringIndex);
+        
+        recalculateLayout();
+        repaint();
+    }
+    
+    /** Lösche eine Pause und passe die benachbarten Beats an.
+     *  - Wenn davor eine Note/Beat existiert → verlängere sie um die Pausendauer
+     *  - Wenn die Pause am Taktanfang steht → verlängere die nächste Note/Beat
+     *  - Wenn nur Pausen im Takt → verschmelze zu einer größeren Pause
+     */
+    void deleteRestAndAdjust(int measureIndex, int beatIndex)
+    {
+        if (measureIndex < 0 || measureIndex >= track.measures.size()) return;
+        auto& measure = track.measures.getReference(measureIndex);
+        if (beatIndex < 0 || beatIndex >= measure.beats.size()) return;
+        auto& restBeat = measure.beats[beatIndex];
+        if (!restBeat.isRest) return;  // Nur Pausen löschen
+        
+        float restDuration = restBeat.getDurationInQuarters();
+        
+        // Strategie 1: Beat davor verlängern (wenn vorhanden und kein Rest)
+        if (beatIndex > 0)
+        {
+            auto& prevBeat = measure.beats.getReference(beatIndex - 1);
+            float prevDuration = prevBeat.getDurationInQuarters();
+            float combinedDuration = prevDuration + restDuration;
+            
+            // Finde die passende Standarddauer
+            auto newDur = findClosestDuration(combinedDuration);
+            float newDurQ = 4.0f / static_cast<float>(newDur.first);
+            if (newDur.second) newDurQ *= 1.5f;
+            
+            // Prüfe ob die neue Dauer passt (Differenz < kleinstes Quantum)
+            if (std::abs(newDurQ - combinedDuration) < 0.06f)
+            {
+                // Perfekte oder nahe Passung - verlängere den vorherigen Beat
+                prevBeat.duration = newDur.first;
+                prevBeat.isDotted = newDur.second;
+                prevBeat.isDoubleDotted = false;
+                measure.beats.remove(beatIndex);
+            }
+            else
+            {
+                // Nicht exakt passend - verlängere so weit wie möglich, 
+                // Rest bleibt als kleinere Pause
+                auto bestFit = findClosestDuration(combinedDuration);
+                float bestFitQ = 4.0f / static_cast<float>(bestFit.first);
+                if (bestFit.second) bestFitQ *= 1.5f;
+                
+                if (bestFitQ <= combinedDuration + 0.001f && bestFitQ > prevDuration + 0.001f)
+                {
+                    prevBeat.duration = bestFit.first;
+                    prevBeat.isDotted = bestFit.second;
+                    prevBeat.isDoubleDotted = false;
+                    
+                    float leftover = combinedDuration - bestFitQ;
+                    if (leftover > 0.06f)
+                    {
+                        // Schrumpfe die Pause auf den Rest
+                        auto leftoverDur = findClosestDuration(leftover);
+                        auto& rest = measure.beats.getReference(beatIndex);
+                        rest.duration = leftoverDur.first;
+                        rest.isDotted = leftoverDur.second;
+                    }
+                    else
+                    {
+                        measure.beats.remove(beatIndex);
+                    }
+                }
+                else
+                {
+                    // Kann nicht sinnvoll zusammengefügt werden - einfach entfernen
+                    // und vorherigen Beat verlängern
+                    prevBeat.duration = bestFit.first;
+                    prevBeat.isDotted = bestFit.second;
+                    prevBeat.isDoubleDotted = false;
+                    measure.beats.remove(beatIndex);
+                }
+            }
+        }
+        // Strategie 2: Pause am Anfang - nächsten Beat verlängern
+        else if (beatIndex == 0 && measure.beats.size() > 1)
+        {
+            auto& nextBeat = measure.beats.getReference(1);
+            float nextDuration = nextBeat.getDurationInQuarters();
+            float combinedDuration = nextDuration + restDuration;
+            
+            auto newDur = findClosestDuration(combinedDuration);
+            float newDurQ = 4.0f / static_cast<float>(newDur.first);
+            if (newDur.second) newDurQ *= 1.5f;
+            
+            if (std::abs(newDurQ - combinedDuration) < 0.06f)
+            {
+                nextBeat.duration = newDur.first;
+                nextBeat.isDotted = newDur.second;
+                nextBeat.isDoubleDotted = false;
+                measure.beats.remove(0); // Entferne die Pause am Anfang
+            }
+            else
+            {
+                // Nicht exakt passend - verlängere den nächsten Beat so weit wie möglich
+                auto bestFit = findClosestDuration(combinedDuration);
+                float bestFitQ = 4.0f / static_cast<float>(bestFit.first);
+                if (bestFit.second) bestFitQ *= 1.5f;
+                
+                if (bestFitQ <= combinedDuration + 0.001f && bestFitQ > nextDuration + 0.001f)
+                {
+                    nextBeat.duration = bestFit.first;
+                    nextBeat.isDotted = bestFit.second;
+                    nextBeat.isDoubleDotted = false;
+                    
+                    float leftover = combinedDuration - bestFitQ;
+                    if (leftover > 0.06f)
+                    {
+                        auto leftoverDur = findClosestDuration(leftover);
+                        auto& rest = measure.beats.getReference(0);
+                        rest.duration = leftoverDur.first;
+                        rest.isDotted = leftoverDur.second;
+                    }
+                    else
+                    {
+                        measure.beats.remove(0);
+                    }
+                }
+                else
+                {
+                    nextBeat.duration = bestFit.first;
+                    nextBeat.isDotted = bestFit.second;
+                    nextBeat.isDoubleDotted = false;
+                    measure.beats.remove(0);
+                }
+            }
+        }
+        // Strategie 3: Einziger Beat im Takt - nicht löschen (Takt braucht mindestens eine Pause)
+        else
+        {
+            DBG("Cannot delete the only rest in measure " << (measureIndex + 1));
+            return;
+        }
+        
+        // Clear hover state
+        hoveredRestInfo = RenderedRestInfo();
+        
+        // Speichere editierten Track
+        if (onBeatDurationChanged)
+            onBeatDurationChanged(measureIndex, -1, 0, false);  // beatIndex -1 = rest deletion
+        
+        recalculateLayout();
+        repaint();
+    }
+    
+    void changeBeatDuration(const NoteHitInfo& info, NoteDuration newDuration, bool isDotted)
+    {
+        if (info.measureIndex < 0 || info.measureIndex >= track.measures.size()) return;
+        auto& measure = track.measures.getReference(info.measureIndex);
+        if (info.beatIndex < 0 || info.beatIndex >= measure.beats.size()) return;
+        
+        auto& beat = measure.beats.getReference(info.beatIndex);
+        float oldDurationInQuarters = beat.getDurationInQuarters();
+        
+        // Apply new duration
+        NoteDuration oldDur = beat.duration;
+        bool oldDotted = beat.isDotted;
+        beat.duration = newDuration;
+        beat.isDotted = isDotted;
+        beat.isDoubleDotted = false;
+        
+        float newDurationInQuarters = beat.getDurationInQuarters();
+        float diff = newDurationInQuarters - oldDurationInQuarters;
+        
+        // Calculate total measure duration capacity
+        float measureCapacity = (float)measure.timeSignatureNumerator * (4.0f / (float)measure.timeSignatureDenominator);
+        
+        // Calculate current total duration of all beats
+        float totalDuration = 0.0f;
+        for (const auto& b : measure.beats)
+            totalDuration += b.getDurationInQuarters();
+        
+        // Check if the new total exceeds measure capacity
+        if (totalDuration > measureCapacity + 0.001f)
+        {
+            // Need to shrink subsequent beats or add rests
+            float excess = totalDuration - measureCapacity;
+            
+            // Try to take time from beats after the current one
+            for (int b = info.beatIndex + 1; b < measure.beats.size() && excess > 0.001f; )
+            {
+                auto& nextBeat = measure.beats.getReference(b);
+                float nextDur = nextBeat.getDurationInQuarters();
+                
+                if (nextDur <= excess + 0.001f)
+                {
+                    // Remove this beat entirely
+                    excess -= nextDur;
+                    measure.beats.remove(b);
+                    // Don't increment b since we removed
+                }
+                else
+                {
+                    // Shrink this beat
+                    auto shorterDur = findClosestDuration(nextDur - excess);
+                    nextBeat.duration = shorterDur.first;
+                    nextBeat.isDotted = shorterDur.second;
+                    nextBeat.isDoubleDotted = false;
+                    excess = 0.0f;
+                    ++b;
+                }
+            }
+            
+            // If there's still excess (can't fit), revert
+            totalDuration = 0.0f;
+            for (const auto& b : measure.beats)
+                totalDuration += b.getDurationInQuarters();
+            if (totalDuration > measureCapacity + 0.01f)
+            {
+                beat.duration = oldDur;
+                beat.isDotted = oldDotted;
+                repaint();
+                return;
+            }
+        }
+        else if (totalDuration < measureCapacity - 0.001f)
+        {
+            // Need to fill gap with a rest
+            float gap = measureCapacity - totalDuration;
+            
+            // Insert rest beat(s) after current beat to fill the gap
+            while (gap > 0.01f)
+            {
+                auto restDur = findClosestDuration(gap);
+                TabBeat restBeat;
+                restBeat.isRest = true;
+                restBeat.duration = restDur.first;
+                restBeat.isDotted = restDur.second;
+                
+                float restLen = restBeat.getDurationInQuarters();
+                gap -= restLen;
+                
+                // Insert after current beat
+                int insertPos = info.beatIndex + 1;
+                if (insertPos > measure.beats.size()) insertPos = measure.beats.size();
+                measure.beats.insert(insertPos, restBeat);
+            }
+        }
+        
+        // Notify processor
+        if (onBeatDurationChanged)
+            onBeatDurationChanged(info.measureIndex, info.beatIndex, static_cast<int>(newDuration), isDotted);
+        
+        recalculateLayout();
+        repaint();
+    }
+    
+    void moveNoteToAdjacentString(const NoteHitInfo& info, int direction)
+    {
+        if (!info.valid || info.midiNote < 0) return;
+        
+        int targetString = info.stringIndex + direction;
+        if (targetString < 0 || targetString >= track.stringCount) return;
+        
+        // Calculate fret needed on the target string to produce the same MIDI note
+        if (targetString >= track.tuning.size()) return;
+        int targetFret = info.midiNote - track.tuning[targetString];
+        
+        // Check if the fret is playable (0-24)
+        if (targetFret < 0 || targetFret > 24) return;
+        
+        // Check if the target string is free at this beat
+        if (info.measureIndex >= 0 && info.measureIndex < track.measures.size())
+        {
+            auto& measure = track.measures.getReference(info.measureIndex);
+            if (info.beatIndex >= 0 && info.beatIndex < measure.beats.size())
+            {
+                auto& beat = measure.beats.getReference(info.beatIndex);
+                
+                // Check for conflicting note on target string
+                for (int n = 0; n < beat.notes.size(); ++n)
+                {
+                    if (n != info.noteIndex && beat.notes[n].string == targetString)
+                        return;  // Target string is occupied
+                }
+            }
+        }
+        
+        // Apply the change
+        AlternatePosition newPos;
+        newPos.string = targetString;
+        newPos.fret = targetFret;
+        applyNotePositionChange(info, newPos);
+        
+        // Update lastSelectedNote to reflect the new position
+        lastSelectedNote.stringIndex = targetString;
+        lastSelectedNote.fret = targetFret;
+    }
+    
+    // Helper: find the closest standard duration to a given quarter-note length
+    static std::pair<NoteDuration, bool> findClosestDuration(float quarters)
+    {
+        // Duration table: { quarters, duration, dotted }
+        struct DurEntry { float q; NoteDuration d; bool dot; };
+        DurEntry table[] = {
+            { 4.0f,   NoteDuration::Whole, false },
+            { 3.0f,   NoteDuration::Half, true },
+            { 2.0f,   NoteDuration::Half, false },
+            { 1.5f,   NoteDuration::Quarter, true },
+            { 1.0f,   NoteDuration::Quarter, false },
+            { 0.75f,  NoteDuration::Eighth, true },
+            { 0.5f,   NoteDuration::Eighth, false },
+            { 0.375f, NoteDuration::Sixteenth, true },
+            { 0.25f,  NoteDuration::Sixteenth, false },
+            { 0.125f, NoteDuration::ThirtySecond, false }
+        };
+        
+        float bestDiff = 999.0f;
+        int bestIdx = 4;  // Default to quarter
+        for (int i = 0; i < 10; ++i)
+        {
+            if (table[i].q <= quarters + 0.001f)
+            {
+                float diff = quarters - table[i].q;
+                if (diff < bestDiff)
+                {
+                    bestDiff = diff;
+                    bestIdx = i;
+                }
+            }
+        }
+        return { table[bestIdx].d, table[bestIdx].dot };
+    }
+    
+    static NoteDuration getNextLongerDuration(NoteDuration d)
+    {
+        switch (d)
+        {
+            case NoteDuration::ThirtySecond: return NoteDuration::Sixteenth;
+            case NoteDuration::Sixteenth:    return NoteDuration::Eighth;
+            case NoteDuration::Eighth:       return NoteDuration::Quarter;
+            case NoteDuration::Quarter:      return NoteDuration::Half;
+            case NoteDuration::Half:         return NoteDuration::Whole;
+            default: return d;
+        }
+    }
+    
+    static NoteDuration getNextShorterDuration(NoteDuration d)
+    {
+        switch (d)
+        {
+            case NoteDuration::Whole:        return NoteDuration::Half;
+            case NoteDuration::Half:         return NoteDuration::Quarter;
+            case NoteDuration::Quarter:      return NoteDuration::Eighth;
+            case NoteDuration::Eighth:       return NoteDuration::Sixteenth;
+            case NoteDuration::Sixteenth:    return NoteDuration::ThirtySecond;
+            default: return d;
+        }
     }
     
     //==========================================================================

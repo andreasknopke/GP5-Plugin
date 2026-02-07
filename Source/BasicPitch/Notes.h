@@ -137,7 +137,7 @@ private:
      */
     static void _addPitchBends(std::vector<Notes::Event>& inOutEvents,
                                const std::vector<std::vector<float>>& inContoursPG,
-                               int inNumBinsTolerance = 25);
+                               int inNumBinsTolerance = 8);
 
     /**
      * Get time in seconds given frame index.

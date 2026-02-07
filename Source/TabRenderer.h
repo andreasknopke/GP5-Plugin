@@ -41,6 +41,18 @@ struct RenderedChordInfo
     int beatIndex = -1;              // Beat-Index wo der Akkord steht
 };
 
+/**
+ * RenderedRestInfo - Speichert Position einer gerenderten Pause für Hit-Testing.
+ */
+struct RenderedRestInfo
+{
+    juce::Rectangle<float> bounds;
+    int measureIndex = -1;
+    int beatIndex = -1;
+    NoteDuration duration = NoteDuration::Quarter;
+    bool isDotted = false;
+};
+
 //==============================================================================
 /**
  * TabRenderer
@@ -54,7 +66,8 @@ public:
     
     const juce::Array<RenderedNoteInfo>& getRenderedNotes() const { return renderedNotes; }
     const juce::Array<RenderedChordInfo>& getRenderedChords() const { return renderedChords; }
-    void clearRenderedNotes() { renderedNotes.clear(); renderedChords.clear(); }
+    const juce::Array<RenderedRestInfo>& getRenderedRests() const { return renderedRests; }
+    void clearRenderedNotes() { renderedNotes.clear(); renderedChords.clear(); renderedRests.clear(); }
     
     /** Set notes to hide (for ghost preview - hide original notes when showing alternatives) */
     void setHiddenNotes(const std::vector<std::tuple<int, int, int>>& notes)
@@ -82,6 +95,7 @@ public:
         this->currentTrackTuning = track.tuning;
         renderedNotes.clear();
         renderedChords.clear();
+        renderedRests.clear();
         
         const int stringCount = track.stringCount;
         const float firstStringY = bounds.getY() + config.topMargin;  // Verwende Config-Margin
@@ -186,6 +200,10 @@ public:
                     drawPalmMute(g, beatX, nextBeatX, firstStringY - 20.0f);
                 }
                 
+                // Setze Kontext für Note/Rest-Tracking
+                currentMeasureIndex = m;
+                currentBeatIndex = b;
+                
                 // Draw notes or rest - NIEMALS beides!
                 if (beat.isRest)
                 {
@@ -194,9 +212,6 @@ public:
                 }
                 else if (!beat.notes.isEmpty())  // Nur zeichnen wenn Noten vorhanden
                 {
-                    // Setze Kontext für Note-Tracking
-                    currentMeasureIndex = m;
-                    currentBeatIndex = b;
                     
                     // Draw each note
                     int noteIdx = 0;
@@ -351,6 +366,7 @@ private:
     juce::Rectangle<float> bounds;
     juce::Array<RenderedNoteInfo> renderedNotes;
     juce::Array<RenderedChordInfo> renderedChords;
+    juce::Array<RenderedRestInfo> renderedRests;
     juce::Array<int> currentTrackTuning;
     int currentMeasureIndex = 0;
     int currentBeatIndex = 0;
@@ -614,7 +630,7 @@ private:
             
             // Draw values at peaks/ends
             auto drawVal = [&](int value, int pos) {
-                if (value < 25) return;
+                if (value < 50) return;  // Don't label bends < 0.5 semitones
                 float valF = value / 100.0f;
                 juce::String txt;
                 if (valF >= 1.9f && valF <= 2.1f) txt = "full";
@@ -907,6 +923,20 @@ private:
         
         // Calculate center Y position
         float centerY = firstStringY + (stringCount - 1) * config.stringSpacing / 2.0f;
+        
+        // Calculate bounds for hit-testing (unified for all rest types)
+        float restBoundsW = 24.0f;
+        float restBoundsH = config.stringSpacing * 2.0f;
+        juce::Rectangle<float> restBounds(x - restBoundsW / 2.0f, centerY - restBoundsH / 2.0f, restBoundsW, restBoundsH);
+        
+        // Store rest info for hit-testing
+        RenderedRestInfo restInfo;
+        restInfo.bounds = restBounds;
+        restInfo.measureIndex = currentMeasureIndex;
+        restInfo.beatIndex = currentBeatIndex;
+        restInfo.duration = beat.duration;
+        restInfo.isDotted = beat.isDotted;
+        renderedRests.add(restInfo);
         
         // Draw rest symbol based on duration
         juce::String restSymbol;

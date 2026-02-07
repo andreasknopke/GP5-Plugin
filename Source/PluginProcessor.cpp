@@ -409,8 +409,28 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             
             if (sidechainBuffer.getNumChannels() > 0 && sidechainBuffer.getNumSamples() > 0)
             {
-                // Monophonic real-time pitch detection (YIN) - for live feedback
-                audioToMidiProcessor.processBlock(sidechainBuffer, midiMessages);
+                // Monophonic real-time pitch detection (YIN) - nur wenn NICHT im Audio-Recording
+                // Während REC+Play wird NUR BasicPitch verwendet (polyphon, nach Stop)
+                // Die monophone Live-Erkennung würde unvollständige Noten ins Tab schreiben
+                
+                // --- Recording START transition: YIN sauber beenden ---
+                // Wenn Recording gerade beginnt, aktive YIN-Note per NoteOff beenden
+                // und den Detektor resetten, damit keine Ghost-Notes in liveMidiNotes bleiben
+                if (shouldRecordAudio && !wasRecordingAudio)
+                {
+                    if (audioToMidiProcessor.isNoteActive())
+                    {
+                        midiMessages.addEvent(
+                            juce::MidiMessage::noteOff(audioToMidiProcessor.getMidiChannel(),
+                                                        audioToMidiProcessor.getCurrentNote()), 0);
+                        DBG("YIN: Injected noteOff for active note " << audioToMidiProcessor.getCurrentNote()
+                            << " at recording start");
+                    }
+                    audioToMidiProcessor.reset();
+                }
+                
+                if (!shouldRecordAudio)
+                    audioToMidiProcessor.processBlock(sidechainBuffer, midiMessages);
                 
                 // Polyphonic transcriber: nur bei REC+Play Audio akkumulieren
                 if (shouldRecordAudio)
@@ -446,11 +466,23 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         }
         
         // Stop-Erkennung: Recording war aktiv und jetzt nicht mehr
-        // → Transkription starten
+        // → Alte Live-Noten löschen und BasicPitch Transkription starten
         if (wasRecordingAudio && !shouldRecordAudio)
         {
+            // --- Recording STOP transition: YIN-Detektor resetten ---
+            // Stale Puffer und State löschen, damit bei Neustart keine falschen Noten kommen
+            audioToMidiProcessor.reset();
+            DBG("YIN: Reset at recording stop");
+            
             if (audioTranscriber.getRecordedDurationSeconds() > 0.1)
             {
+                // Vorher aufgenommene Noten löschen (könnten Reste von vorher sein)
+                {
+                    std::lock_guard<std::mutex> recLock(recordingMutex);
+                    recordedNotes.clear();
+                    activeRecordingNotes.clear();
+                }
+                
                 DBG("Audio recording stopped - starting BasicPitch transcription ("
                     << juce::String(audioTranscriber.getRecordedDurationSeconds(), 1) << "s audio)");
                 audioTranscriber.startTranscription();
@@ -572,7 +604,7 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                     // Convert to GP5 1/100 semitones (assume +/- 2 semitone range)
                     // Range 0-16383, center 8192 => +/- 8192 units = +/- 200 cents
                     int bendVal = (int)((wheelValue - 8192.0) / 8192.0 * 200.0);
-                    if (std::abs(bendVal) < 5) bendVal = 0; // Noise threshold
+                    if (std::abs(bendVal) < 50) bendVal = 0; // Noise threshold (50 cents = 1/2 semitone)
                     
                     for (auto& [note, idx] : activeRecordingNotes)
                     {
@@ -581,7 +613,9 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                             auto& recNote = recordedNotes[idx];
                             if (recNote.isActive && recNote.midiChannel == channel)
                             {
-                                recNote.rawBendEvents.push_back({currentBeat, bendVal});
+                                // Only store non-zero bend events to keep curve clean
+                                if (bendVal != 0 || !recNote.rawBendEvents.empty())
+                                    recNote.rawBendEvents.push_back({currentBeat, bendVal});
                                 float valSemis = std::abs(bendVal) / 100.0f;
                                 if (valSemis > recNote.maxBendValue)
                                     recNote.maxBendValue = valSemis;
@@ -1082,49 +1116,168 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             }
             activePlaybackNotes.clear();
             lastPlaybackBeat = -1.0;
+            lastProcessedRecMeasure = -1;
+            lastProcessedRecBeat = -1;
         }
         
         if (isPlaying && currentBeat >= 0.0)
         {
-            std::lock_guard<std::mutex> lock(recordingMutex);
+            int selTrack = selectedTrackIndex.load();
+            bool useEditedTrack = hasEditedTrack(selTrack);
             
-            if (!recordedNotes.empty() && recordingStartSet)
+            if (useEditedTrack)
             {
-                // Berechne relative Position zu Recording-Start
-                double relativeBeat = currentBeat - recordingStartBeat;
+                // =============================================================
+                // EDITED TRACK PLAYBACK: Walk through TabTrack measures/beats
+                // This respects rest deletion and duration edits!
+                // =============================================================
+                const auto& editTrack = getEditedTrack(selTrack);
                 
-                // Prüfe welche Noten starten oder enden sollen
-                for (const auto& note : recordedNotes)
+                int numerator = hostTimeSigNumerator.load();
+                int denominator = hostTimeSigDenominator.load();
+                double beatsPerMeasure = numerator * (4.0 / denominator);
+                
+                // Calculate current measure index and beat-in-measure
+                // The TabTrack measures use measureNumber (1-based DAW bar numbers)
+                // and ppqPosition maps to bar as: bar = floor(ppq / beatsPerMeasure) + 1
+                int currentBar = (int)(currentBeat / beatsPerMeasure) + 1;
+                double beatInMeasure = currentBeat - (currentBar - 1) * beatsPerMeasure;
+                
+                // Find the measure in the editedTrack that matches the current bar
+                int measureIdx = -1;
+                for (int m = 0; m < editTrack.measures.size(); ++m)
                 {
-                    if (note.isActive)
-                        continue;  // Noch nicht beendet
-                    
-                    double noteStartRel = note.startBeat - recordingStartBeat;
-                    double noteEndRel = note.endBeat - recordingStartBeat;
-                    
-                    // Note sollte starten
-                    if (relativeBeat >= noteStartRel && lastPlaybackBeat < noteStartRel)
+                    if (editTrack.measures[m].measureNumber == currentBar)
                     {
-                        if (activePlaybackNotes.find(note.midiNote) == activePlaybackNotes.end())
-                        {
-                            int velocity = juce::jlimit(1, 127, note.velocity);
-                            generatedMidi.addEvent(juce::MidiMessage::noteOn(1, note.midiNote, (juce::uint8)velocity), 0);
-                            activePlaybackNotes.insert(note.midiNote);
-                        }
+                        measureIdx = m;
+                        break;
                     }
+                }
+                
+                if (measureIdx >= 0 && measureIdx < editTrack.measures.size())
+                {
+                    const auto& measure = editTrack.measures[measureIdx];
+                    const auto& beats = measure.beats;
                     
-                    // Note sollte enden
-                    if (relativeBeat >= noteEndRel && lastPlaybackBeat < noteEndRel)
+                    if (beats.size() > 0)
                     {
-                        if (activePlaybackNotes.find(note.midiNote) != activePlaybackNotes.end())
+                        // Find which beat we're at based on beat-in-measure position
+                        double beatStartTime = 0.0;
+                        int beatIndex = 0;
+                        for (int b = 0; b < beats.size(); ++b)
                         {
-                            generatedMidi.addEvent(juce::MidiMessage::noteOff(1, note.midiNote), 0);
-                            activePlaybackNotes.erase(note.midiNote);
+                            double dur = beats[b].getDurationInQuarters();
+                            if (beatInMeasure < beatStartTime + dur)
+                            {
+                                beatIndex = b;
+                                break;
+                            }
+                            beatStartTime += dur;
+                            beatIndex = b;
+                        }
+                        
+                        // Only process when beat changes (same logic as file-based playback)
+                        if (measureIdx != lastProcessedRecMeasure || beatIndex != lastProcessedRecBeat)
+                        {
+                            // Stop all currently playing notes
+                            for (int note : activePlaybackNotes)
+                            {
+                                generatedMidi.addEvent(juce::MidiMessage::noteOff(1, note), 0);
+                            }
+                            activePlaybackNotes.clear();
+                            
+                            const auto& beat = beats[beatIndex];
+                            
+                            if (!beat.isRest)
+                            {
+                                // Play all notes in this beat
+                                for (const auto& tabNote : beat.notes)
+                                {
+                                    if (tabNote.fret < 0)
+                                        continue;  // Empty string slot
+                                    
+                                    if (tabNote.isTied)
+                                        continue;
+                                    
+                                    // Calculate MIDI note from string + fret + tuning
+                                    int midiNote = 0;
+                                    if (tabNote.midiNote > 0)
+                                    {
+                                        midiNote = tabNote.midiNote;
+                                    }
+                                    else if (tabNote.string >= 0 && tabNote.string < editTrack.tuning.size())
+                                    {
+                                        midiNote = editTrack.tuning[tabNote.string] + tabNote.fret;
+                                    }
+                                    else if (tabNote.string < 6)
+                                    {
+                                        const int defaultTuning[] = { 64, 59, 55, 50, 45, 40 };
+                                        midiNote = defaultTuning[tabNote.string] + tabNote.fret;
+                                    }
+                                    
+                                    if (midiNote <= 0 || midiNote >= 128)
+                                        continue;
+                                    
+                                    int velocity = juce::jlimit(1, 127, tabNote.velocity > 0 ? tabNote.velocity : 95);
+                                    generatedMidi.addEvent(juce::MidiMessage::noteOn(1, midiNote, (juce::uint8)velocity), 0);
+                                    activePlaybackNotes.insert(midiNote);
+                                }
+                            }
+                            // If beat.isRest, we just stopped old notes and don't start new ones
+                            
+                            lastProcessedRecMeasure = measureIdx;
+                            lastProcessedRecBeat = beatIndex;
                         }
                     }
                 }
                 
-                lastPlaybackBeat = relativeBeat;
+                lastPlaybackBeat = currentBeat - recordingStartBeat;
+            }
+            else
+            {
+                // =============================================================
+                // RAW RECORDED NOTES PLAYBACK (fallback, no edits applied)
+                // =============================================================
+                std::lock_guard<std::mutex> lock(recordingMutex);
+                
+                if (!recordedNotes.empty() && recordingStartSet)
+                {
+                    // Berechne relative Position zu Recording-Start
+                    double relativeBeat = currentBeat - recordingStartBeat;
+                    
+                    // Prüfe welche Noten starten oder enden sollen
+                    for (const auto& note : recordedNotes)
+                    {
+                        if (note.isActive)
+                            continue;  // Noch nicht beendet
+                        
+                        double noteStartRel = note.startBeat - recordingStartBeat;
+                        double noteEndRel = note.endBeat - recordingStartBeat;
+                        
+                        // Note sollte starten
+                        if (relativeBeat >= noteStartRel && lastPlaybackBeat < noteStartRel)
+                        {
+                            if (activePlaybackNotes.find(note.midiNote) == activePlaybackNotes.end())
+                            {
+                                int velocity = juce::jlimit(1, 127, note.velocity);
+                                generatedMidi.addEvent(juce::MidiMessage::noteOn(1, note.midiNote, (juce::uint8)velocity), 0);
+                                activePlaybackNotes.insert(note.midiNote);
+                            }
+                        }
+                        
+                        // Note sollte enden
+                        if (relativeBeat >= noteEndRel && lastPlaybackBeat < noteEndRel)
+                        {
+                            if (activePlaybackNotes.find(note.midiNote) != activePlaybackNotes.end())
+                            {
+                                generatedMidi.addEvent(juce::MidiMessage::noteOff(1, note.midiNote), 0);
+                                activePlaybackNotes.erase(note.midiNote);
+                            }
+                        }
+                    }
+                    
+                    lastPlaybackBeat = relativeBeat;
+                }
             }
         }
         
@@ -1134,27 +1287,13 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     // Generierte MIDI-Events zum Output hinzufügen
     midiMessages.addEvents(generatedMidi, 0, buffer.getNumSamples(), 0);
 
-    // In case we have more outputs than inputs, this code clears any output
-    // channels that didn't contain input data, (because these aren't
-    // guaranteed to be empty - they may contain garbage).
-    // This is here to avoid people getting screaming feedback
-    // when they first compile a plugin, but obviously you don't need to keep
-    // this code if your algorithm always overwrites all the output channels.
-    for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
+    // Dieses Plugin ist ein MIDI-Generator (Synth/Instrument).
+    // Es soll KEIN Audio durchleiten - weder vom Main Input noch vom Sidechain.
+    // Ohne diesen Clear würde das Sidechain-Audio (z.B. Gitarren-Recording)
+    // im Output-Buffer verbleiben und zusammen mit dem MIDI-Output abgespielt werden,
+    // was zu einem "doppelten" Klang führt.
+    for (auto i = 0; i < totalNumOutputChannels; ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
-
-    // This is the place where you'd normally do the guts of your plugin's
-    // audio processing...
-    // Make sure to reset the state if your inner loop is processing
-    // the samples and the outer loop is handling the channels.
-    // Alternatively, you can process the samples with the channels
-    // interleaved by keeping the same state.
-    for (int channel = 0; channel < totalNumInputChannels; ++channel)
-    {
-        auto* channelData = buffer.getWritePointer (channel);
-        juce::ignoreUnused(channelData);
-        // ..do something to the data...
-    }
 }
 
 //==============================================================================
@@ -2243,6 +2382,8 @@ void NewProjectAudioProcessor::insertTranscribedNotesIntoTab()
         recNote.isActive = false;  // Already complete
         
         // Pitch bend data from BasicPitch contour
+        // Im Audio-to-MIDI Modus: Bends unter 0.5 Halbtöne ignorieren!
+        // Kleine Pitch-Schwankungen sind keine echten Bends sondern Intonation/Vibrato
         if (!event.bends.empty())
         {
             recNote.maxBendValue = 0.0f;
@@ -2254,6 +2395,12 @@ void NewProjectAudioProcessor::insertTranscribedNotesIntoTab()
                 if (bendSemis > recNote.maxBendValue)
                     recNote.maxBendValue = bendSemis;
             }
+            
+            // Bends unter 2.0 Halbtöne verwerfen - das sind keine echten Bends
+            // (Ein echter Guitar-Bend ist mindestens ein Ganzton / whole step)
+            // Kleinere Werte sind Intonation, Vibrato oder Oberton-Artefakte
+            if (recNote.maxBendValue < 2.0f)
+                recNote.maxBendValue = 0.0f;
         }
         
         recordedNotes.push_back(recNote);
@@ -2267,26 +2414,46 @@ void NewProjectAudioProcessor::insertTranscribedNotesIntoTab()
 
 void NewProjectAudioProcessor::clearRecording()
 {
-    std::lock_guard<std::mutex> lock(recordingMutex);
-    recordedNotes.clear();
-    activeRecordingNotes.clear();
-    recordingStartBeat = 0.0;
-    recordingStartSet = false;
+    {
+        std::lock_guard<std::mutex> lock(recordingMutex);
+        recordedNotes.clear();
+        activeRecordingNotes.clear();
+        recordingStartBeat = 0.0;
+        recordingStartSet = false;
+    }
     
     // Reset playback state
     activePlaybackNotes.clear();
     lastPlaybackBeat = -1.0;
+    lastProcessedRecMeasure = -1;
+    lastProcessedRecBeat = -1;
     
     // Reset position tracking
     positionLookaheadCounter = 0;
     
-    // Reset audio transcriber state
+    // Reset audio transcriber state completely
     audioTranscriber.clearRecording();
+    audioTranscriber.clearResults();
     audioRecordingStartBeat = 0.0;
     audioRecordingStartSet = false;
     wasRecordingAudio = false;
     
-    DBG("Recording cleared");
+    // Clear live MIDI notes (from YIN or MIDI input)
+    {
+        std::lock_guard<std::mutex> lock(liveMidiMutex);
+        liveMidiNotes.clear();
+    }
+    
+    // Reset YIN monophonic pitch detector
+    audioToMidiProcessor.reset();
+    
+    // Clear edited tracks
+    editedTracks.clear();
+    
+    // Reset recording enabled flag
+    recordingEnabled.store(false);
+    
+    DBG("Recording fully cleared");
 }
 
 void NewProjectAudioProcessor::reoptimizeRecordedNotes(int midiChannelFilter)
@@ -2841,6 +3008,270 @@ void NewProjectAudioProcessor::setEditedTrack(int trackIndex, const TabTrack& tr
     editedTracks[trackIndex] = track;
 }
 
+//==============================================================================
+// Delete a recorded note by measure/beat/string
+//==============================================================================
+void NewProjectAudioProcessor::deleteRecordedNote(int measureIndex, int beatIndex, int stringIndex)
+{
+    std::lock_guard<std::mutex> lock(recordingMutex);
+    
+    if (recordedNotes.empty()) return;
+    
+    int numerator = hostTimeSigNumerator.load();
+    int denominator = hostTimeSigDenominator.load();
+    double beatsPerMeasure = numerator * (4.0 / denominator);
+    int barNum = measureIndex + 1;
+    
+    // Collect notes in this measure (same logic as updateRecordedNotePosition)
+    std::vector<std::pair<size_t, RecordedNote*>> notesInMeasure;
+    for (size_t i = 0; i < recordedNotes.size(); ++i)
+    {
+        auto& note = recordedNotes[i];
+        double roundedPPQ = std::round(note.startBeat * 1000.0) / 1000.0;
+        int noteBar = static_cast<int>(roundedPPQ / beatsPerMeasure) + 1;
+        
+        double positionInMeasure = roundedPPQ - (noteBar - 1) * beatsPerMeasure;
+        double distanceToNextBar = beatsPerMeasure - positionInMeasure;
+        double originalDuration = note.endBeat - note.startBeat;
+        
+        if (distanceToNextBar < 0.5 && distanceToNextBar > 0.001)
+        {
+            double truncationRatio = distanceToNextBar / std::max(0.001, originalDuration);
+            if (truncationRatio < 0.25 && originalDuration > 0.25)
+                noteBar = noteBar + 1;
+        }
+        
+        if (noteBar == barNum)
+            notesInMeasure.push_back({i, &note});
+    }
+    
+    if (notesInMeasure.empty()) return;
+    
+    // Sort by startBeat
+    std::sort(notesInMeasure.begin(), notesInMeasure.end(),
+        [](const auto& a, const auto& b) { return a.second->startBeat < b.second->startBeat; });
+    
+    // Group into slots (same logic as updateRecordedNotePosition)
+    double subdivision = 0.125;
+    double chordThreshold = 0.08;
+    double measureStartBeat = (barNum - 1) * beatsPerMeasure;
+    
+    struct SlotGroup { int slot; std::vector<std::pair<size_t, RecordedNote*>> notes; };
+    std::vector<SlotGroup> slotGroups;
+    int lastOccupiedSlot = -1;
+    double lastStartTime = -999.0;
+    
+    for (auto& [noteIdx, notePtr] : notesInMeasure)
+    {
+        double posInMeasure = notePtr->startBeat - measureStartBeat;
+        if (posInMeasure < 0.0) posInMeasure = 0.0;
+        int idealSlot = (int)(posInMeasure / subdivision + 0.5);
+        
+        bool isChord = !slotGroups.empty() && std::abs(notePtr->startBeat - lastStartTime) < chordThreshold;
+        if (isChord)
+        {
+            slotGroups.back().notes.push_back({noteIdx, notePtr});
+        }
+        else
+        {
+            int slot = std::max(idealSlot, lastOccupiedSlot + 1);
+            int maxSlots = static_cast<int>(beatsPerMeasure / subdivision);
+            slot = std::clamp(slot, 0, maxSlots - 1);
+            SlotGroup group;
+            group.slot = slot;
+            group.notes.push_back({noteIdx, notePtr});
+            slotGroups.push_back(group);
+            lastOccupiedSlot = slot;
+        }
+        lastStartTime = notePtr->startBeat;
+    }
+    
+    // Walk through beats to find the matching beatIndex
+    int currentBeatIdx = 0;
+    int currentSlot = 0;
+    int maxSlots = static_cast<int>(beatsPerMeasure / subdivision);
+    size_t groupIdx = 0;
+    
+    while (currentSlot < maxSlots && groupIdx <= slotGroups.size())
+    {
+        if (groupIdx < slotGroups.size() && slotGroups[groupIdx].slot == currentSlot)
+        {
+            if (currentBeatIdx == beatIndex)
+            {
+                // Found the beat! Delete the note on stringIndex
+                for (auto& [recIdx, notePtr] : slotGroups[groupIdx].notes)
+                {
+                    if (notePtr->string == stringIndex)
+                    {
+                        DBG("Deleting recordedNotes[" << recIdx << "] on string " << stringIndex);
+                        recordedNotes.erase(recordedNotes.begin() + recIdx);
+                        return;
+                    }
+                }
+                DBG("Note not found on string " << stringIndex << " in beat " << beatIndex);
+                return;
+            }
+            
+            int nextSlot = maxSlots;
+            if (groupIdx + 1 < slotGroups.size())
+                nextSlot = slotGroups[groupIdx + 1].slot;
+            currentSlot = nextSlot;
+            groupIdx++;
+            currentBeatIdx++;
+        }
+        else
+        {
+            int nextNoteSlot = (groupIdx < slotGroups.size()) ? slotGroups[groupIdx].slot : maxSlots;
+            while (currentSlot < nextNoteSlot)
+            {
+                int remaining = nextNoteSlot - currentSlot;
+                int pauseDuration;
+                if (remaining >= 32) pauseDuration = 32;
+                else if (remaining >= 16) pauseDuration = 16;
+                else if (remaining >= 8) pauseDuration = 8;
+                else if (remaining >= 4) pauseDuration = 4;
+                else if (remaining >= 2) pauseDuration = 2;
+                else pauseDuration = 1;
+                currentSlot += pauseDuration;
+                currentBeatIdx++;
+            }
+        }
+    }
+}
+
+//==============================================================================
+// Update recorded note duration (adjust endBeat based on new duration)
+//==============================================================================
+void NewProjectAudioProcessor::updateRecordedNoteDuration(int measureIndex, int beatIndex, int newDurationValue, bool isDotted)
+{
+    std::lock_guard<std::mutex> lock(recordingMutex);
+    
+    if (recordedNotes.empty()) return;
+    
+    int numerator = hostTimeSigNumerator.load();
+    int denominator = hostTimeSigDenominator.load();
+    double beatsPerMeasure = numerator * (4.0 / denominator);
+    int barNum = measureIndex + 1;
+    double measureStartBeat = (barNum - 1) * beatsPerMeasure;
+    
+    // Calculate new duration in quarter notes
+    double newDurInQuarters = 4.0 / static_cast<double>(newDurationValue);
+    if (isDotted) newDurInQuarters *= 1.5;
+    
+    // Collect notes in this measure
+    std::vector<std::pair<size_t, RecordedNote*>> notesInMeasure;
+    for (size_t i = 0; i < recordedNotes.size(); ++i)
+    {
+        auto& note = recordedNotes[i];
+        double roundedPPQ = std::round(note.startBeat * 1000.0) / 1000.0;
+        int noteBar = static_cast<int>(roundedPPQ / beatsPerMeasure) + 1;
+        
+        double positionInMeasure = roundedPPQ - (noteBar - 1) * beatsPerMeasure;
+        double distanceToNextBar = beatsPerMeasure - positionInMeasure;
+        double originalDuration = note.endBeat - note.startBeat;
+        
+        if (distanceToNextBar < 0.5 && distanceToNextBar > 0.001)
+        {
+            double truncationRatio = distanceToNextBar / std::max(0.001, originalDuration);
+            if (truncationRatio < 0.25 && originalDuration > 0.25)
+                noteBar = noteBar + 1;
+        }
+        
+        if (noteBar == barNum)
+            notesInMeasure.push_back({i, &note});
+    }
+    
+    if (notesInMeasure.empty()) return;
+    
+    std::sort(notesInMeasure.begin(), notesInMeasure.end(),
+        [](const auto& a, const auto& b) { return a.second->startBeat < b.second->startBeat; });
+    
+    // Group into slots
+    double subdivision = 0.125;
+    double chordThreshold = 0.08;
+    
+    struct SlotGroup { int slot; std::vector<std::pair<size_t, RecordedNote*>> notes; };
+    std::vector<SlotGroup> slotGroups;
+    int lastOccupiedSlot = -1;
+    double lastStartTime = -999.0;
+    
+    for (auto& [noteIdx, notePtr] : notesInMeasure)
+    {
+        double posInMeasure = notePtr->startBeat - measureStartBeat;
+        if (posInMeasure < 0.0) posInMeasure = 0.0;
+        int idealSlot = (int)(posInMeasure / subdivision + 0.5);
+        
+        bool isChord = !slotGroups.empty() && std::abs(notePtr->startBeat - lastStartTime) < chordThreshold;
+        if (isChord)
+        {
+            slotGroups.back().notes.push_back({noteIdx, notePtr});
+        }
+        else
+        {
+            int slot = std::max(idealSlot, lastOccupiedSlot + 1);
+            int maxSlots = static_cast<int>(beatsPerMeasure / subdivision);
+            slot = std::clamp(slot, 0, maxSlots - 1);
+            SlotGroup group;
+            group.slot = slot;
+            group.notes.push_back({noteIdx, notePtr});
+            slotGroups.push_back(group);
+            lastOccupiedSlot = slot;
+        }
+        lastStartTime = notePtr->startBeat;
+    }
+    
+    // Walk through beats to find the matching beatIndex
+    int currentBeatIdx = 0;
+    int currentSlot = 0;
+    int maxSlots = static_cast<int>(beatsPerMeasure / subdivision);
+    size_t groupIdx = 0;
+    
+    while (currentSlot < maxSlots && groupIdx <= slotGroups.size())
+    {
+        if (groupIdx < slotGroups.size() && slotGroups[groupIdx].slot == currentSlot)
+        {
+            if (currentBeatIdx == beatIndex)
+            {
+                // Found the beat! Update all notes' endBeat to reflect the new duration
+                for (auto& [recIdx, notePtr] : slotGroups[groupIdx].notes)
+                {
+                    double newEnd = notePtr->startBeat + newDurInQuarters;
+                    // Clamp to measure end
+                    double measureEnd = measureStartBeat + beatsPerMeasure;
+                    if (newEnd > measureEnd) newEnd = measureEnd;
+                    notePtr->endBeat = newEnd;
+                    DBG("Updated recordedNotes[" << recIdx << "] duration to " << newDurInQuarters << " quarters");
+                }
+                return;
+            }
+            
+            int nextSlot = maxSlots;
+            if (groupIdx + 1 < slotGroups.size())
+                nextSlot = slotGroups[groupIdx + 1].slot;
+            currentSlot = nextSlot;
+            groupIdx++;
+            currentBeatIdx++;
+        }
+        else
+        {
+            int nextNoteSlot = (groupIdx < slotGroups.size()) ? slotGroups[groupIdx].slot : maxSlots;
+            while (currentSlot < nextNoteSlot)
+            {
+                int remaining = nextNoteSlot - currentSlot;
+                int pauseDuration;
+                if (remaining >= 32) pauseDuration = 32;
+                else if (remaining >= 16) pauseDuration = 16;
+                else if (remaining >= 8) pauseDuration = 8;
+                else if (remaining >= 4) pauseDuration = 4;
+                else if (remaining >= 2) pauseDuration = 2;
+                else pauseDuration = 1;
+                currentSlot += pauseDuration;
+                currentBeatIdx++;
+            }
+        }
+    }
+}
+
 TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
 {
     TabTrack track;
@@ -3192,8 +3623,10 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
                         if (note->hasVibrato)
                             tabNote.effects.vibrato = true;
                         
-                        // Bending
-                        if (note->maxBendValue > 0.05f) // Threshold
+                        // Bending - Threshold: 2.0 Halbtöne (200 cents = Ganzton)
+                        // Kleinere Werte sind Intonation, Vibrato oder Oberton-Artefakte
+                        // (Ein typischer Guitar-Bend ist mindestens ein Ganzton)
+                        if (note->maxBendValue >= 2.0f)
                         {
                             tabNote.effects.bend = true;
                             tabNote.effects.bendValue = note->maxBendValue;
@@ -3224,7 +3657,8 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
                                     
                                     TabBendPoint bp;
                                     bp.position = (int)(relPos * 60.0);
-                                    bp.value = ev.value;
+                                    // Clamp small values to 0 - only show significant bends in curve
+                                    bp.value = (std::abs(ev.value) < 50) ? 0 : ev.value;
                                     
                                     // Filter too close points (GP5 restriction)
                                     if (!tabNote.effects.bendPoints.empty())
@@ -4066,8 +4500,21 @@ bool NewProjectAudioProcessor::exportRecordingToGP5(const juce::File& outputFile
     }
     else
     {
-        // Get recorded tracks (one per MIDI channel, or merged if only one channel)
-        tracks = getRecordedTabTracks();
+        // Get recorded tracks, but use edited versions where available
+        auto baseTracks = getRecordedTabTracks();
+        for (int i = 0; i < (int)baseTracks.size(); ++i)
+        {
+            if (hasEditedTrack(i))
+            {
+                tracks.push_back(getEditedTrack(i));
+                DBG("Recording Track " << i << ": using edited version");
+            }
+            else
+            {
+                tracks.push_back(baseTracks[i]);
+                DBG("Recording Track " << i << ": using generated version");
+            }
+        }
     }
     
     if (tracks.empty() || (tracks.size() == 1 && tracks[0].measures.isEmpty()))
@@ -4126,8 +4573,21 @@ bool NewProjectAudioProcessor::exportRecordingToGP5WithMetadata(
     }
     else
     {
-        // Get recorded tracks (one per MIDI channel)
-        tracks = getRecordedTabTracks();
+        // Get recorded tracks, but use edited versions where available
+        auto baseTracks = getRecordedTabTracks();
+        for (int i = 0; i < (int)baseTracks.size(); ++i)
+        {
+            if (hasEditedTrack(i))
+            {
+                tracks.push_back(getEditedTrack(i));
+                DBG("Recording Track " << i << ": using edited version");
+            }
+            else
+            {
+                tracks.push_back(baseTracks[i]);
+                DBG("Recording Track " << i << ": using generated version");
+            }
+        }
     }
     
     if (tracks.empty() || (tracks.size() == 1 && tracks[0].measures.isEmpty()))
