@@ -17,6 +17,12 @@ Builds/
 *.exe
 *.vst3
 
+# But include ONNX Runtime prebuilt binaries (needed for build)
+!ThirdParty/onnxruntime/lib/onnxruntime.dll
+!ThirdParty/onnxruntime/lib/onnxruntime.lib
+!ThirdParty/onnxruntime/lib/onnxruntime_providers_shared.dll
+!ThirdParty/onnxruntime/lib/onnxruntime_providers_shared.lib
+
 # JUCE generated
 JuceLibraryCode/
 

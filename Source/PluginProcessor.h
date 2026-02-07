@@ -14,6 +14,7 @@
 #include "TabModels.h"
 #include "ChordMatcher.h"
 #include "AudioToMidiProcessor.h"
+#include "AudioTranscriber.h"
 // MidiExpressionEngine deaktiviert - crasht bei erster Note
 // #include "MidiExpressionEngine.h"
 #include <atomic>
@@ -279,14 +280,21 @@ public:
     // Audio-to-MIDI Mode
     //==============================================================================
     
-    /** Input mode: MIDI or Audio */
-    enum class InputMode { MIDI, Audio };
-    void setInputMode(InputMode mode) { inputMode.store(static_cast<int>(mode)); }
+    /** Input mode - automatically detected:
+     *  Player = no sidechain, no MIDI input (playback only)
+     *  MIDI   = no sidechain active, MIDI input present
+     *  Audio  = sidechain bus active (polyphonic transcription via BasicPitch)
+     */
+    enum class InputMode { Player = 0, MIDI = 1, Audio = 2 };
     InputMode getInputMode() const { return static_cast<InputMode>(inputMode.load()); }
     
     /** Get audio-to-MIDI processor for parameter control */
     AudioToMidiProcessor& getAudioToMidiProcessor() { return audioToMidiProcessor; }
     const AudioToMidiProcessor& getAudioToMidiProcessor() const { return audioToMidiProcessor; }
+    
+    /** Get polyphonic audio transcriber (BasicPitch / NeuralNote) */
+    AudioTranscriber& getAudioTranscriber() { return audioTranscriber; }
+    const AudioTranscriber& getAudioTranscriber() const { return audioTranscriber; }
     
     // Get live MIDI notes for display (thread-safe)
     struct LiveMidiNote {
@@ -494,9 +502,17 @@ private:
     std::atomic<int> positionLookahead { 4 };  // Default: 4 notes
     mutable int positionLookaheadCounter = 0;  // Counter for tracking notes
     
-    // Audio-to-MIDI mode
-    std::atomic<int> inputMode { 0 };  // 0 = MIDI, 1 = Audio
+    // Audio-to-MIDI mode (auto-detected: 0=Player, 1=MIDI, 2=Audio)
+    std::atomic<int> inputMode { 0 };
     AudioToMidiProcessor audioToMidiProcessor;
+    AudioTranscriber audioTranscriber;  // Polyphonic (Basic Pitch / NeuralNote)
+    bool hasMidiInputActivity = false;  // True when MIDI note-on events are received
+    bool wasRecordingAudio = false;         // Track REC+Play state for audio transcription
+    double audioRecordingStartBeat = 0.0;   // Beat position when audio recording started
+    bool audioRecordingStartSet = false;     // Whether audioRecordingStartBeat has been set
+    
+    /** Convert BasicPitch transcription results into recordedNotes for tab display */
+    void insertTranscribedNotesIntoTab();
     
     // Standard guitar tuning for MIDI to Tab conversion (E4, B3, G3, D3, A2, E2) - High to Low
     const std::array<int, 6> standardTuning = { 64, 59, 55, 50, 45, 40 };

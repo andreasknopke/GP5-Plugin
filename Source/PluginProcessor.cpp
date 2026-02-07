@@ -183,7 +183,10 @@ NewProjectAudioProcessor::NewProjectAudioProcessor()
      : AudioProcessor (BusesProperties()
                      #if ! JucePlugin_IsMidiEffect
                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
-                       // Sidechain Input für Audio-to-MIDI (VST3 Instrument braucht expliziten Sidechain statt Main Input)
+                       // Dummy Main Input (Bus 0 = kMain in VST3) - bleibt deaktiviert
+                       // Wird benötigt damit der Sidechain als kAux (Bus 1) registriert wird
+                       .withInput ("Input", juce::AudioChannelSet::stereo(), false)
+                       // Sidechain Input (Bus 1 = kAux in VST3) - Cubase zeigt nur kAux als Sidechain!
                        .withInput ("Sidechain", juce::AudioChannelSet::stereo(), false)
                      #endif
                        )
@@ -278,6 +281,9 @@ void NewProjectAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     
     // Audio-to-MIDI Processor vorbereiten
     audioToMidiProcessor.prepare(sampleRate, samplesPerBlock);
+    
+    // Polyphonic Audio Transcriber (BasicPitch) vorbereiten
+    audioTranscriber.prepare(sampleRate, samplesPerBlock);
 }
 
 void NewProjectAudioProcessor::releaseResources()
@@ -368,13 +374,34 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     }
 
     // =========================================================================
-    // Audio-to-MIDI - Wenn im Audio-Modus, generiere MIDI aus Sidechain Audio
+    // Auto-detect Input Mode: Sidechain aktiv → Audio, sonst MIDI/Player
+    // =========================================================================
+    {
+        auto* scBus = getBus(true, 1);  // Bus 1 = kAux = Sidechain
+        bool sidechainActive = (scBus != nullptr && scBus->isEnabled());
+        
+        if (sidechainActive)
+            inputMode.store(static_cast<int>(InputMode::Audio));
+        else if (hasMidiInputActivity)
+            inputMode.store(static_cast<int>(InputMode::MIDI));
+        else
+            inputMode.store(static_cast<int>(InputMode::Player));
+    }
+    
+    // =========================================================================
+    // Audio-to-MIDI - Wenn Sidechain aktiv, generiere MIDI aus Sidechain Audio
     // =========================================================================
     if (inputMode.load() == static_cast<int>(InputMode::Audio))
     {
-        // Sidechain Audio für Pitch-Detection holen
-        // Bei VST3 Instrumenten ist Sidechain der erste (und einzige) Input Bus
-        auto* sidechainBus = getBus(true, 0);  // Input Bus 0 = unser "Sidechain" Bus
+        bool isPlaying = hostIsPlaying.load();
+        bool isRecArmed = hostIsRecording.load();
+        bool isManualRec = recordingEnabled.load();
+        double currentBeat = hostPositionBeats.load();
+        bool shouldRecordAudio = isPlaying && currentBeat >= 0.0 && (isRecArmed || isManualRec);
+        
+        // Sidechain Audio holen
+        // Bus 0 = kMain (Dummy, disabled), Bus 1 = kAux (Sidechain)
+        auto* sidechainBus = getBus(true, 1);  // Input Bus 1 = kAux = Sidechain
         
         if (sidechainBus != nullptr && sidechainBus->isEnabled())
         {
@@ -382,9 +409,61 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             
             if (sidechainBuffer.getNumChannels() > 0 && sidechainBuffer.getNumSamples() > 0)
             {
-                // Pitch-Detection mit Sidechain Audio
+                // Monophonic real-time pitch detection (YIN) - for live feedback
                 audioToMidiProcessor.processBlock(sidechainBuffer, midiMessages);
+                
+                // Polyphonic transcriber: nur bei REC+Play Audio akkumulieren
+                if (shouldRecordAudio)
+                {
+                    // Beim Start der Audio-Aufnahme: Start-Beat merken
+                    if (!audioRecordingStartSet)
+                    {
+                        int numerator = hostTimeSigNumerator.load();
+                        int denominator = hostTimeSigDenominator.load();
+                        double beatsPerMeasure = numerator * (4.0 / denominator);
+                        int currentMeasure = static_cast<int>(currentBeat / beatsPerMeasure);
+                        audioRecordingStartBeat = currentMeasure * beatsPerMeasure;
+                        audioRecordingStartSet = true;
+                        
+                        // Auch recordingStartBeat setzen (für Tab-Anzeige)
+                        if (!recordingStartSet)
+                        {
+                            recordingStartBeat = audioRecordingStartBeat;
+                            recordingStartSet = true;
+                            recordingFretPosition = getFretPosition();
+                        }
+                        
+                        // Vorherige Aufnahme löschen
+                        audioTranscriber.clearRecording();
+                        
+                        DBG("Audio recording started at beat " << currentBeat 
+                            << ", measure start: " << audioRecordingStartBeat);
+                    }
+                    
+                    audioTranscriber.pushAudioBlock(sidechainBuffer);
+                }
             }
+        }
+        
+        // Stop-Erkennung: Recording war aktiv und jetzt nicht mehr
+        // → Transkription starten
+        if (wasRecordingAudio && !shouldRecordAudio)
+        {
+            if (audioTranscriber.getRecordedDurationSeconds() > 0.1)
+            {
+                DBG("Audio recording stopped - starting BasicPitch transcription ("
+                    << juce::String(audioTranscriber.getRecordedDurationSeconds(), 1) << "s audio)");
+                audioTranscriber.startTranscription();
+            }
+            audioRecordingStartSet = false;
+        }
+        
+        wasRecordingAudio = shouldRecordAudio;
+        
+        // Poll: Wenn Transkription fertig → Noten in Tab einfügen
+        if (audioTranscriber.hasResults())
+        {
+            insertTranscribedNotesIntoTab();
         }
     }
 
@@ -411,6 +490,10 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             {
                 int midiNote = msg.getNoteNumber();
                 int velocity = msg.getVelocity();
+                
+                // Track MIDI input activity for auto-mode detection
+                hasMidiInputActivity = true;
+                
                 LiveMidiNote tabNote = midiNoteToTab(midiNote, velocity);
                 liveMidiNotes[midiNote] = tabNote;
                 
@@ -2095,6 +2178,93 @@ TabTrack NewProjectAudioProcessor::getEmptyTabTrack() const
 // Recording functionality (automatic based on DAW track record status)
 //==============================================================================
 
+void NewProjectAudioProcessor::insertTranscribedNotesIntoTab()
+{
+    // Get transcribed note events from BasicPitch
+    auto noteEvents = audioTranscriber.getNoteEvents();
+    
+    if (noteEvents.empty())
+    {
+        DBG("AudioTranscriber: No notes detected in transcription");
+        return;
+    }
+    
+    DBG("AudioTranscriber: Inserting " << noteEvents.size() << " transcribed notes into tab");
+    
+    double tempo = hostTempo.load();
+    if (tempo <= 0.0)
+        tempo = 120.0;
+    
+    // Beats per second = BPM / 60
+    double beatsPerSecond = tempo / 60.0;
+    
+    std::lock_guard<std::mutex> recLock(recordingMutex);
+    
+    // Setze recordingStartBeat falls nicht gesetzt
+    if (!recordingStartSet)
+    {
+        recordingStartBeat = audioRecordingStartBeat;
+        recordingStartSet = true;
+    }
+    
+    for (const auto& event : noteEvents)
+    {
+        // BasicPitch event times are in seconds (relative to start of recording at 22050 Hz)
+        // Convert to beats relative to DAW timeline
+        double startBeat = audioRecordingStartBeat + (event.startTime * beatsPerSecond);
+        double endBeat = audioRecordingStartBeat + (event.endTime * beatsPerSecond);
+        
+        // Quantize to 1/64 note grid (like MIDI recording does)
+        double quantizeGrid = 0.0625;
+        startBeat = std::round(startBeat / quantizeGrid) * quantizeGrid;
+        endBeat = std::round(endBeat / quantizeGrid) * quantizeGrid;
+        
+        // Ensure minimum duration
+        if (endBeat <= startBeat)
+            endBeat = startBeat + quantizeGrid;
+        
+        // MIDI note from BasicPitch (pitch is already MIDI note number)
+        int midiNote = juce::jlimit(0, 127, event.pitch);
+        
+        // Velocity from amplitude
+        int velocity = juce::jlimit(1, 127, static_cast<int>(event.amplitude * 127.0));
+        
+        // Convert to tab position using the same logic as MIDI recording
+        LiveMidiNote tabNote = midiNoteToTab(midiNote, velocity);
+        
+        RecordedNote recNote;
+        recNote.midiNote = midiNote;
+        recNote.midiChannel = 1;  // Audio input = channel 1
+        recNote.velocity = velocity;
+        recNote.string = tabNote.string;
+        recNote.fret = tabNote.fret;
+        recNote.startBeat = startBeat;
+        recNote.endBeat = endBeat;
+        recNote.isActive = false;  // Already complete
+        
+        // Pitch bend data from BasicPitch contour
+        if (!event.bends.empty())
+        {
+            recNote.maxBendValue = 0.0f;
+            for (int bend : event.bends)
+            {
+                // BasicPitch bends are in 1/3 semitones → convert to 1/100 semitones
+                int bendCents = static_cast<int>(bend * (100.0 / 3.0));
+                float bendSemis = std::abs(bendCents) / 100.0f;
+                if (bendSemis > recNote.maxBendValue)
+                    recNote.maxBendValue = bendSemis;
+            }
+        }
+        
+        recordedNotes.push_back(recNote);
+    }
+    
+    DBG("AudioTranscriber: " << noteEvents.size() << " notes inserted, total recorded: " << recordedNotes.size());
+    
+    // Mark results as consumed so we don't insert again
+    audioTranscriber.clearResults();
+}
+
 void NewProjectAudioProcessor::clearRecording()
 {
     std::lock_guard<std::mutex> lock(recordingMutex);
@@ -2109,6 +2279,12 @@ void NewProjectAudioProcessor::clearRecording()
     
     // Reset position tracking
     positionLookaheadCounter = 0;
+    
+    // Reset audio transcriber state
+    audioTranscriber.clearRecording();
+    audioRecordingStartBeat = 0.0;
+    audioRecordingStartSet = false;
+    wasRecordingAudio = false;
     
     DBG("Recording cleared");
 }

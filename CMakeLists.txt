@@ -42,7 +42,54 @@ juce_add_plugin(GP5_VST_Editor
     COPY_PLUGIN_AFTER_BUILD TRUE
 )
 
+# ==============================================================================
+# RTNeural (header-only, for Basic Pitch CNN inference)
+# ==============================================================================
+add_library(RTNeural INTERFACE)
+target_include_directories(RTNeural INTERFACE ${CMAKE_CURRENT_LIST_DIR}/ThirdParty/RTNeural)
+target_compile_definitions(RTNeural INTERFACE RTNEURAL_USE_STL=1)
+
+# ==============================================================================
+# ONNX Runtime (for Basic Pitch CQT feature extraction)
+# ==============================================================================
+add_library(onnxruntime SHARED IMPORTED)
+set_target_properties(onnxruntime PROPERTIES
+    IMPORTED_IMPLIB "${CMAKE_CURRENT_LIST_DIR}/ThirdParty/onnxruntime/lib/onnxruntime.lib"
+    IMPORTED_LOCATION "${CMAKE_CURRENT_LIST_DIR}/ThirdParty/onnxruntime/lib/onnxruntime.dll"
+)
+
+# ==============================================================================
+# Binary Data (model weights for Basic Pitch) - must be before BasicPitchCNN
+# ==============================================================================
+juce_add_binary_data(bin_data SOURCES
+    ThirdParty/ModelData/features_model.onnx
+    ThirdParty/ModelData/cnn_contour_model.json
+    ThirdParty/ModelData/cnn_note_model.json
+    ThirdParty/ModelData/cnn_onset_1_model.json
+    ThirdParty/ModelData/cnn_onset_2_model.json
+)
+
+# ==============================================================================
+# BasicPitchCNN static library (separate to allow optimization flags)
+# ==============================================================================
+add_library(BasicPitchCNN STATIC
+    Source/BasicPitch/BasicPitchCNN.cpp
+)
+target_include_directories(BasicPitchCNN PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/ThirdParty/RTNeural
+)
+target_compile_definitions(BasicPitchCNN PUBLIC RTNEURAL_USE_STL=1)
+target_link_libraries(BasicPitchCNN PUBLIC RTNeural bin_data)
+# Always optimize BasicPitchCNN (even in Debug) because RTNeural is very slow without optimization
+if (MSVC)
+    target_compile_options(BasicPitchCNN PUBLIC /O2)
+else()
+    target_compile_options(BasicPitchCNN PUBLIC -O3)
+endif()
+
+# ==============================================================================
 # Source-Dateien hinzufügen
+# ==============================================================================
 target_sources(GP5_VST_Editor
     PRIVATE
         Source/PluginProcessor.cpp
@@ -57,10 +104,31 @@ target_sources(GP5_VST_Editor
         Source/GP5Writer.h
         Source/AudioToMidiProcessor.cpp
         Source/AudioToMidiProcessor.h
+        Source/AudioTranscriber.cpp
+        Source/AudioTranscriber.h
         Source/TabModels.h
         Source/TabLayoutEngine.h
         Source/TabRenderer.h
         Source/TabViewComponent.h
+        # BasicPitch integration (NeuralNote-based polyphonic transcription)
+        Source/BasicPitch/BasicPitchConstants.h
+        Source/BasicPitch/Features.cpp
+        Source/BasicPitch/Features.h
+        Source/BasicPitch/BasicPitch.cpp
+        Source/BasicPitch/BasicPitch.h
+        Source/BasicPitch/Notes.cpp
+        Source/BasicPitch/Notes.h
+        Source/BasicPitch/NoteUtils.h
+        Source/BasicPitch/Utils.h
+        Source/BasicPitch/Resampler.cpp
+        Source/BasicPitch/Resampler.h
+)
+
+# Include directories for BasicPitch headers
+target_include_directories(GP5_VST_Editor PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/ThirdParty/onnxruntime/include
+    ${CMAKE_CURRENT_LIST_DIR}/ThirdParty/RTNeural
+    ${CMAKE_CURRENT_LIST_DIR}/Source/BasicPitch
 )
 
 # Compiler-Definitionen
@@ -70,6 +138,7 @@ target_compile_definitions(GP5_VST_Editor
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0
         JUCE_STRICT_REFCOUNTEDPOINTER=1
+        RTNEURAL_USE_STL=1
 )
 
 # JUCE-Module verlinken
@@ -83,12 +152,26 @@ target_link_libraries(GP5_VST_Editor
         juce::juce_audio_utils
         juce::juce_core
         juce::juce_data_structures
+        juce::juce_dsp
         juce::juce_events
         juce::juce_graphics
         juce::juce_gui_basics
         juce::juce_gui_extra
+        onnxruntime
+        BasicPitchCNN
+        bin_data
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags
+)
+
+# ==============================================================================
+# Copy ONNX Runtime DLL next to the built VST3 plugin
+# ==============================================================================
+add_custom_command(TARGET GP5_VST_Editor POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_LIST_DIR}/ThirdParty/onnxruntime/lib/onnxruntime.dll"
+        "$<TARGET_FILE_DIR:GP5_VST_Editor>"
+    COMMENT "Copying onnxruntime.dll to output directory"
 )
