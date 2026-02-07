@@ -1,12 +1,12 @@
 # GP5 VST Editor
 
-A VST3 plugin for loading, displaying, playing, and editing Guitar Pro files (.gp3, .gp4, .gp5, .gp, .gpx) directly in your DAW with realistic MIDI output for guitar samplers. The plugin also offers MIDI to GP5 transcription and Guitar Pro to MIDI conversion features.
+A VST3 plugin for loading, displaying, playing, and editing Guitar Pro files (.gp3, .gp4, .gp5, .gp, .gpx) directly in your DAW with realistic MIDI output for guitar samplers. The plugin also offers **Audio-to-Tab transcription** (powered by BasicPitch polyphonic pitch detection), MIDI to GP5 transcription, and Guitar Pro to MIDI conversion features.
 
 ---
 
 ## Description
 
-The GP5 VST Editor is a JUCE-based VST3 instrument plugin that reads Guitar Pro files and displays them as interactive tablature. The plugin synchronizes with your DAW's transport and generates expressive MIDI output with real-time pitch bend interpolation for authentic guitar playback.
+The GP5 VST Editor is a JUCE-based VST3 instrument plugin that reads Guitar Pro files and displays them as interactive tablature. It can also **transcribe live audio input** (guitar via sidechain) into tablature using a neural network (BasicPitch). The plugin synchronizes with your DAW's transport and generates expressive MIDI output with real-time pitch bend interpolation for authentic guitar playback.
 
 ### Main Features
 
@@ -23,6 +23,11 @@ The GP5 VST Editor is a JUCE-based VST3 instrument plugin that reads Guitar Pro 
 - **Zoom Function**: Adjust the display size to your needs
 - **Enhanced Export**: Export recordings with customizable metadata (Title, Artist, Track names)
 - **Recording & Editing Mode**:
+  - **Audio-to-Tab Transcription** (BasicPitch neural network):
+    - Record audio via DAW sidechain input (guitar, bass, etc.)
+    - Polyphonic pitch detection with automatic tablature generation
+    - Intelligent bend filtering (ignores intonation artifacts, only detects real bends ≥ 2 semitones)
+    - Vibrato detection from audio
   - **Live MIDI Input**: Real-time note display on tablature
   - **Smart Chord Recognition**: Automatically detects and displays chord names (C, Am, G7, etc.)
   - **Chord Shape Library**: Uses predefined guitar chord shapes (open, barre, power chords)
@@ -31,6 +36,10 @@ The GP5 VST Editor is a JUCE-based VST3 instrument plugin that reads Guitar Pro 
     - Changes persist when plugin UI is closed/reopened
     - Edited positions are saved in GP5 exports
     - Multiple consecutive edits to the same note work correctly
+  - **Rest Editing**:
+    - Delete rests to merge with adjacent notes
+    - Change rest durations with right-click
+    - Edits persist in playback, GP5 export, and across UI refreshes
   - **Fret Position Preferences**:
     - **Low (0-4)**: Prefer open position and first frets
     - **Mid (5-8)**: Prefer middle fret positions (default)
@@ -42,6 +51,7 @@ The GP5 VST Editor is a JUCE-based VST3 instrument plugin that reads Guitar Pro 
     - **Intelligent Bar Quantization**: Ensures notes fit perfectly within measure boundaries
   - **Cost-based Position Optimization**: Minimizes hand movement between positions
   - **Seamless Workflow**: Automatically switches to player mode after recording for immediate review
+  - **Clear with Confirmation**: Clear button with Yes/No dialog, fully resets all recording state
 - **GP5 Export**: Save your recordings as Guitar Pro 5 (.gp5) files with:
   - **Export Panel**: Edit song title, artist, and track names before exporting
   - Compatibility with Guitar Pro software (all versions)
@@ -53,6 +63,8 @@ The GP5 VST Editor is a JUCE-based VST3 instrument plugin that reads Guitar Pro 
   - Portamento (CC65) for slides
   - Modulation (CC1) for vibrato
   - Velocity layering for dynamics (ghost notes, accents)
+  - Recording playback uses edited track data (rest deletions, duration changes reflected in MIDI output)
+  - Clean MIDI-only output (sidechain audio is not passed through)
 
 ---
 
@@ -99,6 +111,8 @@ The completed VST3 plugin will be automatically copied to your system's VST3 fol
 
 ## Usage
 
+### Player Mode (Guitar Pro Files)
+
 1. Load the plugin in your DAW as an instrument
 2. Route the MIDI output to a guitar sampler (HALion, Kontakt, etc.)
 3. Click on "Load GuitarPro File" and select a .gp3, .gp4, .gp5, or .gp file
@@ -107,6 +121,17 @@ The completed VST3 plugin will be automatically copied to your system's VST3 fol
 6. Enable "Auto-Scroll" for automatic scrolling during playback
 7. Use the +/- buttons to zoom the tablature
 8. Click on the tablature to seek to that position
+
+### Editor Mode (Audio-to-Tab Recording)
+
+1. Load the plugin as an instrument and route MIDI output to a guitar sampler
+2. Set up a **sidechain input** from your guitar/audio track to the plugin
+3. Arm the track and press Record + Play in your DAW
+4. Play your guitar — the plugin captures audio via sidechain
+5. When you stop recording, **BasicPitch** (neural network) automatically transcribes the audio to tablature
+6. Review the transcription, edit note positions by clicking on them
+7. Delete unwanted rests (right-click or select and delete)
+8. Export to GP5 via the Export panel with custom metadata
 
 ### Sampler Configuration
 
@@ -122,16 +147,27 @@ For best results with pitch bends:
 ```
 GP5_VST_Editor/
 ├── Source/
-│   ├── PluginProcessor.cpp/h    # Audio processor with MIDI generation
+│   ├── PluginProcessor.cpp/h    # Audio processor with MIDI generation & recording
 │   ├── PluginEditor.cpp/h       # Plugin GUI
 │   ├── GP5Parser.cpp/h          # Guitar Pro 3/4/5 file parser
 │   ├── GP5Writer.cpp/h          # Guitar Pro 5 file writer (export)
 │   ├── GP7Parser.h              # Guitar Pro 7/8 (.gp) file parser
+│   ├── AudioTranscriber.cpp/h   # Audio-to-MIDI transcription (BasicPitch wrapper)
+│   ├── AudioToMidiProcessor.h   # Real-time YIN monophonic pitch detection
+│   ├── FretPositionCalculator.h # String/fret optimization with cost model
 │   ├── ChordMatcher.h           # Chord recognition and shape library
+│   ├── NoteEditComponent.h      # Note and group editing popups
+│   ├── ExportPanelComponent.h   # GP5 export with metadata editing
 │   ├── TabModels.h              # Data models for tablature
 │   ├── TabLayoutEngine.h        # Layout calculation
 │   ├── TabRenderer.h            # Tablature rendering with effects
-│   └── TabViewComponent.h       # Tablature view with click-to-seek
+│   ├── TabViewComponent.h       # Tablature view with click-to-seek & rest editing
+│   └── BasicPitch/              # BasicPitch CNN inference (polyphonic pitch detection)
+│       ├── BasicPitch.cpp/h     # Main transcription pipeline
+│       ├── Notes.cpp/h          # Note extraction with pitch bend contours
+│       └── BasicPitchCNN.cpp/h  # ONNX Runtime neural network inference
+├── ThirdParty/
+│   └── RTNeural/                # Real-time neural network inference library
 ├── CMakeLists.txt               # CMake build configuration
 └── README.md
 ```
@@ -224,6 +260,9 @@ AR-Sounds
 ## Acknowledgements
 
 - [JUCE Framework](https://juce.com/) - Cross-Platform Audio Framework
+- [BasicPitch](https://github.com/spotify/basic-pitch) - Polyphonic pitch detection neural network by Spotify
+- [ONNX Runtime](https://onnxruntime.ai/) - Neural network inference engine
+- [RTNeural](https://github.com/jatinchowdhury18/RTNeural) - Real-time neural network inference
 - [PyGuitarPro](https://github.com/Perlence/PyGuitarPro) - Reference for the GP file format specification
 - [tonal](https://github.com/tonaljs/tonal) - Music theory library (inspiration for chord detection algorithms)
 - [Gemini](https://gemini.google.com/) - AI assistance for algorithm design discussions
