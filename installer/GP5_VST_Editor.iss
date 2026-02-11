@@ -3,7 +3,7 @@
 ; No code signing (unsigned)
 
 #define MyAppName "GP5 VST Editor"
-#define MyAppVersion "1.0.1"
+#define MyAppVersion "1.1.0-beta"
 #define MyAppPublisher "AR-Sounds"
 #define MyAppURL "https://github.com/andreasknopke/GP5-Plugin"
 
@@ -35,7 +35,7 @@ PrivilegesRequired=admin
 WizardStyle=modern
 UninstallDisplayIcon={app}\Contents\x86_64-win\GP5_VST_Editor.vst3
 UninstallDisplayName={#MyAppName}
-VersionInfoVersion=1.0.1.0
+VersionInfoVersion=1.1.0.0
 VersionInfoDescription={#MyAppName} Installer
 VersionInfoCopyright=Copyright (C) 2026 {#MyAppPublisher}
 
