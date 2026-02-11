@@ -13,6 +13,7 @@
 #include "GP7Parser.h"
 #include "TabModels.h"
 #include "ChordMatcher.h"
+#include "ChordFingerDB.h"
 #include "AudioToMidiProcessor.h"
 #include "AudioTranscriber.h"
 // MidiExpressionEngine deaktiviert - crasht bei erster Note
@@ -281,6 +282,9 @@ public:
     void setMeasureQuantizationEnabled(bool enabled) { measureQuantizationEnabled.store(enabled); }
     bool isMeasureQuantizationEnabled() const { return measureQuantizationEnabled.load(); }
     
+    void setShowFingerNumbers(bool show) { showFingerNumbers.store(show); }
+    bool getShowFingerNumbers() const { return showFingerNumbers.load(); }
+    
     //==============================================================================
     // Audio-to-MIDI Mode
     //==============================================================================
@@ -313,6 +317,7 @@ public:
         int velocity = 0;
         int string = 0;    // Calculated string (0 = highest)
         int fret = 0;      // Calculated fret
+        int fingerNumber = -1;  // Finger (0=open, 1-4=finger, -1=unassigned)
     };
     
     // Recorded note with timing information
@@ -326,6 +331,7 @@ public:
         bool isActive = false;    // Still being held
         
         int midiChannel = 1;      // Source channel
+        int fingerNumber = -1;    // Finger (1-4), -1 = not assigned
         
         // Recorded Effects
         float maxBendValue = 0.0f;           // Max deviation found
@@ -351,6 +357,9 @@ public:
     
     // Check if we have live MIDI input
     bool hasLiveMidiInput() const { return !liveMidiNotes.empty(); }
+    
+    // Get which strings should be muted (dead notes) for the current chord
+    std::array<bool, 6> getLiveMutedStrings() const { return liveMutedStrings; }
     
     //==============================================================================
     // Recording functionality (Editor Mode)
@@ -524,6 +533,9 @@ private:
     // Measure quantization: moves notes near bar end into next measure
     std::atomic<bool> measureQuantizationEnabled { true };  // Default: enabled
     
+    // Finger position display toggle
+    std::atomic<bool> showFingerNumbers { true };  // Default: on
+    
     // Audio-to-MIDI mode (auto-detected: 0=Player, 1=MIDI, 2=Audio)
     std::atomic<int> inputMode { 0 };
     AudioToMidiProcessor audioToMidiProcessor;
@@ -546,11 +558,19 @@ private:
     // Chord Matcher für Akkord-Erkennung und -Platzierung
     ChordMatcher chordMatcher;
     mutable juce::String detectedChordName;  // Erkannter Akkordname aus letztem getLiveMidiNotes()
+    mutable std::array<bool, 6> liveMutedStrings = { false, false, false, false, false, false };  // Muted strings for current chord
+    
+    // Chord Finger Database (loaded from CSV)
+    ChordFingerDB chordFingerDB;
+    mutable int lastFingerUsed = -1;     // Letzter verwendeter Finger (für Einzelnoten-Verkettung)
+    mutable int lastFingerString = -1;   // Saite des letzten Fingers
     
     // Last played position for cost-based note placement
     mutable int lastPlayedString = -1;  // -1 = no previous note
     mutable int lastPlayedFret = -1;
     mutable double lastNoteOffTime = 0.0;
+    mutable double lastNoteOnTime = 0.0;   // Timestamp of last note-on (for fast-passage detection)
+    mutable int lastFretDirection = 0;     // -1=descending, 0=none, +1=ascending (paper 6.2.9)
     
     // Structure for possible guitar positions
     struct GuitarPosition {

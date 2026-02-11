@@ -88,8 +88,18 @@ private:
     // 8h. Measure Quantization Toggle (Editor Mode only)
     juce::ToggleButton measureQuantizeButton { "Bar Quantize" };
     
+    // 8j. Finger Numbers Toggle
+    juce::ToggleButton fingerNumbersButton { "Fingers" };
+    
     // 8g. Note Edit Toggle (Player Mode)
     juce::ToggleButton noteEditButton { "Edit Notes" };
+    
+    // 8i. Apply Button (deferred apply for bottom bar settings)
+    juce::TextButton applyButton { "Apply" };
+    bool pendingSettingsChange = false;  // True when bottom bar settings changed but not yet applied
+    void applyPendingSettings();         // Show warning and apply
+    void markSettingsPending();          // Mark that settings have changed
+    bool isBottomBarVisible() const;     // True when in Note Edit mode or Editor mode
     
     // 9. Track Settings Panel (popup)
     std::unique_ptr<TrackSettingsComponent> trackSettingsPanel;

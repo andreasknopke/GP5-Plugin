@@ -12,6 +12,8 @@
 #include <limits>
 #include <algorithm>
 #include <map>
+#include <set>
+#include <functional>
 
 //==============================================================================
 // GM Instrument names for track naming (must be defined before use in processBlock)
@@ -205,6 +207,12 @@ NewProjectAudioProcessor::NewProjectAudioProcessor()
     // Initialize per-track beat tracking
     lastProcessedBeatPerTrack.resize(maxTracks, -1);
     lastProcessedMeasurePerTrack.resize(maxTracks, -1);
+    
+    // Load chord finger database from embedded BinaryData
+    {
+        chordFingerDB.loadFromBinaryData(BinaryData::chordfingers_csv, BinaryData::chordfingers_csvSize);
+        DBG("ChordFingerDB loaded: " << chordFingerDB.getEntryCount() << " entries from BinaryData");
+    }
 }
 
 NewProjectAudioProcessor::~NewProjectAudioProcessor()
@@ -573,6 +581,13 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                     }
                     recNote.endBeat = recNote.startBeat;  // Wird beim Note-Off aktualisiert
                     recNote.isActive = true;
+                    
+                    // Assign finger number for single notes (Paper: Distance Rule, Little Finger Rule)
+                    recNote.fingerNumber = ChordFingerDB::calculateFingerForNote(
+                        recNote.fret, recNote.string,
+                        lastPlayedFret, lastFingerUsed, lastFingerString);
+                    lastFingerUsed = recNote.fingerNumber;
+                    lastFingerString = recNote.string;
                     
                     recordedNotes.push_back(recNote);
                     activeRecordingNotes[midiNote] = recordedNotes.size() - 1;
@@ -1826,6 +1841,77 @@ float NewProjectAudioProcessor::calculatePositionCost(const GuitarPosition& curr
         cost -= 1.5f;
     }
 
+    // 8. Hohe Strafe für große Fret-Sprünge (>3) bei schnellen Passagen
+    //    Im Live-Modus nutzen wir die Zeit seit dem letzten Note-On.
+    //    Achtel bei 120 BPM = 0.25s, bei 200 BPM = 0.15s.
+    //    Threshold: 0.3s deckt Achtel und schneller ab.
+    if (fretDiff > 3 && current.fret != 0 && previous.fret != 0)
+    {
+        double now = juce::Time::getMillisecondCounterHiRes() / 1000.0;
+        double timeSinceLastNote = now - lastNoteOnTime;
+        if (lastNoteOnTime > 0.0 && timeSinceLastNote < 0.3)
+        {
+            // Je schneller die Passage, desto teurer der Sprung
+            float speedFactor = static_cast<float>(1.0 - (timeSinceLastNote / 0.3));  // 0..1
+            cost += (fretDiff - 3) * 50.0f * speedFactor;  // Sehr hohe Strafe
+        }
+    }
+
+    // 9. Ascending/Descending Direction Penalty (KTH Paper 6.2.9)
+    //    Wenn die Melodie sich in eine Richtung bewegt (aufsteigend/absteigend),
+    //    bevorzuge Positionen die diese Richtung beibehalten.
+    //    Richtungswechsel sind teurer, besonders bei schnellen Passagen.
+    if (lastFretDirection != 0 && current.fret != 0 && previous.fret != 0 && fretDiff > 0)
+    {
+        int currentDirection = (current.fret > previous.fret) ? 1 : -1;
+        if (currentDirection != lastFretDirection)
+        {
+            // Richtungswechsel - moderate Strafe
+            cost += 2.0f;
+        }
+        else
+        {
+            // Gleiche Richtung - kleiner Bonus (flüssigere Bewegung)
+            cost -= 1.0f;
+        }
+    }
+
+    // 10. String Change to Same Fret Penalty (KTH Paper 6.3.3)
+    //     Saitenwechsel zum gleichen Bund ist auf der Gitarre schwieriger als
+    //     man denkt - erfordert Barré oder schnellen Fingerwechsel.
+    //     Ausnahme: Leersaiten (fret 0) und adjacent strings (nur 1 Saite entfernt)
+    if (current.stringIndex != previous.stringIndex &&
+        current.fret == previous.fret && current.fret > 0)
+    {
+        int stringDist = std::abs(current.stringIndex - previous.stringIndex);
+        if (stringDist == 1)
+        {
+            // Benachbarte Saiten, gleicher Bund: Barré möglich, leichte Strafe
+            cost += 1.5f;
+        }
+        else
+        {
+            // Nicht-benachbarte Saiten, gleicher Bund: sehr schwierig
+            cost += 4.0f + stringDist * 1.0f;
+        }
+    }
+
+    // 11. Neck Position Scaling (KTH Paper 6.2.7)
+    //     Auf höheren Bünden (>12) sind die Abstände physisch kleiner,
+    //     daher sind größere Fret-Sprünge dort einfacher.
+    //     Reduziere die Fret-Distanz-Strafe proportional.
+    if (current.fret > 12 && previous.fret > 12 && fretDiff > 2)
+    {
+        // Durchschnittliche Position auf dem Hals
+        float avgFret = (current.fret + previous.fret) / 2.0f;
+        // Reduktionsfaktor: bei Fret 12 = 1.0 (kein Rabatt), bei Fret 24 = 0.6
+        float reductionFactor = 1.0f - (avgFret - 12.0f) * 0.033f;
+        reductionFactor = juce::jmax(0.6f, reductionFactor);
+        // Die Fret-Distanz-Kosten aus Punkt 1 teilweise zurückgeben
+        float fretCostReduction = fretDiff * 1.0f * (1.0f - reductionFactor);
+        cost -= fretCostReduction;
+    }
+
     return cost;
 }
 
@@ -1930,12 +2016,29 @@ NewProjectAudioProcessor::LiveMidiNote NewProjectAudioProcessor::midiNoteToTab(i
         {
             lastPlayedString = -1;
             lastPlayedFret = -1;
+            lastFretDirection = 0;  // Reset direction on timeout
+            lastFingerUsed = -1;    // Reset finger tracking on timeout
+            lastFingerString = -1;
             positionLookaheadCounter = 0;  // Reset counter on timeout
         }
     }
 
     // Finde beste Position mit Kostenfunktion
     GuitarPosition bestPos = findBestPosition(midiNote, lastPlayedString, lastPlayedFret);
+    
+    // Track note-on time for fast-passage detection in calculatePositionCost
+    lastNoteOnTime = juce::Time::getMillisecondCounterHiRes() / 1000.0;
+    
+    // Track fret movement direction for ascending/descending sequence awareness (Paper 6.2.9)
+    if (lastPlayedFret >= 0 && bestPos.fret > 0 && lastPlayedFret > 0)
+    {
+        int fretDelta = bestPos.fret - lastPlayedFret;
+        if (fretDelta > 0)
+            lastFretDirection = 1;   // ascending
+        else if (fretDelta < 0)
+            lastFretDirection = -1;  // descending
+        // fretDelta == 0: keep previous direction
+    }
     
     // Position Lookahead: Update last played position only every N notes
     // This helps the algorithm stay in one fret region during runs
@@ -1966,6 +2069,7 @@ std::vector<NewProjectAudioProcessor::LiveMidiNote> NewProjectAudioProcessor::ge
     if (liveMidiNotes.empty())
     {
         detectedChordName = "";  // Kein Akkord wenn keine Noten
+        liveMutedStrings = { false, false, false, false, false, false };
         return {};
     }
     
@@ -2027,11 +2131,23 @@ std::vector<NewProjectAudioProcessor::LiveMidiNote> NewProjectAudioProcessor::ge
             
             DBG("Chord matched: " << shape.name << " (cost: " << chordResult.totalCost << ")");
             
+            // Determine muted strings from the chord shape
+            // ChordShape.frets: index 0=E2(lowest), 5=E4(highest)
+            // Display/standardTuning: index 0=E4(highest), 5=E2(lowest)
+            // So we need to reverse: display string s corresponds to shape string (5-s)
+            liveMutedStrings = { false, false, false, false, false, false };
             for (int s = 0; s < 6; ++s)
             {
-                if (shape.frets[s] >= 0)  // Nicht gedämpft
+                if (shape.frets[5 - s] < 0)  // -1 = gedämpft (x)
+                    liveMutedStrings[s] = true;
+            }
+            
+            for (int s = 0; s < 6; ++s)
+            {
+                int shapeString = 5 - s;  // Reverse: display s=0(E4) -> shape 5(E4)
+                if (shape.frets[shapeString] >= 0)  // Nicht gedämpft
                 {
-                    int midiNote = standardTuning[s] + shape.frets[s];
+                    int midiNote = standardTuning[s] + shape.frets[shapeString];
                     
                     // Finde die entsprechende Velocity (oder Standard)
                     int velocity = 100;
@@ -2048,14 +2164,39 @@ std::vector<NewProjectAudioProcessor::LiveMidiNote> NewProjectAudioProcessor::ge
                     LiveMidiNote ln;
                     ln.midiNote = midiNote;
                     ln.velocity = velocity;
-                    ln.string = s;  // standardTuning[0]=E4(top), [5]=E2(bottom) - matches display
-                    ln.fret = shape.frets[s];
+                    ln.string = s;  // Display string: 0=E4(top), 5=E2(bottom)
+                    ln.fret = shape.frets[shapeString];
                     result.push_back(ln);
                 }
             }
             
             // Update lastPlayedFret für nächsten Akkord
             lastPlayedFret = shape.baseFret;
+            
+            // === Assign finger numbers for matched chord ===
+            {
+                std::array<int, 6> chordFrets = { -1, -1, -1, -1, -1, -1 };
+                for (const auto& ln : result)
+                    if (ln.string >= 0 && ln.string < 6)
+                        chordFrets[ln.string] = ln.fret;
+                
+                // Try database lookup first
+                std::array<int, 6> fingers = { -1, -1, -1, -1, -1, -1 };
+                if (chordFingerDB.isLoaded())
+                    fingers = chordFingerDB.findFingers(shape.name, chordFrets, standardTuning);
+                
+                // Fallback: algorithmic
+                bool hasDBFingers = false;
+                for (int f : fingers)
+                    if (f >= 0) { hasDBFingers = true; break; }
+                if (!hasDBFingers)
+                    fingers = ChordFingerDB::calculateFingersForChord(chordFrets);
+                
+                // Apply to result
+                for (auto& ln : result)
+                    if (ln.string >= 0 && ln.string < 6)
+                        ln.fingerNumber = fingers[ln.string];
+            }
             
             return result;
         }
@@ -2065,6 +2206,7 @@ std::vector<NewProjectAudioProcessor::LiveMidiNote> NewProjectAudioProcessor::ge
     // FALLBACK: Kein Akkord erkannt - verwende bestehenden Algorithmus
     // =========================================================================
     detectedChordName = "";  // Kein bekannter Akkord
+    liveMutedStrings = { false, false, false, false, false, false };  // No muted strings in fallback
     
     // Hole bevorzugten Fret-Bereich
     FretPosition pos = getFretPosition();
@@ -2159,8 +2301,8 @@ std::vector<NewProjectAudioProcessor::LiveMidiNote> NewProjectAudioProcessor::ge
     }
     
     // Finde die beste Kombination mit minimaler Bund-Spannweite
-    // Maximal 4 Bünde Unterschied (typische Handspanne), aber nur für Bünde > 0
-    const int maxFretSpan = 4;
+    // Maximal 3 Bünde Unterschied - gleichzeitige Noten dürfen NIE weiter auseinander sein!
+    const int maxFretSpan = 3;
     
     std::vector<LiveMidiNote> bestResult;
     int bestScore = -10000;
@@ -2282,6 +2424,41 @@ std::vector<NewProjectAudioProcessor::LiveMidiNote> NewProjectAudioProcessor::ge
         }
     }
     
+    // Assign finger numbers to fallback bestResult (backtracking or single-note path)
+    if (!bestResult.empty() && bestResult[0].fingerNumber < 0)
+    {
+        if (bestResult.size() > 1)
+        {
+            // Multi-note: use algorithmic chord finger calculation
+            std::array<int,6> chordFrets = {-1,-1,-1,-1,-1,-1};
+            for (const auto& n : bestResult)
+            {
+                if (n.string >= 0 && n.string < 6)
+                    chordFrets[n.string] = n.fret;
+            }
+            auto fingers = ChordFingerDB::calculateFingersForChord(chordFrets);
+            for (auto& n : bestResult)
+            {
+                if (n.string >= 0 && n.string < 6)
+                    n.fingerNumber = fingers[n.string];
+            }
+        }
+        else
+        {
+            // Single note: use single-note finger calculation
+            for (auto& n : bestResult)
+            {
+                if (n.string >= 0 && n.string < 6)
+                {
+                    std::array<int,6> singleFrets = {-1,-1,-1,-1,-1,-1};
+                    singleFrets[n.string] = n.fret;
+                    auto fingers = ChordFingerDB::calculateFingersForChord(singleFrets);
+                    n.fingerNumber = fingers[n.string];
+                }
+            }
+        }
+    }
+
     // Update lastPlayedFret for next call (inertia)
     if (!bestResult.empty())
     {
@@ -2415,6 +2592,13 @@ void NewProjectAudioProcessor::insertTranscribedNotesIntoTab()
             if (recNote.maxBendValue < 2.0f)
                 recNote.maxBendValue = 0.0f;
         }
+        
+        // Assign finger number for audio-transcribed notes
+        recNote.fingerNumber = ChordFingerDB::calculateFingerForNote(
+            recNote.fret, recNote.string,
+            lastPlayedFret, lastFingerUsed, lastFingerString);
+        lastFingerUsed = recNote.fingerNumber;
+        lastFingerString = recNote.string;
         
         recordedNotes.push_back(recNote);
     }
@@ -2639,6 +2823,25 @@ void NewProjectAudioProcessor::reoptimizeRecordedNotes(int midiChannelFilter)
                         if (cand.fret > 0 && cand.fret >= preferredMinFret && cand.fret <= preferredMaxFret)
                             cost -= 2.0f;
                         
+                        // Hohe Strafe für große Fret-Sprünge (>3) bei schnellen Noten
+                        // Achtel = 0.5 Beats, Sechzehntel = 0.25, 32stel = 0.125
+                        if (cand.fret != 0 && referenceFret > 0)
+                        {
+                            int fretJump = std::abs(cand.fret - referenceFret);
+                            if (fretJump > 3)
+                            {
+                                double noteDuration = recordedNotes[idx].endBeat - recordedNotes[idx].startBeat;
+                                if (noteDuration <= 0.5 + 0.01)  // Achtel oder kürzer (+ kleine Toleranz)
+                                {
+                                    // Je kürzer die Note, desto teurer der Sprung
+                                    float speedFactor = (noteDuration <= 0.125) ? 3.0f :   // 32stel
+                                                        (noteDuration <= 0.25)  ? 2.0f :   // 16tel
+                                                                                   1.0f;    // Achtel
+                                    cost += (fretJump - 3) * 50.0f * speedFactor;
+                                }
+                            }
+                        }
+                        
                         debugCosts.push_back({cand, cost});
                         
                         if (cost < bestCost)
@@ -2742,19 +2945,101 @@ void NewProjectAudioProcessor::reoptimizeRecordedNotes(int midiChannelFilter)
                 allOptions.push_back(options);
             }
             
-            // Einfache Greedy-Zuweisung (beste Option für jede Note, wenn Saite noch frei)
-            std::set<int> usedStrings;
-            std::vector<NoteOption> bestAssignment(group.size());
+            // Backtracking-Suche: gleichzeitige Noten dürfen NIE auf gleicher Saite sein
+            // und NIE mehr als 3 Bünde auseinander liegen!
+            const int maxChordFretSpan = 3;
+            std::vector<NoteOption> bestAssignment(allOptions.size());
+            int bestTotalScore = -100000;
             
-            for (size_t i = 0; i < allOptions.size(); ++i)
-            {
-                for (const auto& opt : allOptions[i])
+            std::function<void(size_t, std::vector<NoteOption>&, std::set<int>&)> findBestChord;
+            findBestChord = [&](size_t noteIdx, std::vector<NoteOption>& current, std::set<int>& usedStrings) {
+                if (noteIdx >= allOptions.size())
                 {
-                    if (usedStrings.count(opt.string) == 0)
+                    // Prüfe Fret-Spannweite (Leersaiten ausgenommen)
+                    int minF = 100, maxF = 0;
+                    for (const auto& opt : current)
                     {
-                        bestAssignment[i] = opt;
-                        usedStrings.insert(opt.string);
-                        break;
+                        if (opt.fret > 0)
+                        {
+                            minF = std::min(minF, opt.fret);
+                            maxF = std::max(maxF, opt.fret);
+                        }
+                    }
+                    if (minF <= maxF && maxF - minF > maxChordFretSpan)
+                        return;  // Spannweite > 3 Bünde = ungültig
+                    
+                    int totalScore = 0;
+                    for (const auto& opt : current)
+                        totalScore += opt.score;
+                    // Bonus für kompakte Griffbilder
+                    int span = (minF <= maxF) ? (maxF - minF) : 0;
+                    totalScore -= span * 10;
+                    if (span <= 2) totalScore += 20;
+                    
+                    if (totalScore > bestTotalScore)
+                    {
+                        bestTotalScore = totalScore;
+                        bestAssignment = current;
+                    }
+                    return;
+                }
+                
+                for (const auto& opt : allOptions[noteIdx])
+                {
+                    // Saite darf NICHT doppelt belegt sein
+                    if (usedStrings.count(opt.string) > 0)
+                        continue;
+                    
+                    // Frühe Prüfung: Fret-Spannweite
+                    int minF = 100, maxF = 0;
+                    for (const auto& prev : current)
+                    {
+                        if (prev.fret > 0) { minF = std::min(minF, prev.fret); maxF = std::max(maxF, prev.fret); }
+                    }
+                    if (opt.fret > 0)
+                    {
+                        int newMin = std::min(minF, opt.fret);
+                        int newMax = std::max(maxF, opt.fret);
+                        if (newMin <= newMax && newMax - newMin > maxChordFretSpan)
+                            continue;  // Würde > 3 Bünde Spannweite ergeben
+                    }
+                    
+                    current.push_back(opt);
+                    usedStrings.insert(opt.string);
+                    findBestChord(noteIdx + 1, current, usedStrings);
+                    usedStrings.erase(opt.string);
+                    current.pop_back();
+                }
+            };
+            
+            {
+                std::vector<NoteOption> current;
+                std::set<int> usedStrings;
+                findBestChord(0, current, usedStrings);
+            }
+            
+            // Fallback: Wenn Backtracking keine gültige Lösung fand (bestTotalScore noch -100000),
+            // verwende Greedy mit Unique-String-Constraint statt Defaults (string=0, fret=0)
+            if (bestTotalScore <= -100000)
+            {
+                std::set<int> usedStrings;
+                for (size_t i = 0; i < allOptions.size(); ++i)
+                {
+                    bool assigned = false;
+                    for (const auto& opt : allOptions[i])
+                    {
+                        if (usedStrings.count(opt.string) == 0)
+                        {
+                            bestAssignment[i] = opt;
+                            usedStrings.insert(opt.string);
+                            assigned = true;
+                            break;
+                        }
+                    }
+                    if (!assigned && !allOptions[i].empty())
+                    {
+                        // Letzte Möglichkeit: nimm die beste Option auch wenn Saite doppelt
+                        bestAssignment[i] = allOptions[i][0];
                     }
                 }
             }
@@ -2778,6 +3063,43 @@ void NewProjectAudioProcessor::reoptimizeRecordedNotes(int midiChannelFilter)
                 }
             }
             
+            // === Chord finger assignment ===
+            // For groups with 2+ notes, assign fingers using the DB or algorithmic method
+            if (group.size() >= 2)
+            {
+                // Build fret array for all 6 strings
+                std::array<int, 6> chordFrets = { -1, -1, -1, -1, -1, -1 };
+                for (size_t idx : group)
+                {
+                    int s = recordedNotes[idx].string;
+                    if (s >= 0 && s < 6)
+                        chordFrets[s] = recordedNotes[idx].fret;
+                }
+                
+                // Try database lookup first (if chord was detected)
+                std::array<int, 6> fingers = { -1, -1, -1, -1, -1, -1 };
+                if (chordFingerDB.isLoaded() && detectedChordName.isNotEmpty())
+                {
+                    fingers = chordFingerDB.findFingers(detectedChordName, chordFrets, standardTuning);
+                }
+                
+                // Fallback: algorithmic chord finger assignment
+                bool hasDBFingers = false;
+                for (int f : fingers)
+                    if (f >= 0) { hasDBFingers = true; break; }
+                
+                if (!hasDBFingers)
+                    fingers = ChordFingerDB::calculateFingersForChord(chordFrets);
+                
+                // Apply fingers to recorded notes
+                for (size_t idx : group)
+                {
+                    int s = recordedNotes[idx].string;
+                    if (s >= 0 && s < 6)
+                        recordedNotes[idx].fingerNumber = fingers[s];
+                }
+            }
+            
             // Update reference with lookahead for chords
             noteCounter++;
             if (noteCounter >= lookahead && fretCount > 0)
@@ -2791,7 +3113,10 @@ void NewProjectAudioProcessor::reoptimizeRecordedNotes(int midiChannelFilter)
     };
     
     // Verarbeite Noten in Gruppen nach Beat
-    const double beatTolerance = 0.01;  // Noten innerhalb von 0.01 Beats = gleichzeitig
+    // WICHTIG: Muss mit chordThreshold in getRecordedTabTrack() übereinstimmen!
+    // Sonst werden Noten dort als Akkord gruppiert, aber hier einzeln verarbeitet
+    // → gleiche Saite möglich → zweite Note wird in der Tab-Ausgabe überschrieben!
+    const double beatTolerance = 0.06;  // Noten innerhalb von 0.06 Beats = gleichzeitig (=chordThreshold)
     for (size_t idx : sortedIndices)
     {
         double noteBeat = recordedNotes[idx].startBeat;
@@ -3627,101 +3952,187 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
                 {
                     TabNote emptyNote; emptyNote.string = s; emptyNote.fret = -1; beat.notes.add(emptyNote);
                 }
-                for (const auto* note : group)
+                
+                // === Sicherheitsnetz: String-Konflikte auflösen ===
+                // Falls zwei Noten im gleichen Beat die gleiche Saite haben,
+                // versuche die zweite auf eine andere Saite umzulegen.
+                // Das passiert z.B. bei Oktav-Noten (C3+C4) die im reoptimize
+                // nicht korrekt gruppiert wurden.
                 {
-                    if (note->string >= 0 && note->string < 6)
+                    std::set<int> occupiedStrings;
+                    // Kopie der Noten, damit wir Konflikte auflösen können
+                    struct ResolvedNote {
+                        int midiNote;
+                        int string;
+                        int fret;
+                        int velocity;
+                        const RecordedNote* original;
+                    };
+                    std::vector<ResolvedNote> resolvedNotes;
+                    for (const auto* note : group)
                     {
-                        beat.notes.getReference(note->string).fret = note->fret;
-                        beat.notes.getReference(note->string).velocity = note->velocity;
-                        
-                        // === Apply Recorded Effects ===
-                        auto& tabNote = beat.notes.getReference(note->string);
-                        
-                        // Vibrato
-                        if (note->hasVibrato)
-                            tabNote.effects.vibrato = true;
-                        
-                        // Bending - Threshold: 2.0 Halbtöne (200 cents = Ganzton)
-                        // Kleinere Werte sind Intonation, Vibrato oder Oberton-Artefakte
-                        // (Ein typischer Guitar-Bend ist mindestens ein Ganzton)
-                        if (note->maxBendValue >= 2.0f)
+                        resolvedNotes.push_back({note->midiNote, note->string, note->fret, note->velocity, note});
+                    }
+                    
+                    for (size_t ni = 0; ni < resolvedNotes.size(); ++ni)
+                    {
+                        auto& rn = resolvedNotes[ni];
+                        if (rn.string >= 0 && rn.string < 6 && occupiedStrings.count(rn.string) == 0)
                         {
-                            tabNote.effects.bend = true;
-                            tabNote.effects.bendValue = note->maxBendValue;
+                            occupiedStrings.insert(rn.string);
+                        }
+                        else if (rn.string >= 0 && rn.string < 6)
+                        {
+                            // Konflikt! Diese Saite ist bereits belegt.
+                            // Versuche alternative Saite zu finden
+                            bool found = false;
+                            int bestAltScore = -100000;
+                            int bestAltString = -1;
+                            int bestAltFret = -1;
                             
-                            // Convert recorded raw events to GP5BendPoints (0-60 scale)
-                            if (!note->rawBendEvents.empty())
+                            for (int s = 0; s < 6; ++s)
                             {
-                                double noteStart = note->startBeat;
-                                double noteLen = note->endBeat - note->startBeat;
-                                if (noteLen < 0.001) noteLen = 0.001; // Safety
-                                
-                                tabNote.effects.bendPoints.clear();
-                                
-                                // Always start with a 0-point if not present
-                                if (note->rawBendEvents.front().beat > noteStart + 0.01)
+                                if (occupiedStrings.count(s) > 0) continue;
+                                int fret = rn.midiNote - standardTuning[s];
+                                if (fret >= 0 && fret <= 24)
                                 {
-                                    TabBendPoint startPt;
-                                    startPt.position = 0;
-                                    startPt.value = 0;
-                                    tabNote.effects.bendPoints.push_back(startPt);
-                                }
-                                
-                                for (const auto& ev : note->rawBendEvents)
-                                {
-                                    double relPos = (ev.beat - noteStart) / noteLen;
-                                    if (relPos < 0.0) relPos = 0.0;
-                                    if (relPos > 1.0) relPos = 1.0;
-                                    
-                                    TabBendPoint bp;
-                                    bp.position = (int)(relPos * 60.0);
-                                    // Clamp small values to 0 - only show significant bends in curve
-                                    bp.value = (std::abs(ev.value) < 50) ? 0 : ev.value;
-                                    
-                                    // Filter too close points (GP5 restriction)
-                                    if (!tabNote.effects.bendPoints.empty())
+                                    // Einfache Bewertung: bevorzuge Positionen nahe der aktuellen
+                                    int score = 100 - std::abs(fret - rn.fret) * 10;
+                                    // Check Fret-Spannweite mit bereits platzierten Noten
+                                    int minF = fret, maxF = fret;
+                                    for (size_t oi = 0; oi < ni; ++oi)
                                     {
-                                        if (bp.position == tabNote.effects.bendPoints.back().position)
-                                           tabNote.effects.bendPoints.back().value = bp.value; // Overwrite same pos
+                                        if (resolvedNotes[oi].fret > 0)
+                                        {
+                                            minF = std::min(minF, resolvedNotes[oi].fret);
+                                            maxF = std::max(maxF, resolvedNotes[oi].fret);
+                                        }
+                                    }
+                                    if (fret > 0) { minF = std::min(minF, fret); maxF = std::max(maxF, fret); }
+                                    if (minF <= maxF && maxF - minF > 3) 
+                                        score -= 500;  // Starke Strafe für > 3 Bünde Spannweite
+                                    
+                                    if (score > bestAltScore)
+                                    {
+                                        bestAltScore = score;
+                                        bestAltString = s;
+                                        bestAltFret = fret;
+                                    }
+                                }
+                            }
+                            
+                            if (bestAltString >= 0)
+                            {
+                                rn.string = bestAltString;
+                                rn.fret = bestAltFret;
+                                occupiedStrings.insert(bestAltString);
+                            }
+                            // Sonst: Note kann leider nicht platziert werden (alle Saiten belegt)
+                        }
+                    }
+                    
+                    // Jetzt die aufgelösten Noten in den Beat schreiben
+                    for (const auto& rn : resolvedNotes)
+                    {
+                        if (rn.string >= 0 && rn.string < 6)
+                        {
+                            beat.notes.getReference(rn.string).fret = rn.fret;
+                            beat.notes.getReference(rn.string).velocity = rn.velocity;
+                            
+                            // === Apply Finger Number ===
+                            if (rn.original->fingerNumber >= 0)
+                                beat.notes.getReference(rn.string).fingerNumber = rn.original->fingerNumber;
+                            
+                            // === Apply Recorded Effects ===
+                            auto& tabNote = beat.notes.getReference(rn.string);
+                            const auto* note = rn.original;
+                        
+                            // Vibrato
+                            if (note->hasVibrato)
+                                tabNote.effects.vibrato = true;
+                            
+                            // Bending - Threshold: 2.0 Halbtöne (200 cents = Ganzton)
+                            // Kleinere Werte sind Intonation, Vibrato oder Oberton-Artefakte
+                            // (Ein typischer Guitar-Bend ist mindestens ein Ganzton)
+                            if (note->maxBendValue >= 2.0f)
+                            {
+                                tabNote.effects.bend = true;
+                                tabNote.effects.bendValue = note->maxBendValue;
+                                
+                                // Convert recorded raw events to GP5BendPoints (0-60 scale)
+                                if (!note->rawBendEvents.empty())
+                                {
+                                    double noteStart = note->startBeat;
+                                    double noteLen = note->endBeat - note->startBeat;
+                                    if (noteLen < 0.001) noteLen = 0.001; // Safety
+                                    
+                                    tabNote.effects.bendPoints.clear();
+                                    
+                                    // Always start with a 0-point if not present
+                                    if (note->rawBendEvents.front().beat > noteStart + 0.01)
+                                    {
+                                        TabBendPoint startPt;
+                                        startPt.position = 0;
+                                        startPt.value = 0;
+                                        tabNote.effects.bendPoints.push_back(startPt);
+                                    }
+                                    
+                                    for (const auto& ev : note->rawBendEvents)
+                                    {
+                                        double relPos = (ev.beat - noteStart) / noteLen;
+                                        if (relPos < 0.0) relPos = 0.0;
+                                        if (relPos > 1.0) relPos = 1.0;
+                                        
+                                        TabBendPoint bp;
+                                        bp.position = (int)(relPos * 60.0);
+                                        // Clamp small values to 0 - only show significant bends in curve
+                                        bp.value = (std::abs(ev.value) < 50) ? 0 : ev.value;
+                                        
+                                        // Filter too close points (GP5 restriction)
+                                        if (!tabNote.effects.bendPoints.empty())
+                                        {
+                                            if (bp.position == tabNote.effects.bendPoints.back().position)
+                                               tabNote.effects.bendPoints.back().value = bp.value; // Overwrite same pos
+                                            else
+                                               tabNote.effects.bendPoints.push_back(bp);
+                                        }
                                         else
-                                           tabNote.effects.bendPoints.push_back(bp);
+                                            tabNote.effects.bendPoints.push_back(bp);
+                                    }
+                                    
+                                    // Ensure end point
+                                    if (tabNote.effects.bendPoints.empty() || tabNote.effects.bendPoints.back().position < 60)
+                                    {
+                                         TabBendPoint endPt;
+                                         endPt.position = 60;
+                                         // Hold last value
+                                         if (!tabNote.effects.bendPoints.empty())
+                                             endPt.value = tabNote.effects.bendPoints.back().value;
+                                         else
+                                             endPt.value = 0;
+                                         tabNote.effects.bendPoints.push_back(endPt);
+                                    }
+                                    
+                                    // Determine Bend Type based on curve shape
+                                    // 1=Bend, 2=Bend+Release, 3=Release, 4=PreBend, 5=PreBend+Release
+                                    bool startsZero = (tabNote.effects.bendPoints.front().value < 10);
+                                    bool endsLow = (tabNote.effects.bendPoints.back().value < 10);
+                                    
+                                    if (startsZero)
+                                    {
+                                        if (endsLow) tabNote.effects.bendType = 2; // Bend+Release
+                                        else tabNote.effects.bendType = 1; // Bend
                                     }
                                     else
-                                        tabNote.effects.bendPoints.push_back(bp);
-                                }
-                                
-                                // Ensure end point
-                                if (tabNote.effects.bendPoints.empty() || tabNote.effects.bendPoints.back().position < 60)
-                                {
-                                     TabBendPoint endPt;
-                                     endPt.position = 60;
-                                     // Hold last value
-                                     if (!tabNote.effects.bendPoints.empty())
-                                         endPt.value = tabNote.effects.bendPoints.back().value;
-                                     else
-                                         endPt.value = 0;
-                                     tabNote.effects.bendPoints.push_back(endPt);
-                                }
-                                
-                                // Determine Bend Type based on curve shape
-                                // 1=Bend, 2=Bend+Release, 3=Release, 4=PreBend, 5=PreBend+Release
-                                bool startsZero = (tabNote.effects.bendPoints.front().value < 10);
-                                bool endsLow = (tabNote.effects.bendPoints.back().value < 10);
-                                
-                                if (startsZero)
-                                {
-                                    if (endsLow) tabNote.effects.bendType = 2; // Bend+Release
-                                    else tabNote.effects.bendType = 1; // Bend
-                                }
-                                else
-                                {
-                                    if (endsLow) tabNote.effects.bendType = 3; // Release (PreBend+Release?)
-                                    else tabNote.effects.bendType = 4; // PreBend or Hold
+                                    {
+                                        if (endsLow) tabNote.effects.bendType = 3; // Release (PreBend+Release?)
+                                        else tabNote.effects.bendType = 4; // PreBend or Hold
+                                    }
                                 }
                             }
                         }
                     }
-                }
+                }  // Ende Sicherheitsnetz-Block
             }
             else
             {

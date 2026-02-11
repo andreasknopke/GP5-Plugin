@@ -457,6 +457,18 @@ private:
             drawVibrato(g, x, vibratoY, vibratoWidth);
         }
         
+        // Draw finger number BELOW the fret number (when enabled)
+        if (config.showFingerNumbers && note.fingerNumber >= 1 && note.fingerNumber <= 4)
+        {
+            g.setFont(config.fretFontSize * 0.75f);
+            g.setColour(config.fingerColour);
+            juce::String fingerText = juce::String(note.fingerNumber);
+            float fingerY = y + bgHeight / 2.0f + 1.0f;
+            g.drawText(fingerText,
+                       juce::Rectangle<float>(x - bgWidth / 2.0f, fingerY, bgWidth, bgHeight * 0.75f),
+                       juce::Justification::centred, false);
+        }
+        
         // Slides werden separat in drawSlides() gezeichnet, nicht hier
     }
     

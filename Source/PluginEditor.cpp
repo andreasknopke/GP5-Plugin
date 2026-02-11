@@ -165,8 +165,8 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
         else if (selectedId == 3)
             audioProcessor.setFretPosition(NewProjectAudioProcessor::FretPosition::High);
         
-        // Recalculate recorded notes with new settings
-        reoptimizeAndRefreshNotes();
+        // Mark settings as pending (apply with Apply button)
+        markSettingsPending();
     };
     fretPositionSelector.setVisible(false);  // Nur im Editor-Modus sichtbar
     
@@ -193,8 +193,8 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
         else if (selectedId == 5) threshold = 1.0;   // 1/4
         audioProcessor.setLegatoQuantization(threshold);
         
-        // Recalculate recorded notes with new settings
-        reoptimizeAndRefreshNotes();
+        // Mark settings as pending (apply with Apply button)
+        markSettingsPending();
     };
     legatoQuantizeSelector.setVisible(false);  // Nur im Editor-Modus sichtbar
     
@@ -215,8 +215,8 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
         int selectedId = posLookaheadSelector.getSelectedId();
         audioProcessor.setPositionLookahead(selectedId);
         
-        // Recalculate recorded notes with new settings
-        reoptimizeAndRefreshNotes();
+        // Mark settings as pending (apply with Apply button)
+        markSettingsPending();
     };
     posLookaheadSelector.setVisible(false);  // Nur im Editor-Modus sichtbar
     
@@ -234,10 +234,23 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     measureQuantizeButton.setToggleState(audioProcessor.isMeasureQuantizationEnabled(), juce::dontSendNotification);
     measureQuantizeButton.onClick = [this] {
         audioProcessor.setMeasureQuantizationEnabled(measureQuantizeButton.getToggleState());
-        // Recalculate recorded notes with new setting
-        reoptimizeAndRefreshNotes();
+        // Mark settings as pending (apply with Apply button)
+        markSettingsPending();
     };
     measureQuantizeButton.setVisible(false);  // Nur im Editor-Modus sichtbar
+    
+    // Finger Numbers Toggle (Editor Mode)
+    addAndMakeVisible (fingerNumbersButton);
+    fingerNumbersButton.setColour (juce::ToggleButton::textColourId, juce::Colours::lightgrey);
+    fingerNumbersButton.setColour (juce::ToggleButton::tickColourId, juce::Colour(0xFF0077CC));
+    fingerNumbersButton.setToggleState(audioProcessor.getShowFingerNumbers(), juce::dontSendNotification);
+    tabView.setShowFingerNumbers(audioProcessor.getShowFingerNumbers());  // Sync initial state
+    fingerNumbersButton.onClick = [this] {
+        bool show = fingerNumbersButton.getToggleState();
+        audioProcessor.setShowFingerNumbers(show);
+        tabView.setShowFingerNumbers(show);
+    };
+    fingerNumbersButton.setVisible(false);  // Nur im Editor-Modus sichtbar
     
     // Note Edit Toggle Button (Player Mode only)
     addAndMakeVisible (noteEditButton);
@@ -245,6 +258,14 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
     noteEditButton.setColour (juce::ToggleButton::tickColourId, juce::Colours::cyan);
     noteEditButton.onClick = [this] { noteEditToggled(); };
     noteEditButton.setVisible(false);  // Nur im Player-Modus mit geladenem File sichtbar
+    
+    // Apply Button (deferred apply for bottom bar settings)
+    addAndMakeVisible (applyButton);
+    applyButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF4CAF50));  // Green
+    applyButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    applyButton.onClick = [this] { applyPendingSettings(); };
+    applyButton.setVisible(false);
+    applyButton.setEnabled(false);
     
     // Tabulatur-Ansicht
     addAndMakeVisible (tabView);
@@ -316,8 +337,8 @@ void NewProjectAudioProcessorEditor::paint (juce::Graphics& g)
     // Hintergrundfarbe (Dunkelgrau für den Pro-Look)
     g.fillAll (juce::Colour(0xFF2D2D30));
     
-    // Bottom Bar Hintergrund (nur im Editor-Modus)
-    if (!audioProcessor.isFileLoaded())
+    // Bottom Bar Hintergrund (im Editor-Modus oder Note Edit Modus)
+    if (isBottomBarVisible())
     {
         auto bottomBarArea = getLocalBounds().removeFromBottom(30);
         g.setColour (juce::Colour(0xFF3C3C3C));
@@ -343,7 +364,8 @@ void NewProjectAudioProcessorEditor::resized()
     transportLabel.setBounds (header);
     
     // Bottom Bar (30px hoch) - Editor-Modus Selektoren (Fret, Legato, Pos)
-    bool showBottomBar = !audioProcessor.isFileLoaded();  // Nur im Editor-Modus
+    // Sichtbar im Editor-Modus UND im Note Edit Modus (auch mit geladenem File)
+    bool showBottomBar = isBottomBarVisible();
     if (showBottomBar)
     {
         auto bottomBar = bounds.removeFromBottom(30);
@@ -372,10 +394,18 @@ void NewProjectAudioProcessorEditor::resized()
         
         // Measure Quantization Toggle
         measureQuantizeButton.setBounds (bottomBar.removeFromLeft(110));
+        bottomBar.removeFromLeft(10); // Spacer
+        
+        // Finger Numbers Toggle
+        fingerNumbersButton.setBounds (bottomBar.removeFromLeft(80));
+        bottomBar.removeFromLeft(20); // Spacer
+        
+        // Apply Button (rechtsbündig)
+        applyButton.setBounds (bottomBar.removeFromRight(70));
     }
     else
     {
-        // Player-Modus - Bottom Bar Elemente nicht sichtbar
+        // Player-Modus (ohne Note Edit) - Bottom Bar Elemente nicht sichtbar
         fretPositionLabel.setBounds (0, 0, 0, 0);
         fretPositionSelector.setBounds (0, 0, 0, 0);
         legatoQuantizeLabel.setBounds (0, 0, 0, 0);
@@ -384,6 +414,8 @@ void NewProjectAudioProcessorEditor::resized()
         posLookaheadSelector.setBounds (0, 0, 0, 0);
         allTracksCheckbox.setBounds (0, 0, 0, 0);
         measureQuantizeButton.setBounds (0, 0, 0, 0);
+        fingerNumbersButton.setBounds (0, 0, 0, 0);
+        applyButton.setBounds (0, 0, 0, 0);
     }
     
     // Toolbar (45px hoch) - Buttons
@@ -505,14 +537,20 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         // Recording-Controls ausblenden im Player-Modus
         recordButton.setVisible(false);
         clearRecordingButton.setVisible(true);  // Sichtbar für Wechsel zu Editor-Modus
-        fretPositionLabel.setVisible(false);
-        fretPositionSelector.setVisible(false);
-        legatoQuantizeLabel.setVisible(false);
-        legatoQuantizeSelector.setVisible(false);
-        posLookaheadLabel.setVisible(false);
-        posLookaheadSelector.setVisible(false);
-        allTracksCheckbox.setVisible(false);
-        measureQuantizeButton.setVisible(false);
+        
+        // Bottom Bar Controls: sichtbar wenn Note Edit aktiv
+        bool noteEditActive = noteEditButton.getToggleState();
+        fretPositionLabel.setVisible(noteEditActive);
+        fretPositionSelector.setVisible(noteEditActive);
+        legatoQuantizeLabel.setVisible(noteEditActive);
+        legatoQuantizeSelector.setVisible(noteEditActive);
+        posLookaheadLabel.setVisible(noteEditActive);
+        posLookaheadSelector.setVisible(noteEditActive);
+        allTracksCheckbox.setVisible(noteEditActive);
+        measureQuantizeButton.setVisible(noteEditActive);
+        fingerNumbersButton.setVisible(noteEditActive);
+        applyButton.setVisible(noteEditActive);
+        applyButton.setEnabled(pendingSettingsChange);
     }
     else if (hasRecordings)
     {
@@ -538,6 +576,9 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         posLookaheadSelector.setVisible(true);
         allTracksCheckbox.setVisible(true);
         measureQuantizeButton.setVisible(true);
+        fingerNumbersButton.setVisible(true);
+        applyButton.setVisible(true);
+        applyButton.setEnabled(pendingSettingsChange);
         
         // Track-Selector mit aufgezeichneten Tracks aktualisieren
         updateTrackSelectorForRecording();
@@ -566,6 +607,9 @@ void NewProjectAudioProcessorEditor::updateModeDisplay()
         posLookaheadSelector.setVisible(true);
         allTracksCheckbox.setVisible(false);  // Keine Checkbox ohne mehrere Tracks
         measureQuantizeButton.setVisible(true);
+        fingerNumbersButton.setVisible(true);
+        applyButton.setVisible(true);
+        applyButton.setEnabled(pendingSettingsChange);
     }
 }
 
@@ -903,9 +947,11 @@ void NewProjectAudioProcessorEditor::timerCallback()
                 ln.string = note.string;
                 ln.fret = note.fret;
                 ln.velocity = note.velocity;
+                ln.fingerNumber = note.fingerNumber;
                 liveNotes.push_back(ln);
             }
             tabView.setLiveNotes(liveNotes);
+            tabView.setLiveMutedStrings(audioProcessor.getLiveMutedStrings());
             
             // Erkannten Akkordnamen anzeigen
             tabView.setLiveChordName(audioProcessor.getDetectedChordName());
@@ -1344,6 +1390,11 @@ void NewProjectAudioProcessorEditor::noteEditToggled()
     bool editingEnabled = noteEditButton.getToggleState();
     tabView.setNoteEditingEnabled(editingEnabled);
     
+    // Update bottom bar visibility (controls shown when Note Edit is active)
+    updateModeDisplay();
+    resized();
+    repaint();
+    
     if (editingEnabled)
     {
         infoLabel.setText("Note Editing: Click on a note to change its fret/string position", juce::dontSendNotification);
@@ -1410,4 +1461,60 @@ void NewProjectAudioProcessorEditor::reoptimizeAndRefreshNotes()
     {
         trackSelectionChanged();
     }
+}
+
+//==============================================================================
+bool NewProjectAudioProcessorEditor::isBottomBarVisible() const
+{
+    // Bottom bar is visible when:
+    // 1. Editor mode (no file loaded) - always
+    // 2. Note Edit mode is active (even with a loaded file)
+    if (!audioProcessor.isFileLoaded())
+        return true;
+    return noteEditButton.getToggleState();
+}
+
+void NewProjectAudioProcessorEditor::markSettingsPending()
+{
+    pendingSettingsChange = true;
+    applyButton.setEnabled(true);
+    applyButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFFFF9800));  // Orange = pending
+    repaint();
+}
+
+void NewProjectAudioProcessorEditor::applyPendingSettings()
+{
+    if (!pendingSettingsChange)
+        return;
+    
+    // Determine scope text
+    bool applyToAll = allTracksCheckbox.getToggleState();
+    juce::String scopeText = applyToAll 
+        ? "the ENTIRE song (all tracks)" 
+        : "the currently active track";
+    
+    // Show warning dialog
+    auto options = juce::MessageBoxOptions()
+        .withIconType(juce::MessageBoxIconType::WarningIcon)
+        .withTitle("Apply Settings")
+        .withMessage("This will recalculate " + scopeText + ".\n\n"
+                     "All note positions (fret/string assignments) will be re-optimized "
+                     "based on the new settings.\n\n"
+                     "Do you want to continue?")
+        .withButton("Apply")
+        .withButton("Cancel");
+    
+    juce::AlertWindow::showAsync(options, [this](int result) {
+        if (result == 1)  // "Apply" clicked
+        {
+            // Apply the settings
+            reoptimizeAndRefreshNotes();
+            
+            // Reset pending state
+            pendingSettingsChange = false;
+            applyButton.setEnabled(false);
+            applyButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF4CAF50));  // Green = no pending
+            repaint();
+        }
+    });
 }

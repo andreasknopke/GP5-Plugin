@@ -22,6 +22,11 @@ The GP5 VST Editor is a JUCE-based VST3 instrument plugin that reads Guitar Pro 
 - **Multi-Track Support**: Switch between different tracks with per-track MIDI channel, volume, pan, mute, and solo
 - **Zoom Function**: Adjust the display size to your needs
 - **Enhanced Export**: Export recordings with customizable metadata (Title, Artist, Track names)
+- **Live Finger Position Display**: Real-time fingering suggestions for live MIDI input
+  - Algorithmic finger assignment based on ergonomic cost factors
+  - Chord fingering database with 2600+ entries for accurate chord fingerings
+  - Visual finger numbers (1-4) displayed next to fret numbers
+  - Dead note indicators (X) on muted strings for proper chord voicing
 - **Recording & Editing Mode**:
   - **Audio-to-Tab Transcription** (BasicPitch neural network):
     - Record audio via DAW sidechain input (guitar, bass, etc.)
@@ -156,6 +161,7 @@ GP5_VST_Editor/
 │   ├── AudioToMidiProcessor.h   # Real-time YIN monophonic pitch detection
 │   ├── FretPositionCalculator.h # String/fret optimization with cost model
 │   ├── ChordMatcher.h           # Chord recognition and shape library
+│   ├── ChordFingerDB.h          # Chord fingering database & algorithmic finger assignment
 │   ├── NoteEditComponent.h      # Note and group editing popups
 │   ├── ExportPanelComponent.h   # GP5 export with metadata editing
 │   ├── TabModels.h              # Data models for tablature
@@ -166,6 +172,8 @@ GP5_VST_Editor/
 │       ├── BasicPitch.cpp/h     # Main transcription pipeline
 │       ├── Notes.cpp/h          # Note extraction with pitch bend contours
 │       └── BasicPitchCNN.cpp/h  # ONNX Runtime neural network inference
+├── resources/
+│   └── chord-fingers.csv        # Chord fingering database (2600+ entries)
 ├── ThirdParty/
 │   └── RTNeural/                # Real-time neural network inference library
 ├── CMakeLists.txt               # CMake build configuration
@@ -266,3 +274,13 @@ AR-Sounds
 - [PyGuitarPro](https://github.com/Perlence/PyGuitarPro) - Reference for the GP file format specification
 - [tonal](https://github.com/tonaljs/tonal) - Music theory library (inspiration for chord detection algorithms)
 - [Gemini](https://gemini.google.com/) - AI assistance for algorithm design discussions
+
+### Scientific References
+
+- **Ilczuk, A. & Sköld, H.** (2013). *"Putting a Finger on Guitars and Algorithms — Optimization of Guitar Chord Fingerings"*. KTH Royal Institute of Technology, Stockholm. — The ergonomic complexity factors and cost model for finger assignment are based on this research. Their analysis of 10 complexity factors (hand position, finger spread, barré difficulty, string skipping, etc.) forms the foundation of the algorithmic finger calculation.
+- **Sayegh, S.I.** (1989). *"Fingering for String Instruments with the Optimum Path Paradigm"*. Computer Music Journal, 13(3), 76–84. — Foundational work on optimal path algorithms for string instrument fingering.
+- **Radicioni, D.P. & Lombardo, V.** (2005). *"Computational Modeling of Chord Fingering for Guitar"*. — Research on computational approaches to guitar chord fingering optimization.
+
+### Chord Fingering Database
+
+The chord fingering database (`resources/chord-fingers.csv`) contains 2633 entries covering 18 root notes and 42 chord types with verified finger positions. This database enables accurate fingering suggestions for recognized chords during live playing.

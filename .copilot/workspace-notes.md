@@ -17,6 +17,11 @@ Beispiel:
 & "C:\Users\Andre.AUDIO-WS1\AppData\Local\Microsoft\WindowsApps\python3.13.exe" -m pip install paketname
 ```
 
+Zusätzlich ist Python auch über Miniconda verfügbar:
+```
+C:\Users\Andre.AUDIO-WS1\miniconda3\python.exe
+```
+
 PyGuitarPro ist installiert (Paketname: `PyGuitarPro`, import als `guitarpro`).
 
 ## CMake / Build

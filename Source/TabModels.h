@@ -104,6 +104,7 @@ struct TabNote
     int string = 0;         // Saitennummer (0 = höchste Saite, 5 = tiefste bei 6-Saiter)
     NoteEffects effects;    // Effekte und Artikulationen
     int velocity = 100;     // Anschlagstärke (0-127)
+    int fingerNumber = -1;    // Fingernummer: -1=keine, 1=Zeige-, 2=Mittel-, 3=Ring-, 4=Kleiner Finger
     
     // Für Ties (gehaltene Noten)
     bool isTied = false;
@@ -282,6 +283,10 @@ struct TabLayoutConfig
     juce::Colour slideColour = juce::Colour(0xFF666666);
     juce::Colour vibratoColour = juce::Colour(0xFF666666);
     juce::Colour palmMuteColour = juce::Colour(0xFF888888);
+    juce::Colour fingerColour = juce::Colour(0xFF0077CC);  // Finger number colour (blue)
+    
+    // Display options
+    bool showFingerNumbers = true;  // Show finger numbers below fret numbers
     
     // Berechnet die Gesamthöhe für n Saiten
     float getTotalHeight(int stringCount) const

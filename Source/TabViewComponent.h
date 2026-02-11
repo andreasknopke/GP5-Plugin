@@ -33,6 +33,7 @@ public:
         int string = 0;
         int fret = 0;
         int velocity = 100;
+        int fingerNumber = -1;  // Finger (0=open, 1-4=finger, -1=unassigned)
     };
     
     // Set chord name to display above live notes
@@ -80,6 +81,12 @@ public:
         repaint();
     }
     
+    // Set which strings are muted (dead notes) in the current chord
+    void setLiveMutedStrings(const std::array<bool, 6>& muted)
+    {
+        liveMutedStrings = muted;
+    }
+    
     // Enable/disable editor mode (show empty tab with live notes)
     void setEditorMode(bool enabled)
     {
@@ -88,6 +95,14 @@ public:
     }
     
     bool isEditorMode() const { return editorMode; }
+    
+    void setShowFingerNumbers(bool show)
+    {
+        config.showFingerNumbers = show;
+        repaint();
+    }
+    
+    bool getShowFingerNumbers() const { return config.showFingerNumbers; }
     
     void setZoom(float newZoom)
     {
@@ -455,6 +470,56 @@ public:
                                static_cast<int>(stringY - scaledConfig.fretFontSize/2 - 2),
                                static_cast<int>(textWidth + 6), 
                                static_cast<int>(scaledConfig.fretFontSize + 4),
+                               juce::Justification::centred, false);
+                    
+                    // Draw finger number to the right of the fret box (when enabled)
+                    if (note.fingerNumber >= 1 && note.fingerNumber <= 4)
+                    {
+                        float fingerFontSize = scaledConfig.fretFontSize;
+                        float boxW = fingerFontSize + 4.0f;
+                        float boxH = fingerFontSize + 4.0f;
+                        float fingerX = centerX + textWidth / 2 + 8.0f;  // Right of the orange box with gap
+                        float fingerY = stringY - boxH / 2.0f;
+                        
+                        // Green rounded rectangle background
+                        g.setColour(juce::Colour(0xFF00AA44));
+                        g.fillRoundedRectangle(fingerX, fingerY, boxW, boxH, 4.0f);
+                        
+                        // White border
+                        g.setColour(juce::Colours::white);
+                        g.drawRoundedRectangle(fingerX, fingerY, boxW, boxH, 4.0f, 1.5f);
+                        
+                        // White finger number text (same size as fret)
+                        g.setFont(juce::Font(juce::FontOptions(fingerFontSize)).boldened());
+                        g.drawText(juce::String(note.fingerNumber),
+                                   static_cast<int>(fingerX),
+                                   static_cast<int>(fingerY),
+                                   static_cast<int>(boxW),
+                                   static_cast<int>(boxH),
+                                   juce::Justification::centred, false);
+                    }
+                }
+            }
+            
+            // Draw muted string indicators (X) for dead notes
+            for (int s = 0; s < 6; ++s)
+            {
+                if (liveMutedStrings[s])
+                {
+                    float stringY = firstStringY + s * scaledConfig.stringSpacing;
+                    float xSize = scaledConfig.fretFontSize * 0.7f;
+                    
+                    // Draw red X with semi-transparent background
+                    g.setColour(juce::Colour(0x60FF0000));
+                    g.fillRoundedRectangle(centerX - xSize/2 - 2, stringY - xSize/2 - 2, 
+                                           xSize + 4, xSize + 4, 3.0f);
+                    g.setColour(juce::Colour(0xFFFF3333));  // Red
+                    g.setFont(juce::Font(juce::FontOptions(scaledConfig.fretFontSize * 0.85f)).boldened());
+                    g.drawText("X",
+                               static_cast<int>(centerX - xSize/2 - 2),
+                               static_cast<int>(stringY - xSize/2 - 2),
+                               static_cast<int>(xSize + 4),
+                               static_cast<int>(xSize + 4),
                                juce::Justification::centred, false);
                 }
             }
@@ -929,6 +994,7 @@ private:
     // Editor mode (live MIDI input display)
     bool editorMode = false;
     std::vector<LiveNote> liveNotes;
+    std::array<bool, 6> liveMutedStrings = { false, false, false, false, false, false };
     juce::String liveChordName;
     juce::String overlayMessage;  // Overlay-Nachricht (z.B. "Audio-to-MIDI recording...")
     

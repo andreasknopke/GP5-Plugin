@@ -15,6 +15,8 @@
 #include <juce_core/juce_core.h>
 #include <vector>
 #include <algorithm>
+#include <set>
+#include <functional>
 
 //==============================================================================
 /**
@@ -237,66 +239,108 @@ public:
         // Schritt 3: Für jede "Anker-Fret-Region" berechne die beste Gruppenposition
         std::vector<GroupAlternative> candidateAlternatives;
         
+        // Maximaler Fret-Abstand für gleichzeitige Noten: 3 Bünde!
+        const int maxChordFretSpan = 3;
+        
         for (int anchorFret : allFrets)
         {
             // Versuche die Gruppe um diese Fret-Region zu positionieren
-            GroupAlternative alt;
-            alt.totalCost = 0.0f;
-            bool validAlternative = true;
-            int minFret = 999, maxFret = 0, fretSum = 0;
+            // Verwende Backtracking um sicherzustellen: keine doppelten Saiten, max 3 Frets Spannweite
             
-            for (size_t i = 0; i < notes.size(); ++i)
-            {
-                // Finde die beste Position für diese Note nahe dem Anker-Fret
-                const auto& positions = allPositions[i];
-                AlternatePosition bestPos;
-                float bestScore = 999999.0f;
-                
-                for (const auto& pos : positions)
+            GroupAlternative bestAlt;
+            bestAlt.totalCost = 999999.0f;
+            bool foundValid = false;
+            
+            // Rekursive Suche über alle Noten
+            std::function<void(int, GroupAlternative&, std::set<int>&, int, int)> searchPositions;
+            searchPositions = [&](int noteIdx, GroupAlternative& current, std::set<int>& usedStrings,
+                                  int currentMinFret, int currentMaxFret) {
+                if (noteIdx >= (int)notes.size())
                 {
-                    // Berechne Score basierend auf Distanz zum Anker und Positionskosten
-                    float distanceCost = std::abs(pos.fret - anchorFret) * 2.0f;
-                    float score = pos.cost + distanceCost;
+                    // Gültige Kombination gefunden - berechne Kosten
+                    int span = (currentMinFret <= currentMaxFret) ? (currentMaxFret - currentMinFret) : 0;
+                    float totalCost = 0.0f;
+                    int fretSum = 0;
                     
-                    if (score < bestScore)
+                    for (int i = 0; i < current.positions.size(); ++i)
                     {
-                        bestScore = score;
-                        bestPos = pos;
+                        float distanceCost = std::abs(current.positions[i].fret - anchorFret) * 2.0f;
+                        // Finde die Positionskosten für diese Note
+                        for (const auto& pos : allPositions[i])
+                        {
+                            if (pos.string == current.positions[i].string && pos.fret == current.positions[i].fret)
+                            {
+                                totalCost += pos.cost + distanceCost;
+                                break;
+                            }
+                        }
+                        fretSum += current.positions[i].fret;
                     }
+                    totalCost += span * 1.5f;
+                    
+                    if (totalCost < bestAlt.totalCost)
+                    {
+                        bestAlt = current;
+                        bestAlt.totalCost = totalCost;
+                        bestAlt.fretSpan = span;
+                        bestAlt.averageFret = fretSum / (int)notes.size();
+                        foundValid = true;
+                    }
+                    return;
                 }
                 
-                GroupAlternative::NotePosition notePos;
-                notePos.string = bestPos.string;
-                notePos.fret = bestPos.fret;
-                alt.positions.add(notePos);
-                alt.totalCost += bestScore;
-                
-                minFret = juce::jmin(minFret, bestPos.fret);
-                maxFret = juce::jmax(maxFret, bestPos.fret);
-                fretSum += bestPos.fret;
-            }
+                for (const auto& pos : allPositions[noteIdx])
+                {
+                    // Saite darf NICHT doppelt belegt sein!
+                    if (usedStrings.count(pos.string) > 0)
+                        continue;
+                    
+                    // Fret-Spannweite prüfen (Leersaiten ausgenommen)
+                    int newMin = currentMinFret;
+                    int newMax = currentMaxFret;
+                    if (pos.fret > 0)
+                    {
+                        newMin = (currentMinFret <= currentMaxFret) ? juce::jmin(currentMinFret, pos.fret) : pos.fret;
+                        newMax = (currentMinFret <= currentMaxFret) ? juce::jmax(currentMaxFret, pos.fret) : pos.fret;
+                        if (newMax - newMin > maxChordFretSpan)
+                            continue;  // > 3 Bünde = ungültig!
+                    }
+                    
+                    GroupAlternative::NotePosition notePos;
+                    notePos.string = pos.string;
+                    notePos.fret = pos.fret;
+                    current.positions.add(notePos);
+                    usedStrings.insert(pos.string);
+                    
+                    searchPositions(noteIdx + 1, current, usedStrings, newMin, newMax);
+                    
+                    usedStrings.erase(pos.string);
+                    current.positions.removeLast();
+                }
+            };
             
-            alt.fretSpan = maxFret - minFret;
-            alt.averageFret = fretSum / static_cast<int>(notes.size());
+            GroupAlternative current;
+            std::set<int> usedStrings;
+            searchPositions(0, current, usedStrings, 999, 0);
             
-            // Bevorzuge kleine Fret-Spans (leichter zu greifen)
-            alt.totalCost += alt.fretSpan * 1.5f;
+            if (!foundValid)
+                continue;
             
             // Prüfe ob diese Alternative sich von der aktuellen Position unterscheidet
             bool isDifferent = false;
             for (int i = 0; i < notes.size(); ++i)
             {
-                if (alt.positions[i].string != notes[i].currentString ||
-                    alt.positions[i].fret != notes[i].currentFret)
+                if (bestAlt.positions[i].string != notes[i].currentString ||
+                    bestAlt.positions[i].fret != notes[i].currentFret)
                 {
                     isDifferent = true;
                     break;
                 }
             }
             
-            if (isDifferent && validAlternative)
+            if (isDifferent)
             {
-                candidateAlternatives.push_back(alt);
+                candidateAlternatives.push_back(bestAlt);
             }
         }
         

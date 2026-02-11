@@ -67,6 +67,7 @@ juce_add_binary_data(bin_data SOURCES
     ThirdParty/ModelData/cnn_note_model.json
     ThirdParty/ModelData/cnn_onset_1_model.json
     ThirdParty/ModelData/cnn_onset_2_model.json
+    resources/chord-fingers.csv
 )
 
 # ==============================================================================
