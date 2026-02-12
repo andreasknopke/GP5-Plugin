@@ -636,7 +636,7 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                     // Convert to GP5 1/100 semitones (assume +/- 2 semitone range)
                     // Range 0-16383, center 8192 => +/- 8192 units = +/- 200 cents
                     int bendVal = (int)((wheelValue - 8192.0) / 8192.0 * 200.0);
-                    if (std::abs(bendVal) < 50) bendVal = 0; // Noise threshold (50 cents = 1/2 semitone)
+                    if (std::abs(bendVal) < 10) bendVal = 0; // Noise threshold (10 cents)
                     
                     for (auto& [note, idx] : activeRecordingNotes)
                     {
@@ -4060,10 +4060,10 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
                             if (note->hasVibrato)
                                 tabNote.effects.vibrato = true;
                             
-                            // Bending - Threshold: 2.0 Halbtöne (200 cents = Ganzton)
-                            // Kleinere Werte sind Intonation, Vibrato oder Oberton-Artefakte
-                            // (Ein typischer Guitar-Bend ist mindestens ein Ganzton)
-                            if (note->maxBendValue >= 2.0f)
+                            // Bending - Threshold: 0.5 Halbtöne (50 cents)
+                            // MIDI Pitch Wheel Bends sind immer bewusst vom Spieler
+                            // (Audio-Transcription hat eigenen höheren Threshold)
+                            if (note->maxBendValue >= 0.5f)
                             {
                                 tabNote.effects.bend = true;
                                 tabNote.effects.bendValue = note->maxBendValue;
@@ -4095,7 +4095,7 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
                                         TabBendPoint bp;
                                         bp.position = (int)(relPos * 60.0);
                                         // Clamp small values to 0 - only show significant bends in curve
-                                        bp.value = (std::abs(ev.value) < 50) ? 0 : ev.value;
+                                        bp.value = (std::abs(ev.value) < 10) ? 0 : ev.value;
                                         
                                         // Filter too close points (GP5 restriction)
                                         if (!tabNote.effects.bendPoints.empty())
