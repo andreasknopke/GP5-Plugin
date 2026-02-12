@@ -2305,120 +2305,110 @@ std::vector<NewProjectAudioProcessor::LiveMidiNote> NewProjectAudioProcessor::ge
     }
     
     // Finde die beste Kombination mit minimaler Bund-Spannweite
-    // Maximal 3 Bünde Unterschied - gleichzeitige Noten dürfen NIE weiter auseinander sein!
-    const int maxFretSpan = 3;
-    
+    // Progressive Relaxierung: erst 3 Bünde, dann 4, 5, ... bis max 7
     std::vector<LiveMidiNote> bestResult;
     int bestScore = -10000;
     
-    // Rekursive Suche nach der besten Kombination
-    std::function<void(int, std::vector<NoteOption>&, std::set<int>&)> findBest;
-    findBest = [&](int noteIdx, std::vector<NoteOption>& current, std::set<int>& usedStrings) {
-        if (noteIdx >= (int)allOptions.size())
-        {
-            // Prüfe ob diese Kombination gültig ist
-            int minFret = 100, maxFret = 0;
-            for (const auto& opt : current)
+    auto runLiveBacktracking = [&](int allowedSpan) {
+        std::function<void(int, std::vector<NoteOption>&, std::set<int>&)> findBest;
+        findBest = [&](int noteIdx, std::vector<NoteOption>& current, std::set<int>& usedStrings) {
+            if (noteIdx >= (int)allOptions.size())
             {
-                // Leersaiten zählen nicht für die Spannweite
+                int minFret = 100, maxFret = 0;
+                for (const auto& opt : current)
+                {
+                    if (opt.fret > 0)
+                    {
+                        minFret = std::min(minFret, opt.fret);
+                        maxFret = std::max(maxFret, opt.fret);
+                    }
+                }
+                if (minFret > maxFret) minFret = maxFret = 0;
+                
+                int fretSpan = maxFret - minFret;
+                if (fretSpan > allowedSpan)
+                    return;
+                
+                int score = 0;
+                for (const auto& opt : current)
+                    score += opt.score;
+                
+                // Schwere quadratische Strafe für Spannweite
+                score -= fretSpan * fretSpan * 15;
+                if (fretSpan <= 2) score += 20;
+                else if (fretSpan <= 3) score += 10;
+                
+                if (lastPlayedFret >= 7 && maxFret > 0)
+                {
+                    int centerOfCurrent = (minFret + maxFret) / 2;
+                    int distFromLastPos = std::abs(centerOfCurrent - lastPlayedFret);
+                    if (distFromLastPos <= 3)
+                        score += 25;
+                    else
+                        score -= distFromLastPos * 5;
+                }
+                
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestResult.clear();
+                    for (int i = 0; i < (int)current.size(); ++i)
+                    {
+                        LiveMidiNote ln;
+                        ln.midiNote = notesWithVelocity[i].first;
+                        ln.velocity = notesWithVelocity[i].second;
+                        ln.string = current[i].string;
+                        ln.fret = current[i].fret;
+                        bestResult.push_back(ln);
+                    }
+                }
+                return;
+            }
+            
+            for (const auto& opt : allOptions[noteIdx])
+            {
+                if (usedStrings.count(opt.string) > 0)
+                    continue;
+                
+                int minFret = 100, maxFret = 0;
+                for (const auto& prev : current)
+                {
+                    if (prev.fret > 0)
+                    {
+                        minFret = std::min(minFret, prev.fret);
+                        maxFret = std::max(maxFret, prev.fret);
+                    }
+                }
                 if (opt.fret > 0)
                 {
-                    minFret = std::min(minFret, opt.fret);
-                    maxFret = std::max(maxFret, opt.fret);
+                    int newMin = std::min(minFret, opt.fret);
+                    int newMax = std::max(maxFret, opt.fret);
+                    if (newMin <= newMax && newMax - newMin > allowedSpan)
+                        continue;
                 }
+                
+                current.push_back(opt);
+                usedStrings.insert(opt.string);
+                findBest(noteIdx + 1, current, usedStrings);
+                usedStrings.erase(opt.string);
+                current.pop_back();
             }
-            
-            // Wenn alle Leersaiten, ist es gültig
-            if (minFret > maxFret) minFret = maxFret = 0;
-            
-            int fretSpan = maxFret - minFret;
-            if (fretSpan > maxFretSpan)
-                return;  // Zu große Spannweite
-            
-            // Berechne Score basierend auf bevorzugtem Fret-Bereich
-            int score = 0;
-            
-            // Summiere die Scores aller Optionen (basierend auf Fret-Position-Präferenz)
-            for (const auto& opt : current)
-            {
-                score += opt.score;
-            }
-            
-            // Strafe für größere Spannweite (erhöht)
-            score -= fretSpan * 10;  // Erhöht von 5
-            
-            // Bonus für kompakte Griffbilder
-            if (fretSpan <= 2)
-                score += 20;
-            else if (fretSpan <= 3)
-                score += 10;
-            
-            // Bonus wenn alle Bünde nahe an lastPlayedFret sind (Positionsstabilität)
-            if (lastPlayedFret >= 7 && maxFret > 0)
-            {
-                int centerOfCurrent = (minFret + maxFret) / 2;
-                int distFromLastPos = std::abs(centerOfCurrent - lastPlayedFret);
-                if (distFromLastPos <= 3)
-                    score += 25;  // Bonus für stabile Position
-                else
-                    score -= distFromLastPos * 5;
-            }
-            
-            if (score > bestScore)
-            {
-                bestScore = score;
-                bestResult.clear();
-                for (int i = 0; i < (int)current.size(); ++i)
-                {
-                    LiveMidiNote ln;
-                    ln.midiNote = notesWithVelocity[i].first;
-                    ln.velocity = notesWithVelocity[i].second;
-                    // standardTuning[0]=E4(top), [5]=E2(bottom) - matches display
-                    ln.string = current[i].string;
-                    ln.fret = current[i].fret;
-                    bestResult.push_back(ln);
-                }
-            }
-            return;
-        }
+        };
         
-        // Versuche jede Option für diese Note (bereits nach Score sortiert)
-        for (const auto& opt : allOptions[noteIdx])
-        {
-            if (usedStrings.count(opt.string) > 0)
-                continue;  // Saite bereits verwendet
-            
-            // Frühe Prüfung: Passt dieser Bund zur bisherigen Auswahl?
-            int minFret = 100, maxFret = 0;
-            for (const auto& prev : current)
-            {
-                if (prev.fret > 0)
-                {
-                    minFret = std::min(minFret, prev.fret);
-                    maxFret = std::max(maxFret, prev.fret);
-                }
-            }
-            if (opt.fret > 0)
-            {
-                int newMin = std::min(minFret, opt.fret);
-                int newMax = std::max(maxFret, opt.fret);
-                if (newMin <= newMax && newMax - newMin > maxFretSpan)
-                    continue;  // Würde Spannweite überschreiten
-            }
-            
-            current.push_back(opt);
-            usedStrings.insert(opt.string);
-            findBest(noteIdx + 1, current, usedStrings);
-            usedStrings.erase(opt.string);
-            current.pop_back();
-        }
+        std::vector<NoteOption> current;
+        std::set<int> usedStrings;
+        findBest(0, current, usedStrings);
     };
     
-    std::vector<NoteOption> current;
-    std::set<int> usedStrings;
-    findBest(0, current, usedStrings);
+    // Progressive Relaxierung: erst 3 Bünde, dann 4, 5, ... bis max 7
+    for (int trySpan = 3; trySpan <= 7; ++trySpan)
+    {
+        runLiveBacktracking(trySpan);
+        if (!bestResult.empty())
+            break;
+    }
     
-    // Fallback: Wenn keine gültige Kombination gefunden, zeige einzelne Noten
+    // Fallback: Wenn immer noch keine gültige Kombination, zeige einzelne Noten
     if (bestResult.empty())
     {
         for (const auto& [midiNote, velocity] : notesWithVelocity)
@@ -2949,162 +2939,110 @@ void NewProjectAudioProcessor::reoptimizeRecordedNotes(int midiChannelFilter)
                 allOptions.push_back(options);
             }
             
-            // Backtracking-Suche: gleichzeitige Noten dürfen NIE auf gleicher Saite sein
-            // und NIE mehr als 3 Bünde auseinander liegen!
-            const int maxChordFretSpan = 3;
+            // Backtracking-Suche mit progressiver Relaxierung:
+            // Erst versuche max 3 Bünde Spannweite, dann 4, 5, ... bis Lösung gefunden.
+            // Die Spannweite fließt als SCHWERE Strafe in den Score ein.
             std::vector<NoteOption> bestAssignment(allOptions.size());
             int bestTotalScore = -100000;
+            int usedMaxSpan = 0;
             
-            std::function<void(size_t, std::vector<NoteOption>&, std::set<int>&)> findBestChord;
-            findBestChord = [&](size_t noteIdx, std::vector<NoteOption>& current, std::set<int>& usedStrings) {
-                if (noteIdx >= allOptions.size())
-                {
-                    // Prüfe Fret-Spannweite (Leersaiten ausgenommen)
-                    int minF = 100, maxF = 0;
-                    for (const auto& opt : current)
+            auto runBacktracking = [&](int allowedSpan) {
+                std::function<void(size_t, std::vector<NoteOption>&, std::set<int>&)> findBestChord;
+                findBestChord = [&](size_t noteIdx, std::vector<NoteOption>& current, std::set<int>& usedStrings) {
+                    if (noteIdx >= allOptions.size())
                     {
+                        // Prüfe Fret-Spannweite (Leersaiten ausgenommen)
+                        int minF = 100, maxF = 0;
+                        for (const auto& opt : current)
+                        {
+                            if (opt.fret > 0)
+                            {
+                                minF = std::min(minF, opt.fret);
+                                maxF = std::max(maxF, opt.fret);
+                            }
+                        }
+                        int span = (minF <= maxF) ? (maxF - minF) : 0;
+                        if (span > allowedSpan)
+                            return;  // Spannweite zu groß für diese Runde
+                        
+                        int totalScore = 0;
+                        for (const auto& opt : current)
+                            totalScore += opt.score;
+                        // Schwere Strafe für Spannweite - je größer, desto schlimmer
+                        totalScore -= span * span * 15;
+                        if (span <= 2) totalScore += 20;
+                        else if (span <= 3) totalScore += 10;
+                        
+                        if (totalScore > bestTotalScore)
+                        {
+                            bestTotalScore = totalScore;
+                            bestAssignment = current;
+                            usedMaxSpan = span;
+                        }
+                        return;
+                    }
+                    
+                    for (const auto& opt : allOptions[noteIdx])
+                    {
+                        // Saite darf NICHT doppelt belegt sein
+                        if (usedStrings.count(opt.string) > 0)
+                            continue;
+                        
+                        // Frühe Prüfung: Fret-Spannweite
+                        int minF = 100, maxF = 0;
+                        for (const auto& prev : current)
+                        {
+                            if (prev.fret > 0) { minF = std::min(minF, prev.fret); maxF = std::max(maxF, prev.fret); }
+                        }
                         if (opt.fret > 0)
                         {
-                            minF = std::min(minF, opt.fret);
-                            maxF = std::max(maxF, opt.fret);
+                            int newMin = std::min(minF, opt.fret);
+                            int newMax = std::max(maxF, opt.fret);
+                            if (newMin <= newMax && newMax - newMin > allowedSpan)
+                                continue;  // Würde erlaubte Spannweite überschreiten
                         }
+                        
+                        current.push_back(opt);
+                        usedStrings.insert(opt.string);
+                        findBestChord(noteIdx + 1, current, usedStrings);
+                        usedStrings.erase(opt.string);
+                        current.pop_back();
                     }
-                    if (minF <= maxF && maxF - minF > maxChordFretSpan)
-                        return;  // Spannweite > 3 Bünde = ungültig
-                    
-                    int totalScore = 0;
-                    for (const auto& opt : current)
-                        totalScore += opt.score;
-                    // Bonus für kompakte Griffbilder
-                    int span = (minF <= maxF) ? (maxF - minF) : 0;
-                    totalScore -= span * 10;
-                    if (span <= 2) totalScore += 20;
-                    
-                    if (totalScore > bestTotalScore)
-                    {
-                        bestTotalScore = totalScore;
-                        bestAssignment = current;
-                    }
-                    return;
-                }
+                };
                 
-                for (const auto& opt : allOptions[noteIdx])
-                {
-                    // Saite darf NICHT doppelt belegt sein
-                    if (usedStrings.count(opt.string) > 0)
-                        continue;
-                    
-                    // Frühe Prüfung: Fret-Spannweite
-                    int minF = 100, maxF = 0;
-                    for (const auto& prev : current)
-                    {
-                        if (prev.fret > 0) { minF = std::min(minF, prev.fret); maxF = std::max(maxF, prev.fret); }
-                    }
-                    if (opt.fret > 0)
-                    {
-                        int newMin = std::min(minF, opt.fret);
-                        int newMax = std::max(maxF, opt.fret);
-                        if (newMin <= newMax && newMax - newMin > maxChordFretSpan)
-                            continue;  // Würde > 3 Bünde Spannweite ergeben
-                    }
-                    
-                    current.push_back(opt);
-                    usedStrings.insert(opt.string);
-                    findBestChord(noteIdx + 1, current, usedStrings);
-                    usedStrings.erase(opt.string);
-                    current.pop_back();
-                }
-            };
-            
-            {
                 std::vector<NoteOption> current;
                 std::set<int> usedStrings;
                 findBestChord(0, current, usedStrings);
+            };
+            
+            // Progressive Relaxierung: erst 3 Bünde, dann 4, 5, ... bis max 7
+            for (int trySpan = 3; trySpan <= 7; ++trySpan)
+            {
+                runBacktracking(trySpan);
+                if (bestTotalScore > -100000)
+                    break;  // Gültige Lösung gefunden!
             }
             
-            // Fallback: Wenn Backtracking keine gültige Lösung fand (bestTotalScore noch -100000),
-            // verwende Greedy mit Fret-Span-Constraint: maximal 3 Bünde Spannweite!
+            // Absoluter Notfall: Kein gültiges Ergebnis bis Spannweite 7.
+            // Nimm die beste Option pro Note mit unique Strings.
             if (bestTotalScore <= -100000)
             {
-                // Strategie: Probiere verschiedene Anker-Frets und finde die Greedy-Lösung
-                // mit dem besten Score, bei der alle Noten innerhalb von 3 Bünden liegen.
-                int bestFallbackScore = -100000;
-                std::vector<NoteOption> bestFallbackAssignment(allOptions.size());
-                
-                // Sammle alle möglichen Frets als Anker-Kandidaten
-                std::set<int> anchorCandidates;
-                for (const auto& opts : allOptions)
-                    for (const auto& opt : opts)
-                        if (opt.fret > 0)
-                            anchorCandidates.insert(opt.fret);
-                anchorCandidates.insert(0);  // Leersaiten-only als Fallback
-                
-                for (int anchor : anchorCandidates)
+                std::set<int> usedStrings;
+                for (size_t i = 0; i < allOptions.size(); ++i)
                 {
-                    int windowMin = (anchor > 0) ? anchor : 0;
-                    int windowMax = (anchor > 0) ? anchor + maxChordFretSpan : 0;
-                    
-                    std::set<int> usedStrings;
-                    std::vector<NoteOption> assignment(allOptions.size());
-                    int totalScore = 0;
-                    bool allAssigned = true;
-                    
-                    for (size_t i = 0; i < allOptions.size(); ++i)
+                    bool assigned = false;
+                    for (const auto& opt : allOptions[i])
                     {
-                        bool assigned = false;
-                        for (const auto& opt : allOptions[i])
+                        if (usedStrings.count(opt.string) == 0)
                         {
-                            if (usedStrings.count(opt.string) > 0)
-                                continue;
-                            // Fret 0 (Leersaite) ist immer erlaubt, sonst muss Fret im Fenster liegen
-                            if (opt.fret > 0 && (opt.fret < windowMin || opt.fret > windowMax))
-                                continue;
-                            
-                            assignment[i] = opt;
+                            bestAssignment[i] = opt;
                             usedStrings.insert(opt.string);
-                            totalScore += opt.score;
                             assigned = true;
                             break;
                         }
-                        if (!assigned)
-                        {
-                            allAssigned = false;
-                            break;
-                        }
                     }
-                    
-                    if (allAssigned && totalScore > bestFallbackScore)
-                    {
-                        bestFallbackScore = totalScore;
-                        bestFallbackAssignment = assignment;
-                    }
-                }
-                
-                if (bestFallbackScore > -100000)
-                {
-                    bestAssignment = bestFallbackAssignment;
-                }
-                else
-                {
-                    // Absoluter Notfall: Kein gültiges Fenster gefunden.
-                    // Nimm die beste Option pro Note, aber erzwinge zumindest unique Strings.
-                    std::set<int> usedStrings;
-                    for (size_t i = 0; i < allOptions.size(); ++i)
-                    {
-                        bool assigned = false;
-                        for (const auto& opt : allOptions[i])
-                        {
-                            if (usedStrings.count(opt.string) == 0)
-                            {
-                                bestAssignment[i] = opt;
-                                usedStrings.insert(opt.string);
-                                assigned = true;
-                                break;
-                            }
-                        }
-                        if (!assigned && !allOptions[i].empty())
-                            bestAssignment[i] = allOptions[i][0];
-                    }
+                    if (!assigned && !allOptions[i].empty())
+                        bestAssignment[i] = allOptions[i][0];
                 }
             }
             
