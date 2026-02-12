@@ -1,0 +1,20 @@
+MSBuild-Version 18.0.5+e22287bf1 für .NET Framework
+
+  Checking File Globs
+  GP5_VST_Editor_rc_lib.vcxproj -> D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor_rc_lib.dir\Release\GP5_VST_Editor_rc_lib.lib
+  bin_data.vcxproj -> D:\GitHub\NewProject\build\build_release\release_build\release_build\Release\bin_data.lib
+  BasicPitchCNN.vcxproj -> D:\GitHub\NewProject\build\build_release\release_build\release_build\Release\BasicPitchCNN.lib
+  GP5_VST_Editor.vcxproj -> D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor_artefacts\Release\GP5_VST_Editor_SharedCode.lib
+  Copying onnxruntime.dll to output directory
+  GP5_VST_Editor_vst3_helper.vcxproj -> D:\GitHub\NewProject\build\build_release\release_build\release_build\Release\GP5_VST_Editor_vst3_helper.exe
+  GP5_VST_Editor_VST3.vcxproj -> D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor_artefacts\Release\VST3\GP5_VST_Editor.vst3\Contents\x86_64-win\GP5_VST_Editor.vst3
+  removing moduleinfo.json
+  creating D:/GitHub/NewProject/build/build_release/release_build/release_build/GP5_VST_Editor_artefacts/Release/VST3/GP5_VST_Editor.vst3
+  -- Destination C:\Program Files\Common Files/VST3/GP5_VST_Editor.vst3 exists, overwriting
+  -- Installing: C:\Program Files\Common Files/VST3/GP5_VST_Editor.vst3
+  -- Installing: C:\Program Files\Common Files/VST3/GP5_VST_Editor.vst3/Contents
+  -- Installing: C:\Program Files\Common Files/VST3/GP5_VST_Editor.vst3/Contents/Resources
+  -- Installing: C:\Program Files\Common Files/VST3/GP5_VST_Editor.vst3/Contents/Resources/moduleinfo.json
+  -- Installing: C:\Program Files\Common Files/VST3/GP5_VST_Editor.vst3/Contents/x86_64-win
+  -- Installing: C:\Program Files\Common Files/VST3/GP5_VST_Editor.vst3/Contents/x86_64-win/GP5_VST_Editor.vst3
+  -- Installing: C:\Program Files\Common Files/VST3/GP5_VST_Editor.vst3/Contents/x86_64-win/onnxruntime.dll

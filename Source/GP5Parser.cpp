@@ -1428,9 +1428,10 @@ void GP5Parser::readRSEMasterEffect()
     {
         readI32();  // master volume
         readI32();  // ???
+        // Equalizer: 11 signed bytes = 10 band knobs + 1 gain (PRE) fader
+        // The gain is included in the 11 bytes, no separate read needed
         for (int i = 0; i < 11; ++i)
-            readI8();  // equalizer
-        readU8();  // gain preset
+            readI8();  // equalizer bands + gain
     }
 }
 

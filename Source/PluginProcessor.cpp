@@ -568,15 +568,19 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                     double rawBeat = currentBeat;
                     recNote.startBeat = std::round(currentBeat / quantizeGrid) * quantizeGrid;
                     
-                    // Prevent quantization from pushing notes across measure boundaries
+                    // Note: We intentionally allow quantization to push notes to the next
+                    // bar boundary (e.g. 7.97 -> 8.0). The measure quantization in
+                    // getRecordedTabTrack() will handle the bar assignment correctly.
+                    // Only prevent pushing BACKWARDS across a bar boundary.
                     {
                         double beatsPerBar = numerator * (4.0 / denominator);
                         if (beatsPerBar > 0.0)
                         {
                             int rawBar = static_cast<int>(rawBeat / beatsPerBar);
                             int quantizedBar = static_cast<int>(recNote.startBeat / beatsPerBar);
-                            if (quantizedBar > rawBar)
-                                recNote.startBeat -= quantizeGrid;
+                            // If quantization moved the note to a PREVIOUS bar, undo it
+                            if (quantizedBar < rawBar)
+                                recNote.startBeat += quantizeGrid;
                         }
                     }
                     recNote.endBeat = recNote.startBeat;  // Wird beim Note-Off aktualisiert
@@ -3759,26 +3763,33 @@ TabTrack NewProjectAudioProcessor::getRecordedTabTrack() const
         std::vector<const RecordedNote*> notesInMeasure;
         for (const auto& note : notes)
         {
-            double roundedPPQ = std::round(note.startBeat * 1000.0) / 1000.0;
-            int noteBar = static_cast<int>(roundedPPQ / beatsPerMeasure) + 1;
-            
-            // Intelligente Takt-Quantisierung:
-            // Prüfe, ob die Note nahe am nächsten Taktanfang beginnt und stark gekürzt werden müsste
-            double positionInMeasure = roundedPPQ - (noteBar - 1) * beatsPerMeasure;
-            double distanceToNextBar = beatsPerMeasure - positionInMeasure;
+            // Bestimme den Takt dieser Note mit Toleranz für Floating-Point-Fehler
+            // Ein startBeat von z.B. 7.999 soll als Takt 3 (= Beat 8.0) erkannt werden,
+            // nicht als kurze Note am Ende von Takt 2
+            double startBeat = note.startBeat;
             double originalDuration = note.endBeat - note.startBeat;
             
-            // Wenn die Note weniger als 1/8-Note (0.5 Beats) vor dem nächsten Takt beginnt
-            // UND die Note auf weniger als 25% ihrer Originallänge gekürzt werden müsste
-            // -> verschiebe sie in den nächsten Takt (nur wenn Takt-Quantisierung aktiv)
-            if (measureQuantizationEnabled.load() && distanceToNextBar < 0.5 && distanceToNextBar > 0.001)
+            // Berechne den "natürlichen" Takt der Note
+            int noteBar = static_cast<int>(startBeat / beatsPerMeasure) + 1;
+            double positionInMeasure = startBeat - (noteBar - 1) * beatsPerMeasure;
+            double distanceToNextBar = beatsPerMeasure - positionInMeasure;
+            
+            // Takt-Quantisierung: Verschiebe Noten am Taktende in den nächsten Takt
+            if (measureQuantizationEnabled.load() && distanceToNextBar < 0.5 && distanceToNextBar > 0.0001)
             {
+                // Wie viel der Note passt noch in diesen Takt?
                 double truncatedDuration = distanceToNextBar;
-                double truncationRatio = truncatedDuration / std::max(0.001, originalDuration);
                 
-                // Wenn die Note auf weniger als 25% ihrer Länge gekürzt werden müsste,
-                // ist es wahrscheinlich ein Timing-Fehler -> in nächsten Takt verschieben
-                if (truncationRatio < 0.25 && originalDuration > 0.25) // nur für längere Noten
+                // Bedingung 1: Note ist kürzer als eine 32tel-Note im aktuellen Takt
+                // (= sie wird zu kurz um sinnvoll dargestellt zu werden)
+                bool tooShortInCurrentBar = truncatedDuration < 0.125;
+                
+                // Bedingung 2: Note würde auf weniger als 33% ihrer Länge gekürzt
+                // UND ist mindestens eine 16tel-Note lang
+                double truncationRatio = truncatedDuration / std::max(0.001, originalDuration);
+                bool severelyTruncated = (truncationRatio < 0.33 && originalDuration >= 0.125);
+                
+                if (tooShortInCurrentBar || severelyTruncated)
                 {
                     noteBar = noteBar + 1; // Verschiebe in nächsten Takt
                 }
