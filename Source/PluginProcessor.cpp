@@ -3023,27 +3023,87 @@ void NewProjectAudioProcessor::reoptimizeRecordedNotes(int midiChannelFilter)
             }
             
             // Fallback: Wenn Backtracking keine gültige Lösung fand (bestTotalScore noch -100000),
-            // verwende Greedy mit Unique-String-Constraint statt Defaults (string=0, fret=0)
+            // verwende Greedy mit Fret-Span-Constraint: maximal 3 Bünde Spannweite!
             if (bestTotalScore <= -100000)
             {
-                std::set<int> usedStrings;
-                for (size_t i = 0; i < allOptions.size(); ++i)
+                // Strategie: Probiere verschiedene Anker-Frets und finde die Greedy-Lösung
+                // mit dem besten Score, bei der alle Noten innerhalb von 3 Bünden liegen.
+                int bestFallbackScore = -100000;
+                std::vector<NoteOption> bestFallbackAssignment(allOptions.size());
+                
+                // Sammle alle möglichen Frets als Anker-Kandidaten
+                std::set<int> anchorCandidates;
+                for (const auto& opts : allOptions)
+                    for (const auto& opt : opts)
+                        if (opt.fret > 0)
+                            anchorCandidates.insert(opt.fret);
+                anchorCandidates.insert(0);  // Leersaiten-only als Fallback
+                
+                for (int anchor : anchorCandidates)
                 {
-                    bool assigned = false;
-                    for (const auto& opt : allOptions[i])
+                    int windowMin = (anchor > 0) ? anchor : 0;
+                    int windowMax = (anchor > 0) ? anchor + maxChordFretSpan : 0;
+                    
+                    std::set<int> usedStrings;
+                    std::vector<NoteOption> assignment(allOptions.size());
+                    int totalScore = 0;
+                    bool allAssigned = true;
+                    
+                    for (size_t i = 0; i < allOptions.size(); ++i)
                     {
-                        if (usedStrings.count(opt.string) == 0)
+                        bool assigned = false;
+                        for (const auto& opt : allOptions[i])
                         {
-                            bestAssignment[i] = opt;
+                            if (usedStrings.count(opt.string) > 0)
+                                continue;
+                            // Fret 0 (Leersaite) ist immer erlaubt, sonst muss Fret im Fenster liegen
+                            if (opt.fret > 0 && (opt.fret < windowMin || opt.fret > windowMax))
+                                continue;
+                            
+                            assignment[i] = opt;
                             usedStrings.insert(opt.string);
+                            totalScore += opt.score;
                             assigned = true;
                             break;
                         }
+                        if (!assigned)
+                        {
+                            allAssigned = false;
+                            break;
+                        }
                     }
-                    if (!assigned && !allOptions[i].empty())
+                    
+                    if (allAssigned && totalScore > bestFallbackScore)
                     {
-                        // Letzte Möglichkeit: nimm die beste Option auch wenn Saite doppelt
-                        bestAssignment[i] = allOptions[i][0];
+                        bestFallbackScore = totalScore;
+                        bestFallbackAssignment = assignment;
+                    }
+                }
+                
+                if (bestFallbackScore > -100000)
+                {
+                    bestAssignment = bestFallbackAssignment;
+                }
+                else
+                {
+                    // Absoluter Notfall: Kein gültiges Fenster gefunden.
+                    // Nimm die beste Option pro Note, aber erzwinge zumindest unique Strings.
+                    std::set<int> usedStrings;
+                    for (size_t i = 0; i < allOptions.size(); ++i)
+                    {
+                        bool assigned = false;
+                        for (const auto& opt : allOptions[i])
+                        {
+                            if (usedStrings.count(opt.string) == 0)
+                            {
+                                bestAssignment[i] = opt;
+                                usedStrings.insert(opt.string);
+                                assigned = true;
+                                break;
+                            }
+                        }
+                        if (!assigned && !allOptions[i].empty())
+                            bestAssignment[i] = allOptions[i][0];
                     }
                 }
             }
