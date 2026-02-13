@@ -1179,10 +1179,23 @@ void NewProjectAudioProcessorEditor::doSaveMidi()
     
     // Option 1: Nur aktuelle Spur als Einkanal-MIDI
     int currentTrack = audioProcessor.getSelectedTrack();
-    const auto& tracks = audioProcessor.getActiveTracks();
-    juce::String currentTrackName = (currentTrack >= 0 && currentTrack < tracks.size()) 
-        ? tracks[currentTrack].name 
-        : "Current Track";
+    juce::String currentTrackName;
+    
+    if (audioProcessor.isFileLoaded())
+    {
+        const auto& tracks = audioProcessor.getActiveTracks();
+        currentTrackName = (currentTrack >= 0 && currentTrack < tracks.size()) 
+            ? tracks[currentTrack].name 
+            : "Current Track";
+    }
+    else
+    {
+        // Audio-to-Tab Modus: Verwende aufgenommene TabTracks
+        auto recordedTracks = audioProcessor.getRecordedTabTracks();
+        currentTrackName = (currentTrack >= 0 && currentTrack < (int)recordedTracks.size()) 
+            ? recordedTracks[currentTrack].name 
+            : "Current Track";
+    }
     
     menu.addItem(1, "Current Track: " + currentTrackName + " (Single Channel)");
     menu.addSeparator();

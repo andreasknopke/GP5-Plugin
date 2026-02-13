@@ -4454,6 +4454,12 @@ std::vector<TabTrack> NewProjectAudioProcessor::getRecordedTabTracks() const
 
 bool NewProjectAudioProcessor::exportTrackToMidi(int trackIndex, const juce::File& outputFile)
 {
+    // Wenn keine Datei geladen ist (Audio-to-Tab Modus), verwende aufgenommene Noten
+    if (!isFileLoaded())
+    {
+        return exportRecordedTrackToMidi(trackIndex, outputFile);
+    }
+    
     const auto& tracks = getActiveTracks();
     const auto& measureHeaders = getActiveMeasureHeaders();
     
@@ -4598,8 +4604,165 @@ bool NewProjectAudioProcessor::exportTrackToMidi(int trackIndex, const juce::Fil
     return true;
 }
 
+// Hilfsfunktion: Exportiert einen einzelnen TabTrack als MIDI-Sequenz
+// Wird für Audio-to-Tab Modus verwendet, wo keine GP5-Daten vorliegen
+bool NewProjectAudioProcessor::exportRecordedTrackToMidi(int trackIndex, const juce::File& outputFile)
+{
+    // Hole aufgenommene Tracks (TabTrack-Format), mit Edits falls vorhanden
+    std::vector<TabTrack> tracks;
+    auto baseTracks = getRecordedTabTracks();
+    for (int i = 0; i < (int)baseTracks.size(); ++i)
+    {
+        if (hasEditedTrack(i))
+            tracks.push_back(getEditedTrack(i));
+        else
+            tracks.push_back(baseTracks[i]);
+    }
+    
+    if (trackIndex < 0 || trackIndex >= (int)tracks.size())
+    {
+        DBG("exportRecordedTrackToMidi: trackIndex " << trackIndex << " out of range (" << tracks.size() << " tracks)");
+        return false;
+    }
+    
+    const auto& tabTrack = tracks[trackIndex];
+    
+    if (tabTrack.measures.isEmpty())
+    {
+        DBG("exportRecordedTrackToMidi: track has no measures");
+        return false;
+    }
+    
+    // Erstelle MIDI-Sequenz
+    juce::MidiMessageSequence midiSequence;
+    
+    // Tempo vom Host
+    double tempo = hostTempo.load();
+    if (tempo <= 0) tempo = 120.0;
+    int tempoMicrosecondsPerBeat = (int)(60000000.0 / tempo);
+    midiSequence.addEvent(juce::MidiMessage::tempoMetaEvent(tempoMicrosecondsPerBeat), 0.0);
+    
+    // Time Signature vom ersten Takt
+    if (tabTrack.measures.size() > 0)
+    {
+        int num = tabTrack.measures[0].timeSignatureNumerator;
+        int den = tabTrack.measures[0].timeSignatureDenominator;
+        int denLog2 = (int)std::log2(den > 0 ? den : 4);
+        midiSequence.addEvent(juce::MidiMessage::timeSignatureMetaEvent(num, denLog2), 0.0);
+    }
+    
+    // Track Name
+    juce::String trackName = tabTrack.name.isNotEmpty() ? tabTrack.name : "Track " + juce::String(trackIndex + 1);
+    midiSequence.addEvent(juce::MidiMessage::textMetaEvent(3, trackName), 0.0);
+    
+    // MIDI Channel = 1 (Einkanal-Export)
+    const int midiChannel = 1;
+    
+    // Program Change
+    int program = juce::jlimit(0, 127, tabTrack.midiInstrument);
+    midiSequence.addEvent(juce::MidiMessage::programChange(midiChannel, program), 0.0);
+    
+    // Berechne Zeitposition für jede Note
+    double currentTimeInBeats = 0.0;
+    const double ticksPerBeat = 480.0;
+    
+    for (int measureIndex = 0; measureIndex < tabTrack.measures.size(); ++measureIndex)
+    {
+        const auto& measure = tabTrack.measures[measureIndex];
+        double beatsPerMeasure = measure.timeSignatureNumerator * (4.0 / measure.timeSignatureDenominator);
+        double beatTimeInMeasure = 0.0;
+        
+        for (const auto& beat : measure.beats)
+        {
+            // Berechne Notendauer in Vierteln (Beats)
+            double beatDurationBeats = beat.getDurationInQuarters();
+            
+            double noteStartTime = currentTimeInBeats + beatTimeInMeasure;
+            double noteEndTime = noteStartTime + beatDurationBeats;
+            
+            if (!beat.isRest)
+            {
+                for (const auto& tabNote : beat.notes)
+                {
+                    if (tabNote.isTied || tabNote.effects.deadNote)
+                        continue;
+                    
+                    // MIDI-Note berechnen
+                    int midiNote = 0;
+                    if (tabNote.midiNote > 0)
+                    {
+                        // Verwende direkt gespeicherte MIDI-Note falls vorhanden
+                        midiNote = tabNote.midiNote;
+                    }
+                    else if (tabNote.string < tabTrack.tuning.size())
+                    {
+                        midiNote = tabTrack.tuning[tabNote.string] + tabNote.fret;
+                    }
+                    else if (tabNote.string < 6)
+                    {
+                        const int defaultTuning[] = { 64, 59, 55, 50, 45, 40 };
+                        midiNote = defaultTuning[tabNote.string] + tabNote.fret;
+                    }
+                    
+                    if (midiNote <= 0 || midiNote >= 128)
+                        continue;
+                    
+                    // Velocity
+                    int velocity = tabNote.velocity > 0 ? tabNote.velocity : 95;
+                    velocity = juce::jlimit(1, 127, velocity);
+                    
+                    double noteOnTicks = noteStartTime * ticksPerBeat;
+                    double noteOffTicks = noteEndTime * ticksPerBeat;
+                    
+                    midiSequence.addEvent(juce::MidiMessage::noteOn(midiChannel, midiNote, (juce::uint8)velocity), noteOnTicks);
+                    midiSequence.addEvent(juce::MidiMessage::noteOff(midiChannel, midiNote), noteOffTicks);
+                }
+            }
+            
+            beatTimeInMeasure += beatDurationBeats;
+        }
+        
+        currentTimeInBeats += beatsPerMeasure;
+    }
+    
+    // End of Track Meta Event
+    midiSequence.addEvent(juce::MidiMessage::endOfTrack(), currentTimeInBeats * ticksPerBeat);
+    midiSequence.updateMatchedPairs();
+    
+    // Erstelle MIDI-File im Format 0 (Single-Track)
+    juce::MidiFile midiFile;
+    midiFile.setTicksPerQuarterNote(480);
+    midiFile.addTrack(midiSequence);
+    
+    // Speichere die Datei
+    outputFile.deleteFile();
+    
+    {
+        juce::FileOutputStream outputStream(outputFile);
+        
+        if (!outputStream.openedOk())
+            return false;
+        
+        if (!midiFile.writeTo(outputStream))
+            return false;
+        
+        outputStream.flush();
+    }
+    
+    fixMidiFileFormat(outputFile);
+    
+    DBG("MIDI exported from recorded notes: " << outputFile.getFullPathName());
+    return true;
+}
+
 bool NewProjectAudioProcessor::exportAllTracksToMidi(const juce::File& outputFile)
 {
+    // Wenn keine Datei geladen ist (Audio-to-Tab Modus), verwende aufgenommene Noten
+    if (!isFileLoaded())
+    {
+        return exportAllRecordedTracksToMidi(outputFile);
+    }
+    
     const auto& tracks = getActiveTracks();
     const auto& measureHeaders = getActiveMeasureHeaders();
     const auto& songInfo = getActiveSongInfo();
@@ -4767,6 +4930,165 @@ bool NewProjectAudioProcessor::exportAllTracksToMidi(const juce::File& outputFil
     
     // JUCE's writeTo() schreibt Format 1 bei mehreren Tracks
     // und fügt das End-of-Track Event (FF 2F 00) korrekt für jeden Track ein
+    return midiFile.writeTo(outputStream);
+}
+
+// Hilfsfunktion: Exportiert alle aufgenommenen TabTracks als Multi-Track MIDI
+bool NewProjectAudioProcessor::exportAllRecordedTracksToMidi(const juce::File& outputFile)
+{
+    // Hole aufgenommene Tracks mit Edits
+    std::vector<TabTrack> tracks;
+    auto baseTracks = getRecordedTabTracks();
+    for (int i = 0; i < (int)baseTracks.size(); ++i)
+    {
+        if (hasEditedTrack(i))
+            tracks.push_back(getEditedTrack(i));
+        else
+            tracks.push_back(baseTracks[i]);
+    }
+    
+    if (tracks.empty())
+    {
+        DBG("exportAllRecordedTracksToMidi: no tracks available");
+        return false;
+    }
+    
+    // Bei nur einem Track: Format 0
+    if (tracks.size() == 1)
+    {
+        return exportRecordedTrackToMidi(0, outputFile);
+    }
+    
+    // Mehrere Tracks: Format 1 (Multi-Track MIDI)
+    juce::MidiFile midiFile;
+    midiFile.setTicksPerQuarterNote(480);
+    const double ticksPerBeat = 480.0;
+    
+    // Track 0: Tempo und Time Signature
+    juce::MidiMessageSequence tempoTrack;
+    
+    double tempo = hostTempo.load();
+    if (tempo <= 0) tempo = 120.0;
+    int tempoMicrosecondsPerBeat = (int)(60000000.0 / tempo);
+    tempoTrack.addEvent(juce::MidiMessage::tempoMetaEvent(tempoMicrosecondsPerBeat), 0.0);
+    
+    // Time Signature vom ersten Takt des ersten Tracks
+    if (!tracks.empty() && tracks[0].measures.size() > 0)
+    {
+        int num = tracks[0].measures[0].timeSignatureNumerator;
+        int den = tracks[0].measures[0].timeSignatureDenominator;
+        int denLog2 = (int)std::log2(den > 0 ? den : 4);
+        tempoTrack.addEvent(juce::MidiMessage::timeSignatureMetaEvent(num, denLog2), 0.0);
+    }
+    
+    // Berechne Gesamtlänge für End-of-Track
+    double totalLength = 0.0;
+    if (!tracks.empty())
+    {
+        for (const auto& measure : tracks[0].measures)
+        {
+            totalLength += measure.timeSignatureNumerator * (4.0 / measure.timeSignatureDenominator);
+        }
+    }
+    
+    tempoTrack.addEvent(juce::MidiMessage::endOfTrack(), totalLength * ticksPerBeat);
+    midiFile.addTrack(tempoTrack);
+    
+    // Für jeden Track eine MIDI-Spur erstellen
+    for (int trackIdx = 0; trackIdx < (int)tracks.size() && trackIdx < 16; ++trackIdx)
+    {
+        const auto& tabTrack = tracks[trackIdx];
+        juce::MidiMessageSequence midiSequence;
+        
+        // MIDI Channel (1-basiert, Channel 10 für Drums vermeiden)
+        int midiChannel = (trackIdx < 9) ? trackIdx + 1 : trackIdx + 2;
+        if (midiChannel > 16) midiChannel = 16;
+        
+        // Track Name
+        juce::String trackName = tabTrack.name.isNotEmpty() ? tabTrack.name : "Track " + juce::String(trackIdx + 1);
+        midiSequence.addEvent(juce::MidiMessage::textMetaEvent(3, trackName), 0.0);
+        
+        // Program Change
+        int program = juce::jlimit(0, 127, tabTrack.midiInstrument);
+        midiSequence.addEvent(juce::MidiMessage::programChange(midiChannel, program), 0.0);
+        
+        // Volume und Pan
+        midiSequence.addEvent(juce::MidiMessage::controllerEvent(midiChannel, 7, 100), 0.0);  // Volume
+        midiSequence.addEvent(juce::MidiMessage::controllerEvent(midiChannel, 10, 64), 0.0);  // Pan center
+        
+        // Noten-Events
+        double currentTimeInBeats = 0.0;
+        
+        for (int measureIndex = 0; measureIndex < tabTrack.measures.size(); ++measureIndex)
+        {
+            const auto& measure = tabTrack.measures[measureIndex];
+            double beatsPerMeasure = measure.timeSignatureNumerator * (4.0 / measure.timeSignatureDenominator);
+            double beatTimeInMeasure = 0.0;
+            
+            for (const auto& beat : measure.beats)
+            {
+                double beatDurationBeats = beat.getDurationInQuarters();
+                
+                double noteStartTime = currentTimeInBeats + beatTimeInMeasure;
+                double noteEndTime = noteStartTime + beatDurationBeats;
+                
+                if (!beat.isRest)
+                {
+                    for (const auto& tabNote : beat.notes)
+                    {
+                        if (tabNote.isTied || tabNote.effects.deadNote)
+                            continue;
+                        
+                        int midiNote = 0;
+                        if (tabNote.midiNote > 0)
+                        {
+                            midiNote = tabNote.midiNote;
+                        }
+                        else if (tabNote.string < tabTrack.tuning.size())
+                        {
+                            midiNote = tabTrack.tuning[tabNote.string] + tabNote.fret;
+                        }
+                        else if (tabNote.string < 6)
+                        {
+                            const int defaultTuning[] = { 64, 59, 55, 50, 45, 40 };
+                            midiNote = defaultTuning[tabNote.string] + tabNote.fret;
+                        }
+                        
+                        if (midiNote <= 0 || midiNote >= 128)
+                            continue;
+                        
+                        int velocity = tabNote.velocity > 0 ? tabNote.velocity : 95;
+                        velocity = juce::jlimit(1, 127, velocity);
+                        
+                        double noteOnTicks = noteStartTime * ticksPerBeat;
+                        double noteOffTicks = noteEndTime * ticksPerBeat;
+                        
+                        midiSequence.addEvent(juce::MidiMessage::noteOn(midiChannel, midiNote, (juce::uint8)velocity), noteOnTicks);
+                        midiSequence.addEvent(juce::MidiMessage::noteOff(midiChannel, midiNote), noteOffTicks);
+                    }
+                }
+                
+                beatTimeInMeasure += beatDurationBeats;
+            }
+            
+            currentTimeInBeats += beatsPerMeasure;
+        }
+        
+        midiSequence.addEvent(juce::MidiMessage::endOfTrack(), totalLength * ticksPerBeat);
+        midiSequence.updateMatchedPairs();
+        
+        midiFile.addTrack(midiSequence);
+    }
+    
+    // Speichere die Datei
+    outputFile.deleteFile();
+    juce::FileOutputStream outputStream(outputFile);
+    
+    if (!outputStream.openedOk())
+        return false;
+    
+    DBG("MIDI exported from recorded notes (all tracks): " << outputFile.getFullPathName()
+        << " (" << tracks.size() << " tracks)");
     return midiFile.writeTo(outputStream);
 }
 

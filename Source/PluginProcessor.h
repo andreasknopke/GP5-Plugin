@@ -401,6 +401,10 @@ public:
     // Export all tracks to MIDI file (multi-channel)
     bool exportAllTracksToMidi(const juce::File& outputFile);
     
+    // Export recorded TabTrack to MIDI (Audio-to-Tab Modus)
+    bool exportRecordedTrackToMidi(int trackIndex, const juce::File& outputFile);
+    bool exportAllRecordedTracksToMidi(const juce::File& outputFile);
+    
     //==============================================================================
     // Guitar Pro Export Functionality
     //==============================================================================
