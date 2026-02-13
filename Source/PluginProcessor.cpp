@@ -4655,8 +4655,8 @@ bool NewProjectAudioProcessor::exportRecordedTrackToMidi(int trackIndex, const j
     juce::String trackName = tabTrack.name.isNotEmpty() ? tabTrack.name : "Track " + juce::String(trackIndex + 1);
     midiSequence.addEvent(juce::MidiMessage::textMetaEvent(3, trackName), 0.0);
     
-    // MIDI Channel = 1 (Einkanal-Export)
-    const int midiChannel = 1;
+    // MIDI Channel aus dem TabTrack verwenden (midiChannel ist 0-basiert, MIDI Messages sind 1-basiert)
+    const int midiChannel = juce::jlimit(1, 16, tabTrack.midiChannel + 1);
     
     // Program Change
     int program = juce::jlimit(0, 127, tabTrack.midiInstrument);
@@ -5000,9 +5000,8 @@ bool NewProjectAudioProcessor::exportAllRecordedTracksToMidi(const juce::File& o
         const auto& tabTrack = tracks[trackIdx];
         juce::MidiMessageSequence midiSequence;
         
-        // MIDI Channel (1-basiert, Channel 10 für Drums vermeiden)
-        int midiChannel = (trackIdx < 9) ? trackIdx + 1 : trackIdx + 2;
-        if (midiChannel > 16) midiChannel = 16;
+        // MIDI Channel aus dem TabTrack verwenden (midiChannel ist 0-basiert, MIDI Messages sind 1-basiert)
+        int midiChannel = juce::jlimit(1, 16, tabTrack.midiChannel + 1);
         
         // Track Name
         juce::String trackName = tabTrack.name.isNotEmpty() ? tabTrack.name : "Track " + juce::String(trackIdx + 1);
