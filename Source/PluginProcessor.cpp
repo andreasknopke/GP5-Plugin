@@ -728,7 +728,7 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         bool isPlaying = hostIsPlaying.load();
         double currentBeat = hostPositionBeats.load();
         
-        const auto& tracks = usingGP7Parser ? gp7Parser.getTracks() : gp5Parser.getTracks();
+        const auto& tracks = getActiveTracks();
         
         // Stop-Erkennung: Wenn Playback stoppt, alle Noten und Bends beenden
         if (!isPlaying && wasPlaying)
@@ -903,7 +903,7 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             else
             {
             bool anySoloActive = hasAnySolo();
-            const auto& measureHeaders = usingGP7Parser ? gp7Parser.getMeasureHeaders() : gp5Parser.getMeasureHeaders();
+            const auto& measureHeaders = getActiveMeasureHeaders();
             
             // Berechne aktuellen Takt
             int measureIndex = 0;
@@ -1514,6 +1514,7 @@ bool NewProjectAudioProcessor::loadGP5File(const juce::File& file)
             loadedFilePath = file.getFullPathName();
             fileLoaded = true;
             usingGP7Parser = true;
+            usingPTBParser = false;
             
             // Initialize track settings based on loaded file
             initializeTrackSettings();
@@ -1530,11 +1531,36 @@ bool NewProjectAudioProcessor::loadGP5File(const juce::File& file)
     }
     
     // Use GP5 parser for .gp3, .gp4, .gp5, .gpx files
+    if (extension == ".ptb")
+    {
+        if (ptbParser.parse(file))
+        {
+            loadedFilePath = file.getFullPathName();
+            fileLoaded = true;
+            usingGP7Parser = false;
+            usingPTBParser = true;
+            
+            // Initialize track settings based on loaded file
+            initializeTrackSettings();
+            
+            DBG("Processor: PTB file loaded successfully: " << loadedFilePath);
+            return true;
+        }
+        else
+        {
+            fileLoaded = false;
+            DBG("Processor: Failed to load PTB file: " << ptbParser.getLastError());
+            return false;
+        }
+    }
+    
+    // Use GP5 parser for .gp3, .gp4, .gp5, .gpx files
     if (gp5Parser.parse(file))
     {
         loadedFilePath = file.getFullPathName();
         fileLoaded = true;
         usingGP7Parser = false;
+        usingPTBParser = false;
         
         // Initialize track settings based on loaded file
         initializeTrackSettings();
@@ -1552,7 +1578,7 @@ bool NewProjectAudioProcessor::loadGP5File(const juce::File& file)
 
 void NewProjectAudioProcessor::initializeTrackSettings()
 {
-    const auto& tracks = usingGP7Parser ? gp7Parser.getTracks() : gp5Parser.getTracks();
+    const auto& tracks = getActiveTracks();
     
     for (int i = 0; i < juce::jmin((int)tracks.size(), maxTracks); ++i)
     {
@@ -1600,7 +1626,7 @@ int NewProjectAudioProcessor::getCurrentMeasureIndex() const
         return 0;
     
     // Verwende GP-Taktstruktur für konsistente Anzeige mit MIDI-Ausgabe
-    const auto& measureHeaders = usingGP7Parser ? gp7Parser.getMeasureHeaders() : gp5Parser.getMeasureHeaders();
+    const auto& measureHeaders = getActiveMeasureHeaders();
     
     if (measureHeaders.isEmpty())
         return 0;
@@ -1636,7 +1662,7 @@ double NewProjectAudioProcessor::getPositionInCurrentMeasure() const
         return 0.0;
     
     // Verwende GP-Taktstruktur für konsistente Anzeige
-    const auto& measureHeaders = usingGP7Parser ? gp7Parser.getMeasureHeaders() : gp5Parser.getMeasureHeaders();
+    const auto& measureHeaders = getActiveMeasureHeaders();
     
     if (measureHeaders.isEmpty())
         return 0.0;
@@ -1662,7 +1688,7 @@ double NewProjectAudioProcessor::getPositionInCurrentMeasure() const
 
 std::pair<int, int> NewProjectAudioProcessor::getGP5TimeSignature(int measureIndex) const
 {
-    const auto& measureHeaders = usingGP7Parser ? gp7Parser.getMeasureHeaders() : gp5Parser.getMeasureHeaders();
+    const auto& measureHeaders = getActiveMeasureHeaders();
     
     if (measureIndex >= 0 && measureIndex < (int)measureHeaders.size())
     {
@@ -1675,7 +1701,7 @@ std::pair<int, int> NewProjectAudioProcessor::getGP5TimeSignature(int measureInd
 
 int NewProjectAudioProcessor::getGP5Tempo() const
 {
-    return usingGP7Parser ? gp7Parser.getSongInfo().tempo : gp5Parser.getSongInfo().tempo;
+    return getActiveSongInfo().tempo;
 }
 
 bool NewProjectAudioProcessor::isTimeSignatureMatching() const
@@ -1697,7 +1723,7 @@ void NewProjectAudioProcessor::setSeekPosition(int measureIndex, double position
     if (!fileLoaded || measureIndex < 0)
         return;
         
-    const auto& headers = usingGP7Parser ? gp7Parser.getMeasureHeaders() : gp5Parser.getMeasureHeaders();
+    const auto& headers = getActiveMeasureHeaders();
     if (measureIndex >= headers.size())
         return;
     
@@ -5241,7 +5267,7 @@ bool NewProjectAudioProcessor::exportRecordingToGP5(const juce::File& outputFile
     
     if (isFileLoaded())
     {
-        // Use edited tracks if available, otherwise convert from original GP5 data
+        // Use edited tracks if available, otherwise convert from active parser data
         const auto& loadedTracks = getActiveTracks();
         for (int i = 0; i < loadedTracks.size(); ++i)
         {
@@ -5249,6 +5275,11 @@ bool NewProjectAudioProcessor::exportRecordingToGP5(const juce::File& outputFile
             {
                 tracks.push_back(getEditedTrack(i));
                 DBG("Track " << i << ": using edited version");
+            }
+            else if (usingPTBParser)
+            {
+                tracks.push_back(ptbParser.convertToTabTrack(i));
+                DBG("Track " << i << ": using PTB parser data");
             }
             else
             {
@@ -5313,7 +5344,7 @@ bool NewProjectAudioProcessor::exportRecordingToGP5WithMetadata(
     
     if (isFileLoaded())
     {
-        // Use edited tracks if available, otherwise convert from original GP5 data
+        // Use edited tracks if available, otherwise convert from active parser data
         const auto& loadedTracks = getActiveTracks();
         for (int i = 0; i < loadedTracks.size(); ++i)
         {
@@ -5322,13 +5353,18 @@ bool NewProjectAudioProcessor::exportRecordingToGP5WithMetadata(
                 tracks.push_back(getEditedTrack(i));
                 DBG("Track " << i << ": using edited version");
             }
+            else if (usingPTBParser)
+            {
+                tracks.push_back(ptbParser.convertToTabTrack(i));
+                DBG("Track " << i << ": using PTB parser data");
+            }
             else
             {
                 tracks.push_back(gp5Parser.convertToTabTrack(i));
                 DBG("Track " << i << ": using original GP5 data");
             }
         }
-        DBG("Exporting from loaded GP5 file: " << loadedTracks.size() << " tracks");
+        DBG("Exporting from loaded file: " << loadedTracks.size() << " tracks");
     }
     else
     {

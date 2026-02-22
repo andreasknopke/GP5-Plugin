@@ -474,9 +474,9 @@ void NewProjectAudioProcessorEditor::resized()
 void NewProjectAudioProcessorEditor::loadButtonClicked()
 {
     fileChooser = std::make_unique<juce::FileChooser> (
-        "Select a Guitar Pro file...",
+        "Select a Guitar Pro / Power Tab file...",
         juce::File::getSpecialLocation (juce::File::userHomeDirectory),
-        "*.gp;*.gp3;*.gp4;*.gp5");
+        "*.gp;*.gp3;*.gp4;*.gp5;*.ptb");
 
     auto chooserFlags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
 
@@ -502,8 +502,16 @@ void NewProjectAudioProcessorEditor::loadButtonClicked()
             }
             else
             {
-                infoLabel.setText("Fehler: " + audioProcessor.getGP5Parser().getLastError(), juce::dontSendNotification);
-                DBG("Fehler: " << audioProcessor.getGP5Parser().getLastError());
+                juce::String errorMsg;
+                if (file.getFileExtension().toLowerCase() == ".ptb")
+                    errorMsg = audioProcessor.getPTBParser().getLastError();
+                else if (file.getFileExtension().toLowerCase() == ".gp")
+                    errorMsg = audioProcessor.getGP7Parser().getLastError();
+                else
+                    errorMsg = audioProcessor.getGP5Parser().getLastError();
+                
+                infoLabel.setText("Fehler: " + errorMsg, juce::dontSendNotification);
+                DBG("Fehler: " << errorMsg);
             }
         }
     });
@@ -767,6 +775,10 @@ void NewProjectAudioProcessorEditor::trackSelectionChanged()
                 track.stringCount = gp7Tracks[trackIndex].stringCount;
                 track.tuning = gp7Tracks[trackIndex].tuning;
                 track.measures = measures;
+            }
+            else if (audioProcessor.isUsingPTBParser())
+            {
+                track = audioProcessor.getPTBParser().convertToTabTrack(trackIndex);
             }
             else
             {
@@ -1282,11 +1294,28 @@ void NewProjectAudioProcessorEditor::showExportPanel()
     
     if (audioProcessor.isFileLoaded())
     {
-        // Player-Modus: Konvertiere geladene GP5Tracks zu TabTracks
+        // Player-Modus: Konvertiere geladene Tracks zu TabTracks
         const auto& loadedTracks = audioProcessor.getActiveTracks();
         for (size_t i = 0; i < loadedTracks.size(); ++i)
         {
-            tracks.push_back(audioProcessor.getGP5Parser().convertToTabTrack(static_cast<int>(i)));
+            if (audioProcessor.isUsingPTBParser())
+            {
+                tracks.push_back(audioProcessor.getPTBParser().convertToTabTrack(static_cast<int>(i)));
+            }
+            else if (audioProcessor.isUsingGP7Parser())
+            {
+                TabTrack t;
+                const auto& gp7Tracks = audioProcessor.getGP7Parser().getTracks();
+                t.name = gp7Tracks[static_cast<int>(i)].name;
+                t.stringCount = gp7Tracks[static_cast<int>(i)].stringCount;
+                t.tuning = gp7Tracks[static_cast<int>(i)].tuning;
+                t.measures = audioProcessor.getGP7Parser().convertToTabMeasures(static_cast<int>(i));
+                tracks.push_back(t);
+            }
+            else
+            {
+                tracks.push_back(audioProcessor.getGP5Parser().convertToTabTrack(static_cast<int>(i)));
+            }
         }
         defaultTitle = audioProcessor.getActiveSongInfo().title;
         if (defaultTitle.isEmpty())

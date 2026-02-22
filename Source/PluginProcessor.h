@@ -11,6 +11,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "GP5Parser.h"
 #include "GP7Parser.h"
+#include "PTBParser.h"
 #include "TabModels.h"
 #include "ChordMatcher.h"
 #include "ChordFingerDB.h"
@@ -79,21 +80,27 @@ public:
     const GP5Parser& getGP5Parser() const { return gp5Parser; }
     GP7Parser& getGP7Parser() { return gp7Parser; }
     const GP7Parser& getGP7Parser() const { return gp7Parser; }
+    PTBParser& getPTBParser() { return ptbParser; }
+    const PTBParser& getPTBParser() const { return ptbParser; }
     bool isUsingGP7Parser() const { return usingGP7Parser; }
+    bool isUsingPTBParser() const { return usingPTBParser; }
     
     // Convenience methods that work with whichever parser is active
     const juce::Array<GP5Track>& getActiveTracks() const 
     {
+        if (usingPTBParser) return ptbParser.getTracks();
         return usingGP7Parser ? gp7Parser.getTracks() : gp5Parser.getTracks();
     }
     
     const juce::Array<GP5MeasureHeader>& getActiveMeasureHeaders() const
     {
+        if (usingPTBParser) return ptbParser.getMeasureHeaders();
         return usingGP7Parser ? gp7Parser.getMeasureHeaders() : gp5Parser.getMeasureHeaders();
     }
     
     const GP5SongInfo& getActiveSongInfo() const
     {
+        if (usingPTBParser) return ptbParser.getSongInfo();
         return usingGP7Parser ? gp7Parser.getSongInfo() : gp5Parser.getSongInfo();
     }
     
@@ -427,7 +434,9 @@ private:
     //==============================================================================
     GP5Parser gp5Parser;
     GP7Parser gp7Parser;
+    PTBParser ptbParser;
     bool usingGP7Parser = false;  // Which parser was used for current file
+    bool usingPTBParser = false;  // PTB parser active
     juce::String loadedFilePath;
     bool fileLoaded = false;
     

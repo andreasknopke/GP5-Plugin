@@ -89,6 +89,54 @@ else()
 endif()
 
 # ==============================================================================
+# PowerTab Document Library (wxWindows license - for .ptb file parsing)
+# ==============================================================================
+add_library(PowerTabLib STATIC
+    ThirdParty/powertab/alternateending.cpp
+    ThirdParty/powertab/barline.cpp
+    ThirdParty/powertab/chorddiagram.cpp
+    ThirdParty/powertab/chordname.cpp
+    ThirdParty/powertab/chordtext.cpp
+    ThirdParty/powertab/colour.cpp
+    ThirdParty/powertab/direction.cpp
+    ThirdParty/powertab/dynamic.cpp
+    ThirdParty/powertab/floatingtext.cpp
+    ThirdParty/powertab/fontsetting.cpp
+    ThirdParty/powertab/guitar.cpp
+    ThirdParty/powertab/guitarin.cpp
+    ThirdParty/powertab/harmonics.cpp
+    ThirdParty/powertab/keysignature.cpp
+    ThirdParty/powertab/macros.cpp
+    ThirdParty/powertab/note.cpp
+    ThirdParty/powertab/position.cpp
+    ThirdParty/powertab/powertabdocument.cpp
+    ThirdParty/powertab/powertabfileheader.cpp
+    ThirdParty/powertab/powertabinputstream.cpp
+    ThirdParty/powertab/powertaboutputstream.cpp
+    ThirdParty/powertab/rect.cpp
+    ThirdParty/powertab/rehearsalsign.cpp
+    ThirdParty/powertab/rhythmslash.cpp
+    ThirdParty/powertab/score.cpp
+    ThirdParty/powertab/staff.cpp
+    ThirdParty/powertab/system.cpp
+    ThirdParty/powertab/systemsymbol.cpp
+    ThirdParty/powertab/tempomarker.cpp
+    ThirdParty/powertab/timesignature.cpp
+    ThirdParty/powertab/tuning.cpp
+)
+target_include_directories(PowerTabLib PUBLIC
+    ${CMAKE_CURRENT_LIST_DIR}/ThirdParty/powertab
+)
+# Require C++17 for std::filesystem
+target_compile_features(PowerTabLib PUBLIC cxx_std_17)
+# Suppress warnings from third-party code
+if (MSVC)
+    target_compile_options(PowerTabLib PRIVATE /W0)
+else()
+    target_compile_options(PowerTabLib PRIVATE -w)
+endif()
+
+# ==============================================================================
 # Source-Dateien hinzufügen
 # ==============================================================================
 target_sources(GP5_VST_Editor
@@ -103,6 +151,8 @@ target_sources(GP5_VST_Editor
         Source/GP7Parser.h
         Source/GP5Writer.cpp
         Source/GP5Writer.h
+        Source/PTBParser.cpp
+        Source/PTBParser.h
         Source/AudioToMidiProcessor.cpp
         Source/AudioToMidiProcessor.h
         Source/AudioTranscriber.cpp
@@ -129,6 +179,7 @@ target_sources(GP5_VST_Editor
 target_include_directories(GP5_VST_Editor PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/ThirdParty/onnxruntime/include
     ${CMAKE_CURRENT_LIST_DIR}/ThirdParty/RTNeural
+    ${CMAKE_CURRENT_LIST_DIR}/ThirdParty/powertab
     ${CMAKE_CURRENT_LIST_DIR}/Source/BasicPitch
 )
 
@@ -160,6 +211,7 @@ target_link_libraries(GP5_VST_Editor
         juce::juce_gui_extra
         onnxruntime
         BasicPitchCNN
+        PowerTabLib
         bin_data
     PUBLIC
         juce::juce_recommended_config_flags
