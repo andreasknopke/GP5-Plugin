@@ -33,7 +33,7 @@ private:
     void timerCallback() override;
     
     // 1. Der Button
-    juce::TextButton loadButton { "Load GuitarPro File" };
+    juce::TextButton loadButton { "Load File" };
     juce::TextButton unloadButton { "-" };
     
     // 2. Zoom Buttons

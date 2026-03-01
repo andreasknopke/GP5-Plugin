@@ -4,9 +4,342 @@ MSBuild-Version 18.0.5+e22287bf1 für .NET Framework
   GP5_VST_Editor_rc_lib.vcxproj -> D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor_rc_lib.dir\Release\GP5_VST_Editor_rc_lib.lib
   bin_data.vcxproj -> D:\GitHub\NewProject\build\build_release\release_build\release_build\Release\bin_data.lib
   BasicPitchCNN.vcxproj -> D:\GitHub\NewProject\build\build_release\release_build\release_build\Release\BasicPitchCNN.lib
+  PowerTabLib.vcxproj -> D:\GitHub\NewProject\build\build_release\release_build\release_build\Release\PowerTabLib.lib
+  PTBParser.cpp
+  PluginEditor.cpp
+  PluginProcessor.cpp
+D:\GitHub\NewProject\Source\PTBParser.cpp(421,21): warning C4189: "preset": Lokale Variable ist initialisiert aber nicht referenziert [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  RTNEURAL_DEFAULT_ALIGNMENT was not defined! Using default alignment = 16.
+  RTNEURAL_DEFAULT_ALIGNMENT was not defined! Using default alignment = 16.
+D:\GitHub\NewProject\Source\BasicPitch\Notes.h(37,32): warning C4305: "Initialisierung": Verkürzung von "double" in "float" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\BasicPitch\Notes.h(37,32): warning C4305: "Initialisierung": Verkürzung von "double" in "float" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\AudioTranscriber.h(160,76): warning C4244: "Initialisierung": Konvertierung von "double" in "const int", möglicher Datenverlust [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\AudioTranscriber.h(160,76): warning C4244: "Initialisierung": Konvertierung von "double" in "const int", möglicher Datenverlust [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\TabLayoutEngine.h(37,81): warning C4100: „availableWidth“: nicht referenzierter Parameter [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\TabLayoutEngine.h(37,81): warning C4100: „availableWidth“: nicht referenzierter Parameter [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\TabRenderer.h(85,40): warning C4458: Deklaration von "config" blendet Klassenmember aus [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+      D:\GitHub\NewProject\Source\TabRenderer.h(365,21):
+      Siehe Deklaration von "TabRenderer::config"
+  
+D:\GitHub\NewProject\Source\TabRenderer.h(86,47): warning C4458: Deklaration von "bounds" blendet Klassenmember aus [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+      D:\GitHub\NewProject\Source\TabRenderer.h(366,28):
+      Siehe Deklaration von "TabRenderer::bounds"
+  
+D:\GitHub\NewProject\Source\TabRenderer.h(85,40): warning C4458: Deklaration von "config" blendet Klassenmember aus [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+      D:\GitHub\NewProject\Source\TabRenderer.h(365,21):
+      Siehe Deklaration von "TabRenderer::config"
+  
+D:\GitHub\NewProject\Source\TabRenderer.h(86,47): warning C4458: Deklaration von "bounds" blendet Klassenmember aus [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+      D:\GitHub\NewProject\Source\TabRenderer.h(366,28):
+      Siehe Deklaration von "TabRenderer::bounds"
+  
+D:\GitHub\NewProject\Source\TabRenderer.h(113,29): warning C4996: 'juce::Font::Font': Use the constructor that takes a FontOptions argument [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\TabRenderer.h(109,15): warning C4189: "visibleEnd": Lokale Variable ist initialisiert aber nicht referenziert [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\TabRenderer.h(108,15): warning C4189: "visibleStart": Lokale Variable ist initialisiert aber nicht referenziert [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\TabRenderer.h(113,29): warning C4996: 'juce::Font::Font': Use the constructor that takes a FontOptions argument [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\TabRenderer.h(109,15): warning C4189: "visibleEnd": Lokale Variable ist initialisiert aber nicht referenziert [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\TabRenderer.h(108,15): warning C4189: "visibleStart": Lokale Variable ist initialisiert aber nicht referenziert [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\TabRenderer.h(405,46): warning C4996: 'juce::Font::getStringWidthFloat': Use GlyphArrangement or TextLayout to compute text layouts [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\TabRenderer.h(405,46): warning C4996: 'juce::Font::getStringWidthFloat': Use GlyphArrangement or TextLayout to compute text layouts [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\TabRenderer.h(609,100): warning C4100: „firstStringY“: nicht referenzierter Parameter [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\TabRenderer.h(810,29): warning C4996: 'juce::Font::Font': Use the constructor that takes a FontOptions argument [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\TabRenderer.h(823,29): warning C4996: 'juce::Font::Font': Use the constructor that takes a FontOptions argument [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\TabRenderer.h(609,100): warning C4100: „firstStringY“: nicht referenzierter Parameter [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\TabRenderer.h(810,29): warning C4996: 'juce::Font::Font': Use the constructor that takes a FontOptions argument [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\TabRenderer.h(823,29): warning C4996: 'juce::Font::Font': Use the constructor that takes a FontOptions argument [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(46,74): warning C4458: Deklaration von "tuning" blendet Klassenmember aus [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+      D:\GitHub\NewProject\Source\NoteEditComponent.h(461,22):
+      Siehe Deklaration von "NoteEditPopup::tuning"
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(46,74): warning C4458: Deklaration von "tuning" blendet Klassenmember aus [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+      D:\GitHub\NewProject\Source\NoteEditComponent.h(461,22):
+      Siehe Deklaration von "NoteEditPopup::tuning"
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(140,49): warning C4244: "Argument": Konvertierung von "int" in "float", möglicher Datenverlust [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(158,48): warning C4244: "Argument": Konvertierung von "int" in "float", möglicher Datenverlust [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(140,49): warning C4244: "Argument": Konvertierung von "int" in "float", möglicher Datenverlust [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(158,48): warning C4244: "Argument": Konvertierung von "int" in "float", möglicher Datenverlust [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(245,48): warning C4244: "Argument": Konvertierung von "int" in "float", möglicher Datenverlust [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(245,48): warning C4244: "Argument": Konvertierung von "int" in "float", möglicher Datenverlust [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(407,40): warning C4389: "==": Konflikt zwischen "signed" und "unsigned" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(407,40): warning C4389: "==": Konflikt zwischen "signed" und "unsigned" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(606,49): warning C4244: "Argument": Konvertierung von "int" in "float", möglicher Datenverlust [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(606,49): warning C4244: "Argument": Konvertierung von "int" in "float", möglicher Datenverlust [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(690,48): warning C4244: "Argument": Konvertierung von "int" in "float", möglicher Datenverlust [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(690,48): warning C4244: "Argument": Konvertierung von "int" in "float", möglicher Datenverlust [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(821,40): warning C4389: "==": Konflikt zwischen "signed" und "unsigned" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(821,40): warning C4389: "==": Konflikt zwischen "signed" und "unsigned" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(889,47): warning C4458: Deklaration von "tuning" blendet Klassenmember aus [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+      D:\GitHub\NewProject\Source\NoteEditComponent.h(1055,22):
+      Siehe Deklaration von "GroupNoteEditPopup::tuning"
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(889,47): warning C4458: Deklaration von "tuning" blendet Klassenmember aus [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+      D:\GitHub\NewProject\Source\NoteEditComponent.h(1055,22):
+      Siehe Deklaration von "GroupNoteEditPopup::tuning"
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(968,49): warning C4244: "Argument": Konvertierung von "int" in "float", möglicher Datenverlust [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\NoteEditComponent.h(968,49): warning C4244: "Argument": Konvertierung von "int" in "float", möglicher Datenverlust [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(800,42): warning C4100: „event“: nicht referenzierter Parameter [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(800,42): warning C4100: „event“: nicht referenzierter Parameter [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(860,40): warning C4389: "==": Konflikt zwischen "signed" und "unsigned" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(875,32): warning C4239: Nicht dem Standard entsprechende Erweiterung: "Initialisierung": Konvertierung von "ElementType" in "ElementType &" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(875,32): warning C4239:         with [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(875,32): warning C4239:         [ [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(875,32): warning C4239:             ElementType=TabBeat [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(875,32): warning C4239:         ] [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+      D:\GitHub\NewProject\Source\TabViewComponent.h(875,32):
+      Ein nicht konstanter Verweis kann nur an einen L-Wert gebunden werden.
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(860,40): warning C4389: "==": Konflikt zwischen "signed" und "unsigned" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(887,31): warning C4239: Nicht dem Standard entsprechende Erweiterung: "Initialisierung": Konvertierung von "ElementType" in "ElementType &" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(887,31): warning C4239:         with [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(887,31): warning C4239:         [ [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(887,31): warning C4239:             ElementType=TabMeasure [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(887,31): warning C4239:         ] [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+      D:\GitHub\NewProject\Source\TabViewComponent.h(887,31):
+      Ein nicht konstanter Verweis kann nur an einen L-Wert gebunden werden.
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(890,32): warning C4239: Nicht dem Standard entsprechende Erweiterung: "Initialisierung": Konvertierung von "ElementType" in "ElementType &" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(890,32): warning C4239:         with [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(890,32): warning C4239:         [ [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(890,32): warning C4239:             ElementType=TabBeat [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(890,32): warning C4239:         ] [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+      D:\GitHub\NewProject\Source\TabViewComponent.h(890,32):
+      Ein nicht konstanter Verweis kann nur an einen L-Wert gebunden werden.
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(875,32): warning C4239: Nicht dem Standard entsprechende Erweiterung: "Initialisierung": Konvertierung von "ElementType" in "ElementType &" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(875,32): warning C4239:         with [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(875,32): warning C4239:         [ [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(875,32): warning C4239:             ElementType=TabBeat [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(875,32): warning C4239:         ] [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+      D:\GitHub\NewProject\Source\TabViewComponent.h(875,32):
+      Ein nicht konstanter Verweis kann nur an einen L-Wert gebunden werden.
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(902,31): warning C4239: Nicht dem Standard entsprechende Erweiterung: "Initialisierung": Konvertierung von "ElementType" in "ElementType &" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(902,31): warning C4239:         with [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(902,31): warning C4239:         [ [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(902,31): warning C4239:             ElementType=TabMeasure [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(902,31): warning C4239:         ] [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+      D:\GitHub\NewProject\Source\TabViewComponent.h(902,31):
+      Ein nicht konstanter Verweis kann nur an einen L-Wert gebunden werden.
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(887,31): warning C4239: Nicht dem Standard entsprechende Erweiterung: "Initialisierung": Konvertierung von "ElementType" in "ElementType &" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(887,31): warning C4239:         with [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(887,31): warning C4239:         [ [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(887,31): warning C4239:             ElementType=TabMeasure [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(887,31): warning C4239:         ] [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+      D:\GitHub\NewProject\Source\TabViewComponent.h(887,31):
+      Ein nicht konstanter Verweis kann nur an einen L-Wert gebunden werden.
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(905,32): warning C4239: Nicht dem Standard entsprechende Erweiterung: "Initialisierung": Konvertierung von "ElementType" in "ElementType &" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(905,32): warning C4239:         with [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(905,32): warning C4239:         [ [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(905,32): warning C4239:             ElementType=TabBeat [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(905,32): warning C4239:         ] [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+      D:\GitHub\NewProject\Source\TabViewComponent.h(905,32):
+      Ein nicht konstanter Verweis kann nur an einen L-Wert gebunden werden.
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(890,32): warning C4239: Nicht dem Standard entsprechende Erweiterung: "Initialisierung": Konvertierung von "ElementType" in "ElementType &" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(890,32): warning C4239:         with [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(890,32): warning C4239:         [ [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(890,32): warning C4239:             ElementType=TabBeat [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(890,32): warning C4239:         ] [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+      D:\GitHub\NewProject\Source\TabViewComponent.h(890,32):
+      Ein nicht konstanter Verweis kann nur an einen L-Wert gebunden werden.
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(902,31): warning C4239: Nicht dem Standard entsprechende Erweiterung: "Initialisierung": Konvertierung von "ElementType" in "ElementType &" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(902,31): warning C4239:         with [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(902,31): warning C4239:         [ [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(902,31): warning C4239:             ElementType=TabMeasure [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(902,31): warning C4239:         ] [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+      D:\GitHub\NewProject\Source\TabViewComponent.h(902,31):
+      Ein nicht konstanter Verweis kann nur an einen L-Wert gebunden werden.
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(905,32): warning C4239: Nicht dem Standard entsprechende Erweiterung: "Initialisierung": Konvertierung von "ElementType" in "ElementType &" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(905,32): warning C4239:         with [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(905,32): warning C4239:         [ [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(905,32): warning C4239:             ElementType=TabBeat [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(905,32): warning C4239:         ] [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+      D:\GitHub\NewProject\Source\TabViewComponent.h(905,32):
+      Ein nicht konstanter Verweis kann nur an einen L-Wert gebunden werden.
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(1177,15): warning C4189: "diff": Lokale Variable ist initialisiert aber nicht referenziert [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(1177,15): warning C4189: "diff": Lokale Variable ist initialisiert aber nicht referenziert [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(1408,24): warning C4239: Nicht dem Standard entsprechende Erweiterung: "Initialisierung": Konvertierung von "ElementType" in "ElementType &" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(1408,24): warning C4239:         with [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(1408,24): warning C4239:         [ [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(1408,24): warning C4239:             ElementType=TabBeat [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(1408,24): warning C4239:         ] [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+      D:\GitHub\NewProject\Source\TabViewComponent.h(1408,24):
+      Ein nicht konstanter Verweis kann nur an einen L-Wert gebunden werden.
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(1408,24): warning C4239: Nicht dem Standard entsprechende Erweiterung: "Initialisierung": Konvertierung von "ElementType" in "ElementType &" [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(1408,24): warning C4239:         with [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(1408,24): warning C4239:         [ [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(1408,24): warning C4239:             ElementType=TabBeat [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\TabViewComponent.h(1408,24): warning C4239:         ] [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+      D:\GitHub\NewProject\Source\TabViewComponent.h(1408,24):
+      Ein nicht konstanter Verweis kann nur an einen L-Wert gebunden werden.
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(1561,15): warning C4189: "diff": Lokale Variable ist initialisiert aber nicht referenziert [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(1561,15): warning C4189: "diff": Lokale Variable ist initialisiert aber nicht referenziert [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(1900,80): warning C4244: "Argument": Konvertierung von "int" in "float", möglicher Datenverlust [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(1910,28): warning C4244: "Initialisierung": Konvertierung von "int" in "float", möglicher Datenverlust [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(1900,80): warning C4244: "Argument": Konvertierung von "int" in "float", möglicher Datenverlust [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\TabViewComponent.h(1910,28): warning C4244: "Initialisierung": Konvertierung von "int" in "float", möglicher Datenverlust [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\ExportPanelComponent.h(177,39): warning C4996: 'juce::Font::Font': Use the constructor that takes a FontOptions argument [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\ExportPanelComponent.h(177,39): warning C4996: 'juce::Font::Font': Use the constructor that takes a FontOptions argument [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\PluginProcessor.cpp(271,55): warning C4100: „index“: nicht referenzierter Parameter [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\PluginProcessor.cpp(275,66): warning C4100: „index“: nicht referenzierter Parameter [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\PluginProcessor.cpp(280,82): warning C4100: „newName“: nicht referenzierter Parameter [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\PluginProcessor.cpp(280,55): warning C4100: „index“: nicht referenzierter Parameter [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\PluginProcessor.cpp(352,15): warning C4458: Deklaration von "playHead" blendet Klassenmember aus [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+      D:\GitHub\JUCE\modules\juce_audio_processors_headless\processors\juce_AudioProcessor.h(1491,33):
+      Siehe Deklaration von "juce::AudioProcessor::playHead"
+  
+D:\GitHub\NewProject\Source\PluginEditor.cpp(274,5): warning C4100: „measureIndex“: nicht referenzierter Parameter [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\PluginProcessor.cpp(343,10): warning C4189: "totalNumInputChannels": Lokale Variable ist initialisiert aber nicht referenziert [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\PluginEditor.cpp(792,25): warning C4189: "gp5Track": Lokale Variable ist initialisiert aber nicht referenziert [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\PluginProcessor.cpp(3671,9): warning C4189: "firstMeasureNumber": Lokale Variable ist initialisiert aber nicht referenziert [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\Source\PluginProcessor.cpp(4023,34): warning C4189: "found": Lokale Variable ist initialisiert aber nicht referenziert [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+D:\GitHub\NewProject\ThirdParty\RTNeural\RTNeural\model_loader.h(29,39): warning C4505: "RTNeural::json_parser::debug_print": Eine nicht referenzierte Funktion mit interner Verknüpfung wurde entfernt. [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\Source\BasicPitch\NoteUtils.h(57,15): warning C4505: "NoteUtils::midiNoteToStr": Eine nicht referenzierte Funktion mit interner Verknüpfung wurde entfernt. [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginEditor.cpp')
+  
+D:\GitHub\NewProject\ThirdParty\RTNeural\RTNeural\model_loader.h(29,39): warning C4505: "RTNeural::json_parser::debug_print": Eine nicht referenzierte Funktion mit interner Verknüpfung wurde entfernt. [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
+D:\GitHub\NewProject\Source\BasicPitch\NoteUtils.h(57,15): warning C4505: "NoteUtils::midiNoteToStr": Eine nicht referenzierte Funktion mit interner Verknüpfung wurde entfernt. [D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor.vcxproj]
+  (compiling source file '../../../../Source/PluginProcessor.cpp')
+  
   GP5_VST_Editor.vcxproj -> D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor_artefacts\Release\GP5_VST_Editor_SharedCode.lib
   Copying onnxruntime.dll to output directory
   GP5_VST_Editor_vst3_helper.vcxproj -> D:\GitHub\NewProject\build\build_release\release_build\release_build\Release\GP5_VST_Editor_vst3_helper.exe
+     Bibliothek "D:/GitHub/NewProject/build/build_release/release_build/release_build/GP5_VST_Editor_artefacts/Release/VST3/GP5_VST_Editor.lib" und Objekt "D:/GitHub/NewProject/build/build_release/release_build/release_build/GP5_VST_Editor_artefacts/Release/VST3/GP5_VST_Editor.exp" werden erstellt.
+  Code wird generiert.
+  Codegenerierung ist abgeschlossen.
   GP5_VST_Editor_VST3.vcxproj -> D:\GitHub\NewProject\build\build_release\release_build\release_build\GP5_VST_Editor_artefacts\Release\VST3\GP5_VST_Editor.vst3\Contents\x86_64-win\GP5_VST_Editor.vst3
   removing moduleinfo.json
   creating D:/GitHub/NewProject/build/build_release/release_build/release_build/GP5_VST_Editor_artefacts/Release/VST3/GP5_VST_Editor.vst3

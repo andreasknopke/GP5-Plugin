@@ -54,14 +54,16 @@ public:
         hoveredIndex = -1;  // Reset hover state
         deleteHovered = false;
         durationHovered = -1;
+        pitchHovered = -1;
         
         int itemHeight = 30;
         int headerHeight = 40;
         int numItems = hitInfo.alternatives.size() + 1;
+        int pitchSectionHeight = 60;     // Pitch editing section
         int durationSectionHeight = 70;  // Duration selector section
         int deleteSectionHeight = 36;    // Delete button
         int width = 240;
-        int height = headerHeight + numItems * itemHeight + durationSectionHeight + deleteSectionHeight + 30;
+        int height = headerHeight + numItems * itemHeight + pitchSectionHeight + durationSectionHeight + deleteSectionHeight + 30;
         
         setSize(width, height);
         
@@ -120,6 +122,9 @@ public:
     /** Callback when a duration is selected: hitInfo, newDuration, isDotted */
     std::function<void(const NoteHitInfo&, NoteDuration, bool)> onDurationChangeRequested;
     
+    /** Callback when the pitch is changed: hitInfo, newMidiNote */
+    std::function<void(const NoteHitInfo&, int)> onNotePitchChanged;
+    
     void paint(juce::Graphics& g) override
     {
         // Hintergrund
@@ -154,6 +159,58 @@ public:
         
         // Separator
         y += 5;
+        g.setColour(juce::Colour(0xFF555555));
+        g.drawHorizontalLine(y, 10, getWidth() - 10);
+        y += 8;
+        
+        // Pitch section
+        pitchSectionY = y;
+        g.setColour(juce::Colours::white);
+        g.setFont(juce::Font(juce::FontOptions(11.0f)));
+        g.drawText("Pitch:", 10, y, 40, 18, juce::Justification::centredLeft, false);
+        
+        // Current note name display
+        juce::String currentNoteName = FretPositionCalculator::getMidiNoteName(currentHitInfo.midiNote);
+        g.setFont(juce::Font(juce::FontOptions(13.0f)).boldened());
+        g.setColour(juce::Colour(0xFF66CCFF));
+        g.drawText(currentNoteName, 50, y, 50, 18, juce::Justification::centredLeft, false);
+        y += 20;
+        
+        // Pitch buttons: [-Oct] [-Semi] [+Semi] [+Oct]
+        struct PitchBtnInfo { const char* label; int idx; };
+        PitchBtnInfo pitchBtns[] = {
+            { "-Oct", 0 }, { "-1", 1 }, { "+1", 2 }, { "+Oct", 3 }
+        };
+        int pBtnWidth = 42, pBtnSpacing = 6;
+        int totalPBtnsWidth = 4 * pBtnWidth + 3 * pBtnSpacing;
+        int pBtnX = (getWidth() - totalPBtnsWidth) / 2;
+        
+        for (int i = 0; i < 4; ++i)
+        {
+            juce::Rectangle<int> btnRect(pBtnX + i * (pBtnWidth + pBtnSpacing), y, pBtnWidth, 24);
+            bool isHover = (pitchHovered == i);
+            
+            if (isHover)
+            {
+                g.setColour(juce::Colour(0xFF66CCFF).withAlpha(0.5f));
+                g.fillRoundedRectangle(btnRect.toFloat(), 3.0f);
+            }
+            else
+            {
+                g.setColour(juce::Colour(0xFF444448));
+                g.fillRoundedRectangle(btnRect.toFloat(), 3.0f);
+            }
+            
+            g.setColour(juce::Colours::white);
+            g.setFont(juce::Font(juce::FontOptions(10.0f)).boldened());
+            g.drawText(pitchBtns[i].label, btnRect, juce::Justification::centred, false);
+            
+            pitchBtnRects[i] = btnRect;
+        }
+        
+        y += 30;
+        
+        // Separator
         g.setColour(juce::Colour(0xFF555555));
         g.drawHorizontalLine(y, 10, getWidth() - 10);
         y += 8;
@@ -281,6 +338,17 @@ public:
             }
         }
         
+        // Check pitch buttons
+        int newPitchHovered = -1;
+        for (int i = 0; i < 4; ++i)
+        {
+            if (pitchBtnRects[i].contains(event.getPosition()))
+            {
+                newPitchHovered = i;
+                break;
+            }
+        }
+        
         // Check duration buttons
         int newDurationHovered = -1;
         for (int i = 0; i < 6; ++i)
@@ -297,9 +365,10 @@ public:
         // Check delete button
         bool newDeleteHovered = deleteBtnRect.contains(event.getPosition());
         
-        if (newHoveredIndex != hoveredIndex || newDurationHovered != durationHovered || newDeleteHovered != deleteHovered)
+        if (newHoveredIndex != hoveredIndex || newPitchHovered != pitchHovered || newDurationHovered != durationHovered || newDeleteHovered != deleteHovered)
         {
             hoveredIndex = newHoveredIndex;
+            pitchHovered = newPitchHovered;
             durationHovered = newDurationHovered;
             deleteHovered = newDeleteHovered;
             repaint();
@@ -331,6 +400,31 @@ public:
                 onNoteDeleteRequested(currentHitInfo);
             hide();
             return;
+        }
+        
+        // Check pitch buttons: 0=-Oct, 1=-Semi, 2=+Semi, 3=+Oct
+        for (int i = 0; i < 4; ++i)
+        {
+            if (pitchBtnRects[i].contains(event.getPosition()))
+            {
+                int delta = 0;
+                switch (i)
+                {
+                    case 0: delta = -12; break;  // -Octave
+                    case 1: delta = -1;  break;  // -Semitone
+                    case 2: delta = +1;  break;  // +Semitone
+                    case 3: delta = +12; break;  // +Octave
+                }
+                int newMidi = currentHitInfo.midiNote + delta;
+                if (newMidi >= 0 && newMidi <= 127 && onNotePitchChanged)
+                {
+                    onNotePitchChanged(currentHitInfo, newMidi);
+                    // Update local state so the display refreshes
+                    currentHitInfo.midiNote = newMidi;
+                    repaint();
+                }
+                return;
+            }
         }
         
         // Check duration buttons
@@ -399,6 +493,21 @@ public:
             return true;
         }
         
+        // Pitch change: Up/Down = semitone, Shift+Up/Down = octave
+        if (key.isKeyCode(juce::KeyPress::upKey) || key.isKeyCode(juce::KeyPress::downKey))
+        {
+            bool isShift = key.getModifiers().isShiftDown();
+            int delta = key.isKeyCode(juce::KeyPress::upKey) ? (isShift ? 12 : 1) : (isShift ? -12 : -1);
+            int newMidi = currentHitInfo.midiNote + delta;
+            if (newMidi >= 0 && newMidi <= 127 && onNotePitchChanged)
+            {
+                onNotePitchChanged(currentHitInfo, newMidi);
+                currentHitInfo.midiNote = newMidi;
+                repaint();
+            }
+            return true;
+        }
+        
         // Duration keys 1-6
         NoteDuration durations[] = { NoteDuration::Whole, NoteDuration::Half, NoteDuration::Quarter,
                                       NoteDuration::Eighth, NoteDuration::Sixteenth, NoteDuration::ThirtySecond };
@@ -460,6 +569,11 @@ private:
     NoteHitInfo currentHitInfo;
     juce::Array<int> tuning;
     int hoveredIndex = -1;
+    
+    // Pitch state
+    int pitchSectionY = 0;
+    juce::Rectangle<int> pitchBtnRects[4];  // -Oct, -Semi, +Semi, +Oct
+    int pitchHovered = -1;  // -1 = none, 0-3 = pitch buttons
     
     // Duration state
     NoteDuration beatDuration = NoteDuration::Quarter;
@@ -1102,4 +1216,212 @@ private:
     }
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GroupNoteEditPopup)
+};
+
+//==============================================================================
+/**
+ * FretInputPopup - Kleines Inline-Eingabefeld für Bundnummer.
+ * Erscheint direkt auf einer Saitenlinie über einer Pause zum Einfügen neuer Noten.
+ */
+class FretInputPopup : public juce::Component
+{
+public:
+    FretInputPopup() { setSize(44, 28); setAlwaysOnTop(true); }
+    
+    /** Zeige das Eingabefeld an der gegebenen Position.
+     *  @param restInfo  Die Pause, in der eingefügt wird
+     *  @param stringIdx Die Saite, auf der eingefügt wird (0=höchste)
+     *  @param clickPos  Die Klickposition auf dem Screen
+     *  @param parent    Das übergeordnete Component
+     *  @param tuning    Saitenstimmung
+     */
+    void showForInsert(const RenderedRestInfo& restInfo, int stringIdx,
+                       juce::Point<float> clickPos, juce::Component* parent,
+                       const juce::Array<int>& tuning)
+    {
+        currentRestInfo = restInfo;
+        currentString = stringIdx;
+        this->tuning = tuning;
+        fretInput = "";
+        cursorVisible = true;
+        
+        if (parent != nullptr)
+        {
+            int popupX = static_cast<int>(clickPos.x) - getWidth() / 2;
+            int popupY = static_cast<int>(clickPos.y) - getHeight() / 2;
+            popupX = juce::jlimit(2, parent->getWidth() - getWidth() - 2, popupX);
+            popupY = juce::jlimit(2, parent->getHeight() - getHeight() - 2, popupY);
+            setBounds(popupX, popupY, getWidth(), getHeight());
+            parent->addAndMakeVisible(this);
+            grabKeyboardFocus();
+            startTimerHz(3);  // Cursor blink
+        }
+        repaint();
+    }
+    
+    void hide()
+    {
+        stopTimer();
+        if (auto* parent = getParentComponent())
+            parent->removeChildComponent(this);
+        currentRestInfo = RenderedRestInfo();
+        fretInput = "";
+    }
+    
+    bool isShowing() const { return currentRestInfo.measureIndex >= 0; }
+    
+    /** Callback: Note wird eingefügt (measureIndex, beatIndex, stringIndex, fret, midiNote) */
+    std::function<void(int, int, int, int, int)> onNoteInsertRequested;
+    
+    void paint(juce::Graphics& g) override
+    {
+        // Background
+        g.setColour(juce::Colour(0xFF1E1E22));
+        g.fillRoundedRectangle(getLocalBounds().toFloat(), 5.0f);
+        g.setColour(juce::Colour(0xFF4A90D9));
+        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 5.0f, 2.0f);
+        
+        // Fret text (or cursor placeholder)
+        g.setColour(juce::Colours::white);
+        g.setFont(juce::Font(juce::FontOptions(14.0f)).boldened());
+        
+        juce::String display = fretInput;
+        if (cursorVisible)
+            display += "_";
+        
+        if (display.isEmpty())
+        {
+            g.setColour(juce::Colour(0xFF888888));
+            display = cursorVisible ? "_" : "";
+        }
+        
+        g.drawText(display, getLocalBounds(), juce::Justification::centred, false);
+    }
+    
+    bool keyPressed(const juce::KeyPress& key) override
+    {
+        if (key == juce::KeyPress::escapeKey)
+        {
+            hide();
+            return true;
+        }
+        
+        // Enter: confirm the fret number
+        if (key == juce::KeyPress::returnKey)
+        {
+            confirmInput();
+            return true;
+        }
+        
+        // Backspace: remove last digit
+        if (key == juce::KeyPress::backspaceKey)
+        {
+            if (fretInput.isNotEmpty())
+            {
+                fretInput = fretInput.dropLastCharacters(1);
+                repaint();
+            }
+            return true;
+        }
+        
+        // Tab key: confirm and move to next string
+        if (key == juce::KeyPress::tabKey)
+        {
+            if (fretInput.isNotEmpty())
+                confirmInput();
+            // Could advance to next string in the future
+            return true;
+        }
+        
+        // Number keys 0-9: type fret number (max 2 digits)
+        auto ch = key.getTextCharacter();
+        if (ch >= '0' && ch <= '9' && fretInput.length() < 2)
+        {
+            fretInput += juce::String::charToString(ch);
+            repaint();
+            
+            // Auto-confirm on 2 digits (frets 10-24)
+            if (fretInput.length() == 2)
+            {
+                int fret = fretInput.getIntValue();
+                if (fret > 24)
+                {
+                    // Invalid fret, revert to first digit only
+                    fretInput = fretInput.substring(0, 1);
+                    confirmInput();
+                }
+                else
+                {
+                    confirmInput();
+                }
+            }
+            // Auto-confirm on 1 digit if fret 3-9 (no valid 2-digit starting)
+            // Actually, 0-2 could start 10-24, so keep waiting for those
+            // For 3-9: no 2-digit starting with 3-9 is <= 24 except... 30+? No.
+            // Wait, 10-24 are valid: so digits 0,1,2 can start a 2-digit fret
+            // For 3-9: auto-confirm after short delay? No, better just wait for Enter
+            // or let the user type another digit that will fail validation
+            return true;
+        }
+        
+        return false;
+    }
+    
+    void focusLost(FocusChangeType) override 
+    { 
+        // Auto-confirm if something was typed
+        if (fretInput.isNotEmpty())
+            confirmInput();
+        else
+            hide();
+    }
+    
+    void mouseDown(const juce::MouseEvent&) override
+    {
+        // Clicking the popup itself should not close it
+        grabKeyboardFocus();
+    }
+    
+private:
+    RenderedRestInfo currentRestInfo;
+    int currentString = 0;
+    juce::Array<int> tuning;
+    juce::String fretInput;
+    bool cursorVisible = true;
+    
+    void startTimerHz(int hz)
+    {
+        // Use a simple approach - just toggle cursor periodically
+        // Since we can't easily use Timer here, we'll skip the blink
+        // and just show a static cursor
+        cursorVisible = true;
+    }
+    
+    void stopTimer() { cursorVisible = false; }
+    
+    void confirmInput()
+    {
+        if (fretInput.isEmpty()) { hide(); return; }
+        
+        int fret = fretInput.getIntValue();
+        if (fret < 0 || fret > 24) { hide(); return; }
+        
+        // Calculate MIDI note from string + fret
+        int midiNote = -1;
+        if (currentString >= 0 && currentString < tuning.size())
+            midiNote = tuning[currentString] + fret;
+        
+        if (midiNote < 0 || midiNote > 127) { hide(); return; }
+        
+        int mi = currentRestInfo.measureIndex;
+        int bi = currentRestInfo.beatIndex;
+        int si = currentString;
+        
+        hide();
+        
+        if (onNoteInsertRequested)
+            onNoteInsertRequested(mi, bi, si, fret, midiNote);
+    }
+    
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FretInputPopup)
 };

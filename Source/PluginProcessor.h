@@ -12,6 +12,7 @@
 #include "GP5Parser.h"
 #include "GP7Parser.h"
 #include "PTBParser.h"
+#include "MidiImporter.h"
 #include "TabModels.h"
 #include "ChordMatcher.h"
 #include "ChordFingerDB.h"
@@ -84,22 +85,27 @@ public:
     const PTBParser& getPTBParser() const { return ptbParser; }
     bool isUsingGP7Parser() const { return usingGP7Parser; }
     bool isUsingPTBParser() const { return usingPTBParser; }
+    bool isUsingMidiImporter() const { return usingMidiImporter; }
+    const MidiImporter& getMidiImporter() const { return midiImporter; }
     
     // Convenience methods that work with whichever parser is active
     const juce::Array<GP5Track>& getActiveTracks() const 
     {
+        if (usingMidiImporter) return midiImporter.getTracks();
         if (usingPTBParser) return ptbParser.getTracks();
         return usingGP7Parser ? gp7Parser.getTracks() : gp5Parser.getTracks();
     }
     
     const juce::Array<GP5MeasureHeader>& getActiveMeasureHeaders() const
     {
+        if (usingMidiImporter) return midiImporter.getMeasureHeaders();
         if (usingPTBParser) return ptbParser.getMeasureHeaders();
         return usingGP7Parser ? gp7Parser.getMeasureHeaders() : gp5Parser.getMeasureHeaders();
     }
     
     const GP5SongInfo& getActiveSongInfo() const
     {
+        if (usingMidiImporter) return midiImporter.getSongInfo();
         if (usingPTBParser) return ptbParser.getSongInfo();
         return usingGP7Parser ? gp7Parser.getSongInfo() : gp5Parser.getSongInfo();
     }
@@ -392,6 +398,12 @@ public:
     // Update a beat's duration in recordedNotes (from manual editing)
     void updateRecordedNoteDuration(int measureIndex, int beatIndex, int newDurationValue, bool isDotted);
     
+    // Update a note's pitch in recordedNotes (from manual editing)
+    void updateRecordedNotePitch(int measureIndex, int beatIndex, int oldString, int newMidiNote, int newFret);
+    
+    // Insert a new note at a rest position in recordedNotes
+    void insertRecordedNote(int measureIndex, int beatIndex, int stringIndex, int fret, int midiNote);
+    
     // Speichere editierten Track (für Plugin-State)
     void setEditedTrack(int trackIndex, const TabTrack& track);
     bool hasEditedTrack(int trackIndex) const { return editedTracks.count(trackIndex) > 0; }
@@ -435,8 +447,10 @@ private:
     GP5Parser gp5Parser;
     GP7Parser gp7Parser;
     PTBParser ptbParser;
+    MidiImporter midiImporter;
     bool usingGP7Parser = false;  // Which parser was used for current file
     bool usingPTBParser = false;  // PTB parser active
+    bool usingMidiImporter = false;  // MIDI file importer active
     juce::String loadedFilePath;
     bool fileLoaded = false;
     

@@ -313,6 +313,24 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
         audioProcessor.updateRecordedNoteDuration(measureIdx, beatIdx, newDurationValue, isDotted);
         audioProcessor.setEditedTrack(audioProcessor.getSelectedTrack(), tabView.getTrack());
     };
+    
+    // Note-Pitch-Changed Callback
+    tabView.onNotePitchChanged = [this](int measureIdx, int beatIdx, int stringIndex, int newMidiNote, int newFret) {
+        DBG("Tonhöhe geändert: Takt " << (measureIdx + 1) << ", Beat " << (beatIdx + 1) 
+            << ", Saite " << (stringIndex + 1) << ", neue MIDI-Note " << newMidiNote << ", Bund " << newFret);
+        
+        audioProcessor.updateRecordedNotePitch(measureIdx, beatIdx, stringIndex, newMidiNote, newFret);
+        audioProcessor.setEditedTrack(audioProcessor.getSelectedTrack(), tabView.getTrack());
+    };
+    
+    // Note-Inserted Callback (insert note into rest)
+    tabView.onNoteInserted = [this](int measureIdx, int beatIdx, int stringIndex, int fret, int midiNote) {
+        DBG("Note eingefügt: Takt " << (measureIdx + 1) << ", Beat " << (beatIdx + 1) 
+            << ", Saite " << (stringIndex + 1) << ", Bund " << fret << ", MIDI " << midiNote);
+        
+        audioProcessor.insertRecordedNote(measureIdx, beatIdx, stringIndex, fret, midiNote);
+        audioProcessor.setEditedTrack(audioProcessor.getSelectedTrack(), tabView.getTrack());
+    };
 
     // Fenstergröße setzen (größer für die Tab-Ansicht + Header)
     setSize (900, 480);
@@ -474,9 +492,9 @@ void NewProjectAudioProcessorEditor::resized()
 void NewProjectAudioProcessorEditor::loadButtonClicked()
 {
     fileChooser = std::make_unique<juce::FileChooser> (
-        "Select a Guitar Pro / Power Tab file...",
+        "Select a Guitar Pro / MIDI / Power Tab file...",
         juce::File::getSpecialLocation (juce::File::userHomeDirectory),
-        "*.gp;*.gp3;*.gp4;*.gp5;*.ptb");
+        "*.gp;*.gp3;*.gp4;*.gp5;*.ptb;*.mid;*.midi");
 
     auto chooserFlags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
 
@@ -503,9 +521,12 @@ void NewProjectAudioProcessorEditor::loadButtonClicked()
             else
             {
                 juce::String errorMsg;
-                if (file.getFileExtension().toLowerCase() == ".ptb")
+                auto ext = file.getFileExtension().toLowerCase();
+                if (ext == ".mid" || ext == ".midi")
+                    errorMsg = audioProcessor.getMidiImporter().getLastError();
+                else if (ext == ".ptb")
                     errorMsg = audioProcessor.getPTBParser().getLastError();
-                else if (file.getFileExtension().toLowerCase() == ".gp")
+                else if (ext == ".gp")
                     errorMsg = audioProcessor.getGP7Parser().getLastError();
                 else
                     errorMsg = audioProcessor.getGP5Parser().getLastError();
@@ -765,9 +786,13 @@ void NewProjectAudioProcessorEditor::trackSelectionChanged()
         
         if (trackIndex >= 0 && trackIndex < trackCount)
         {
-            // Tab-Ansicht aktualisieren mit dem richtigen Parser
+            // Tab-Ansicht aktualisieren: editierten Track bevorzugen, sonst Parser
             TabTrack track;
-            if (audioProcessor.isUsingGP7Parser())
+            if (audioProcessor.hasEditedTrack(trackIndex))
+            {
+                track = audioProcessor.getEditedTrack(trackIndex);
+            }
+            else if (audioProcessor.isUsingGP7Parser())
             {
                 const auto& gp7Tracks = audioProcessor.getGP7Parser().getTracks();
                 juce::Array<TabMeasure> measures = audioProcessor.getGP7Parser().convertToTabMeasures(trackIndex);
@@ -775,6 +800,10 @@ void NewProjectAudioProcessorEditor::trackSelectionChanged()
                 track.stringCount = gp7Tracks[trackIndex].stringCount;
                 track.tuning = gp7Tracks[trackIndex].tuning;
                 track.measures = measures;
+            }
+            else if (audioProcessor.isUsingMidiImporter())
+            {
+                track = audioProcessor.getMidiImporter().convertToTabTrack(trackIndex);
             }
             else if (audioProcessor.isUsingPTBParser())
             {

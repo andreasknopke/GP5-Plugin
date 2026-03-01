@@ -68,21 +68,29 @@ Copy-Item "D:\GitHub\NewProject\ThirdParty\onnxruntime\lib\onnxruntime.dll" "C:\
 
 ## Inno Setup (Installer)
 
-Inno Setup 6.7.0 ist über winget installiert. Der Compiler-Pfad ist:
+Inno Setup 6.7.1 ist über winget installiert. Der Compiler-Pfad ist:
 
 ```
-C:\Users\Andre.AUDIO-WS1\AppData\Local\Programs\Inno Setup 6\ISCC.exe
+C:\Users\Andre.AUDIO-WS1\AppData\Local\Programs\Inno Setup 6\iscc.exe
 ```
 
 ### Installer bauen:
 ```powershell
-& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" "D:\GitHub\NewProject\installer\GP5_VST_Editor.iss"
+& "C:\Users\Andre.AUDIO-WS1\AppData\Local\Programs\Inno Setup 6\iscc.exe" "D:\GitHub\NewProject\installer\GP5_VST_Editor.iss"
 ```
 
 ### Installer-Script:
 - Pfad: `D:\GitHub\NewProject\installer\GP5_VST_Editor.iss`
 - Ausgabe: `D:\GitHub\NewProject\releases\GP5_VST_Editor_<version>_Setup.exe`
 - Version anpassen: `#define MyAppVersion` und `VersionInfoVersion` in der .iss Datei
+
+### Vollständiger Release-Workflow:
+1. Version in `installer\GP5_VST_Editor.iss` hochsetzen (`MyAppVersion` + `VersionInfoVersion`)
+2. Release Build erstellen (siehe oben)
+3. Installer bauen: `& "C:\Users\Andre.AUDIO-WS1\AppData\Local\Programs\Inno Setup 6\iscc.exe" "D:\GitHub\NewProject\installer\GP5_VST_Editor.iss"`
+4. Git commit & push
+5. Git Tag: `git tag -a v<version> -m "v<version> - Beschreibung"; git push origin v<version>`
+6. GitHub Release: `gh release create v<version> "D:\GitHub\NewProject\releases\GP5_VST_Editor_<version>_Setup.exe" --title "v<version> - Titel" --notes "Release Notes"`
 
 ## Git
 

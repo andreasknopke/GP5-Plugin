@@ -1,16 +1,24 @@
 # GP5 VST Editor
 
-A VST3 plugin for loading, displaying, playing, and editing Guitar Pro files (.gp3, .gp4, .gp5, .gp, .gpx) and Power Tab files (.ptb) directly in your DAW with realistic MIDI output for guitar samplers. The plugin also offers **Audio-to-Tab transcription** (powered by BasicPitch polyphonic pitch detection), MIDI to GP5 transcription, and Guitar Pro to MIDI conversion features.
+A VST3 plugin for loading, displaying, playing, and editing Guitar Pro files (.gp3, .gp4, .gp5, .gp, .gpx), Power Tab files (.ptb), and **Standard MIDI files** (.mid, .midi) directly in your DAW with realistic MIDI output for guitar samplers. The plugin also offers **Audio-to-Tab transcription** (powered by BasicPitch polyphonic pitch detection), MIDI to GP5 transcription, and Guitar Pro to MIDI conversion features.
 
 ---
 
 ## Description
 
-The GP5 VST Editor is a JUCE-based VST3 instrument plugin that reads Guitar Pro and Power Tab files and displays them as interactive tablature. It can also **transcribe live audio input** (guitar via sidechain) into tablature using a neural network (BasicPitch). The plugin synchronizes with your DAW's transport and generates expressive MIDI output with real-time pitch bend interpolation for authentic guitar playback.
+The GP5 VST Editor is a JUCE-based VST3 instrument plugin that reads Guitar Pro, Power Tab, and Standard MIDI files and displays them as interactive tablature. It can also **transcribe live audio input** (guitar via sidechain) into tablature using a neural network (BasicPitch). The plugin synchronizes with your DAW's transport and generates expressive MIDI output with real-time pitch bend interpolation for authentic guitar playback.
 
 ### Main Features
 
-- **Load GP3/GP4/GP5/GP7/GP8/PTB Files**: Open Guitar Pro 3, 4, 5, 7, 8 and Power Tab (.ptb) files directly in the plugin
+- **Load GP3/GP4/GP5/GP7/GP8/PTB/MIDI Files**: Open Guitar Pro 3, 4, 5, 7, 8, Power Tab (.ptb), and Standard MIDI (.mid, .midi) files directly in the plugin
+- **MIDI File Import**: Intelligent conversion of MIDI files to tablature
+  - Automatic track detection per MIDI channel
+  - Smart string/fret assignment with lowest-fret preference
+  - Bass track detection (4-string tuning for low-range instruments)
+  - Drum track support (channel 10)
+  - Proper time signature and tempo extraction
+  - Chord grouping (simultaneous notes combined into beats)
+  - Automatic rest filling between notes
 - **PTB to GP5 Converter**: Load Power Tab files and export them as Guitar Pro 5 format
 - **Chord Name Display**: Shows chord names above the tablature (Am, E5+/G#, FM7, etc.)
 - **Tablature Display**: Professional rendering of notes as guitar tablature with effects notation
@@ -42,6 +50,16 @@ The GP5 VST Editor is a JUCE-based VST3 instrument plugin that reads Guitar Pro 
     - Changes persist when plugin UI is closed/reopened
     - Edited positions are saved in GP5 exports
     - Multiple consecutive edits to the same note work correctly
+  - **Pitch Editing**:
+    - Keyboard shortcuts to change pitch: Up/Down arrow (±1 semitone), Shift+Up/Down (±1 octave)
+    - Automatically recalculates optimal string/fret position for new pitch
+    - MIDI output reflects edited pitches in real-time
+  - **Note Insertion** (Guitar Pro-style workflow):
+    - Click on a string line over a rest position to insert a new note
+    - Inline fret number input popup (type 0-24, auto-confirm for 2-digit frets)
+    - Rest automatically splits to accommodate the inserted note
+    - Left/Right arrow keys for beat-by-beat navigation with visual cursor
+    - Crosshair cursor feedback on insertable positions
   - **Rest Editing**:
     - Delete rests to merge with adjacent notes
     - Change rest durations with right-click
@@ -121,7 +139,7 @@ The completed VST3 plugin will be automatically copied to your system's VST3 fol
 
 1. Load the plugin in your DAW as an instrument
 2. Route the MIDI output to a guitar sampler (HALion, Kontakt, etc.)
-3. Click on "Load GuitarPro File" and select a .gp3, .gp4, .gp5, .gp, or .ptb file
+3. Click on "Load File" and select a .gp3, .gp4, .gp5, .gp, .ptb, .mid, or .midi file
 4. Select the desired track from the dropdown list
 5. Configure per-track settings (MIDI channel, volume, pan, mute/solo)
 6. Enable "Auto-Scroll" for automatic scrolling during playback
@@ -159,6 +177,7 @@ GP5_VST_Editor/
 │   ├── GP5Writer.cpp/h          # Guitar Pro 5 file writer (export)
 │   ├── GP7Parser.h              # Guitar Pro 7/8 (.gp) file parser
 │   ├── PTBParser.cpp/h          # Power Tab (.ptb) file parser
+│   ├── MidiImporter.h           # Standard MIDI file (.mid) importer
 │   ├── AudioTranscriber.cpp/h   # Audio-to-MIDI transcription (BasicPitch wrapper)
 │   ├── AudioToMidiProcessor.h   # Real-time YIN monophonic pitch detection
 │   ├── FretPositionCalculator.h # String/fret optimization with cost model
@@ -195,6 +214,7 @@ GP5_VST_Editor/
 - **Guitar Pro 7** (.gp) - via embedded GPIF XML
 - **Guitar Pro 8** (.gp) - via embedded GPIF XML
 - **Power Tab** (.ptb) - via powertab document library
+- **Standard MIDI** (.mid, .midi) - via JUCE MidiFile with intelligent tab conversion
 
 ### Supported Guitar Pro Features
 
@@ -250,6 +270,8 @@ The GP5 writer exports tablature data to the Guitar Pro 5 format, fully compatib
 The GP7/GP8 parser extracts the embedded GPIF XML from the .gp archive format (ZIP container with Content/score.gpif) and parses notes, chords, tracks, and effects.
 
 The PTB parser uses the [powertab document library](https://github.com/powertab/powertabeditor) (wxWindows license) to read Power Tab (.ptb) files. It converts the PTB-internal representation (Scores → Systems → Staves → Positions → Notes) into the same GP5Track/GP5MeasureHeader structures used by the other parsers, enabling seamless display, playback, and GP5 export of Power Tab files.
+
+The MIDI importer reads Standard MIDI files (.mid, .midi) using JUCE's MidiFile class. It performs a 3-pass conversion: (1) collecting tempo/time-signature events and note events per channel, (2) building a measure map from time signatures, (3) creating GP5Track objects per MIDI channel with intelligent string/fret assignment, chord grouping, and automatic rest filling. Bass tracks are auto-detected and assigned 4-string tuning, while channel 10 is treated as drums.
 
 ---
 

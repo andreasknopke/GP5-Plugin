@@ -433,6 +433,51 @@ public:
                 g.drawDashedLine(juce::Line<float>(selectionRect.getBottomRight(), selectionRect.getBottomLeft()), dashLengths, 2);
                 g.drawDashedLine(juce::Line<float>(selectionRect.getBottomLeft(), selectionRect.getTopLeft()), dashLengths, 2);
             }
+            
+            // Draw beat cursor (highlight the currently navigated beat)
+            if (lastSelectedNote.measureIndex >= 0 && lastSelectedNote.measureIndex < track.measures.size()
+                && !noteEditPopup.isShowing() && !fretInputPopup.isShowing())
+            {
+                const auto& curMeasure = track.measures[lastSelectedNote.measureIndex];
+                if (lastSelectedNote.beatIndex >= 0 && lastSelectedNote.beatIndex < curMeasure.beats.size())
+                {
+                    // Find the X position of this beat from rendered notes or rests
+                    float beatCenterX = -1.0f;
+                    
+                    if (lastSelectedNote.valid)
+                    {
+                        // Have a note - use its bounds
+                        beatCenterX = lastSelectedNote.noteBounds.getCentreX();
+                    }
+                    else
+                    {
+                        // Rest - find from rendered rests
+                        for (const auto& ri : renderer.getRenderedRests())
+                        {
+                            if (ri.measureIndex == lastSelectedNote.measureIndex && ri.beatIndex == lastSelectedNote.beatIndex)
+                            {
+                                beatCenterX = ri.bounds.getCentreX();
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (beatCenterX > 0.0f)
+                    {
+                        float firstStringY = yOffset + scaledConfig.topMargin;
+                        float cursorHeight = (track.stringCount - 1) * scaledConfig.stringSpacing + 8.0f;
+                        
+                        // Subtle column highlight
+                        g.setColour(juce::Colour(0x184A90D9));
+                        g.fillRect(beatCenterX - 12.0f, firstStringY - 4.0f, 24.0f, cursorHeight);
+                        
+                        // Top/bottom cursor marks
+                        g.setColour(juce::Colour(0xFF4A90D9));
+                        g.fillRect(beatCenterX - 6.0f, firstStringY - 5.0f, 12.0f, 2.0f);
+                        g.fillRect(beatCenterX - 6.0f, firstStringY + cursorHeight - 5.0f, 12.0f, 2.0f);
+                    }
+                }
+            }
         }
         
         // Draw live MIDI notes (editor mode)
@@ -647,9 +692,16 @@ public:
                     restHover.beatIndex != hoveredRestInfo.beatIndex)
                 {
                     hoveredRestInfo = restHover;
-                    setMouseCursor(juce::MouseCursor::PointingHandCursor);
-                    repaint();
                 }
+                
+                // Check if hovering over a string line (for insert cursor)
+                int hoveredString = findStringAtPosition(event.position);
+                if (hoveredString >= 0)
+                    setMouseCursor(juce::MouseCursor::CrosshairCursor);
+                else
+                    setMouseCursor(juce::MouseCursor::PointingHandCursor);
+                
+                repaint();
                 return;
             }
             
@@ -685,6 +737,8 @@ public:
             groupEditPopup.hide();
         if (restEditPopup.isShowing())
             restEditPopup.hide();
+        if (fretInputPopup.isShowing())
+            fretInputPopup.hide();
         
         // Prüfe zuerst ob Note-Editing aktiviert ist
         if (noteEditingEnabled)
@@ -713,8 +767,18 @@ public:
             auto restHit = findRestAtPosition(event.position);
             if (restHit.measureIndex >= 0)
             {
-                // Show rest edit popup
-                showRestEditPopup(restHit);
+                // Check if user clicked on a specific string line
+                int clickedString = findStringAtPosition(event.position);
+                if (clickedString >= 0)
+                {
+                    // Show inline fret input on this string
+                    showFretInputPopup(restHit, clickedString, event.position);
+                }
+                else
+                {
+                    // Show rest edit popup (clicked on rest symbol itself)
+                    showRestEditPopup(restHit);
+                }
                 return;
             }
             else
@@ -839,7 +903,7 @@ public:
         if (!noteEditingEnabled) return false;
         
         // If a popup is showing, let it handle the key
-        if (noteEditPopup.isShowing() || groupEditPopup.isShowing() || restEditPopup.isShowing())
+        if (noteEditPopup.isShowing() || groupEditPopup.isShowing() || restEditPopup.isShowing() || fretInputPopup.isShowing())
             return false;
         
         // Keyboard shortcuts only work when we have a lastSelectedNote
@@ -911,6 +975,19 @@ public:
             return true;
         }
         
+        // Up/Down - change pitch (semitone), Shift+Up/Down - change pitch (octave)
+        if (!key.getModifiers().isCtrlDown() && (key.isKeyCode(juce::KeyPress::upKey) || key.isKeyCode(juce::KeyPress::downKey)))
+        {
+            bool isShift = key.getModifiers().isShiftDown();
+            int delta = key.isKeyCode(juce::KeyPress::upKey) ? (isShift ? 12 : 1) : (isShift ? -12 : -1);
+            int newMidi = lastSelectedNote.midiNote + delta;
+            if (newMidi >= 0 && newMidi <= 127)
+            {
+                changeNotePitch(lastSelectedNote, newMidi);
+            }
+            return true;
+        }
+        
         // Ctrl+Up/Down - move note to adjacent string
         if (key.getModifiers().isCtrlDown())
         {
@@ -924,6 +1001,18 @@ public:
                 moveNoteToAdjacentString(lastSelectedNote, +1);  // Down = higher string index
                 return true;
             }
+        }
+        
+        // Left/Right arrow - navigate between beats
+        if (key.isKeyCode(juce::KeyPress::leftKey))
+        {
+            navigateBeat(-1);
+            return true;
+        }
+        if (key.isKeyCode(juce::KeyPress::rightKey))
+        {
+            navigateBeat(1);
+            return true;
         }
         
         return false;
@@ -944,6 +1033,8 @@ public:
                 groupEditPopup.hide();
             if (restEditPopup.isShowing())
                 restEditPopup.hide();
+            if (fretInputPopup.isShowing())
+                fretInputPopup.hide();
             hoveredNoteInfo = NoteHitInfo();
             hoveredChordInfo = RenderedChordInfo();
             hoveredRestInfo = RenderedRestInfo();
@@ -974,6 +1065,12 @@ public:
     /** Callback wenn eine Beat-Dauer geändert wird: measureIdx, beatIdx, newDuration(int), isDotted */
     std::function<void(int, int, int, bool)> onBeatDurationChanged;
     
+    /** Callback wenn die Tonhöhe geändert wird: measureIdx, beatIdx, stringIndex, newMidiNote, newFret */
+    std::function<void(int, int, int, int, int)> onNotePitchChanged;
+    
+    /** Callback wenn eine Note in eine Pause eingefügt wird: measureIdx, beatIdx, stringIndex, fret, midiNote */
+    std::function<void(int, int, int, int, int)> onNoteInserted;
+    
     TabTrack& getTrackForEditing() { return track; }
     
 private:
@@ -1003,9 +1100,11 @@ private:
     NoteEditPopup noteEditPopup;
     GroupNoteEditPopup groupEditPopup;
     RestEditPopup restEditPopup;
+    FretInputPopup fretInputPopup;
     NoteHitInfo hoveredNoteInfo;   // Note unter dem Mauszeiger
     RenderedChordInfo hoveredChordInfo;  // Akkordname unter dem Mauszeiger
     RenderedRestInfo hoveredRestInfo;    // Pause unter dem Mauszeiger
+    NoteDuration insertDuration = NoteDuration::Quarter;  // Default duration for note insertion
     
     // Rectangle selection for group editing
     bool isDragSelecting = false;
@@ -1122,6 +1221,11 @@ private:
         // Callback for duration change
         noteEditPopup.onDurationChangeRequested = [this](const NoteHitInfo& info, NoteDuration newDur, bool dotted) {
             changeBeatDuration(info, newDur, dotted);
+        };
+        
+        // Callback for pitch change
+        noteEditPopup.onNotePitchChanged = [this](const NoteHitInfo& info, int newMidiNote) {
+            changeNotePitch(info, newMidiNote);
         };
         
         // Get current beat duration for the popup
@@ -1643,6 +1747,80 @@ private:
         repaint();
     }
     
+    void changeNotePitch(const NoteHitInfo& info, int newMidiNote)
+    {
+        if (!info.valid || info.measureIndex < 0 || info.measureIndex >= track.measures.size()) return;
+        auto& measure = track.measures.getReference(info.measureIndex);
+        if (info.beatIndex < 0 || info.beatIndex >= measure.beats.size()) return;
+        auto& beat = measure.beats.getReference(info.beatIndex);
+        if (info.noteIndex < 0 || info.noteIndex >= beat.notes.size()) return;
+        
+        if (newMidiNote < 0 || newMidiNote > 127) return;
+        
+        auto& note = beat.notes.getReference(info.noteIndex);
+        int currentString = note.string;
+        
+        // Try to keep the note on the same string if possible
+        int newFret = -1;
+        if (currentString >= 0 && currentString < track.tuning.size())
+        {
+            int fretOnSameString = newMidiNote - track.tuning[currentString];
+            if (fretOnSameString >= 0 && fretOnSameString <= 24)
+                newFret = fretOnSameString;
+        }
+        
+        int targetString = currentString;
+        
+        // If not possible on the same string, find the best alternative position
+        if (newFret < 0)
+        {
+            fretCalculator.setTuning(track.tuning);
+            auto positions = fretCalculator.calculatePositions(newMidiNote);
+            
+            if (positions.isEmpty()) return;  // Cannot play this note on this instrument
+            
+            // Find best position that doesn't conflict with other notes in this beat
+            for (const auto& pos : positions)
+            {
+                bool conflicting = false;
+                for (int n = 0; n < beat.notes.size(); ++n)
+                {
+                    if (n != info.noteIndex && beat.notes[n].string == pos.string)
+                    {
+                        conflicting = true;
+                        break;
+                    }
+                }
+                if (!conflicting)
+                {
+                    targetString = pos.string;
+                    newFret = pos.fret;
+                    break;
+                }
+            }
+            
+            if (newFret < 0) return;  // No valid position found
+        }
+        
+        int oldString = note.string;
+        note.midiNote = newMidiNote;
+        note.string = targetString;
+        note.fret = newFret;
+        note.isManuallyEdited = true;
+        
+        // Update lastSelectedNote to reflect the new state
+        lastSelectedNote.midiNote = newMidiNote;
+        lastSelectedNote.stringIndex = targetString;
+        lastSelectedNote.fret = newFret;
+        
+        // Notify processor
+        if (onNotePitchChanged)
+            onNotePitchChanged(info.measureIndex, info.beatIndex, oldString, newMidiNote, newFret);
+        
+        recalculateLayout();
+        repaint();
+    }
+    
     void moveNoteToAdjacentString(const NoteHitInfo& info, int direction)
     {
         if (!info.valid || info.midiNote < 0) return;
@@ -1885,6 +2063,200 @@ private:
         };
         
         groupEditPopup.showForGroup(selectedNotes, alternatives, track.tuning, this, groupBounds);
+    }
+    
+    /** Bestimme welche Saite an einer Y-Position liegt (für Insert-on-String) */
+    int findStringAtPosition(juce::Point<float> pos)
+    {
+        TabLayoutConfig scaledConfig = config;
+        scaledConfig.stringSpacing *= zoom;
+        scaledConfig.topMargin *= zoom;
+        
+        float trackHeight = scaledConfig.getTotalHeight(track.stringCount);
+        float availableHeight = static_cast<float>(getHeight()) - static_cast<float>(scrollbarHeight);
+        float yOffset = juce::jmax(0.0f, (availableHeight - trackHeight) / 2.0f);
+        float firstStringY = yOffset + scaledConfig.topMargin;
+        
+        float hitTolerance = scaledConfig.stringSpacing * 0.35f;
+        
+        for (int s = 0; s < track.stringCount; ++s)
+        {
+            float stringY = firstStringY + s * scaledConfig.stringSpacing;
+            if (std::abs(pos.y - stringY) <= hitTolerance)
+                return s;
+        }
+        return -1;  // Not on any string
+    }
+    
+    /** Zeige das FretInput-Popup auf einer Saite über einer Pause */
+    void showFretInputPopup(const RenderedRestInfo& restInfo, int stringIdx, juce::Point<float> clickPos)
+    {
+        // Wire the callback
+        fretInputPopup.onNoteInsertRequested = [this](int measureIdx, int beatIdx, int stringIdx, int fret, int midiNote) {
+            insertNoteAtRest(measureIdx, beatIdx, stringIdx, fret, midiNote);
+        };
+        
+        fretInputPopup.showForInsert(restInfo, stringIdx, clickPos, this, track.tuning);
+    }
+    
+    /** Füge eine Note in eine Pause ein. Die Pause wird in Note + Rest gesplittet. */
+    void insertNoteAtRest(int measureIndex, int beatIndex, int stringIndex, int fret, int midiNote)
+    {
+        if (measureIndex < 0 || measureIndex >= track.measures.size()) return;
+        auto& measure = track.measures.getReference(measureIndex);
+        if (beatIndex < 0 || beatIndex >= measure.beats.size()) return;
+        auto& beat = measure.beats.getReference(beatIndex);
+        if (!beat.isRest) return;  // Can only insert into rests
+        
+        float restDurationQ = beat.getDurationInQuarters();
+        
+        // Determine the note duration: use insertDuration if it fits, otherwise use rest duration
+        NoteDuration noteDur = insertDuration;
+        bool noteDotted = false;
+        
+        // Calculate chosen duration in quarters
+        float noteDurQ = 4.0f / static_cast<float>(noteDur);
+        if (noteDotted) noteDurQ *= 1.5f;
+        
+        // If chosen duration is longer than the rest, use the rest's duration
+        if (noteDurQ > restDurationQ + 0.001f)
+        {
+            noteDur = beat.duration;
+            noteDotted = beat.isDotted;
+            noteDurQ = restDurationQ;
+        }
+        
+        // Create the new note
+        TabNote newNote;
+        newNote.string = stringIndex;
+        newNote.fret = fret;
+        newNote.midiNote = midiNote;
+        newNote.velocity = 100;
+        newNote.isManuallyEdited = true;
+        
+        // Convert the rest beat into a note beat
+        beat.isRest = false;
+        beat.notes.clear();
+        beat.notes.add(newNote);
+        beat.duration = noteDur;
+        beat.isDotted = noteDotted;
+        beat.isDoubleDotted = false;
+        
+        // If there is remaining time, insert a rest after this beat
+        float remaining = restDurationQ - noteDurQ;
+        if (remaining > 0.01f)
+        {
+            // Fill remaining time with rest(s)
+            int insertPos = beatIndex + 1;
+            while (remaining > 0.01f)
+            {
+                auto restDur = findClosestDuration(remaining);
+                TabBeat restBeat;
+                restBeat.isRest = true;
+                restBeat.duration = restDur.first;
+                restBeat.isDotted = restDur.second;
+                float restLen = restBeat.getDurationInQuarters();
+                remaining -= restLen;
+                if (insertPos > measure.beats.size()) insertPos = measure.beats.size();
+                measure.beats.insert(insertPos, restBeat);
+                insertPos++;
+            }
+        }
+        
+        // Update lastSelectedNote to point to the new note
+        lastSelectedNote.valid = true;
+        lastSelectedNote.measureIndex = measureIndex;
+        lastSelectedNote.beatIndex = beatIndex;
+        lastSelectedNote.noteIndex = 0;
+        lastSelectedNote.stringIndex = stringIndex;
+        lastSelectedNote.fret = fret;
+        lastSelectedNote.midiNote = midiNote;
+        
+        // Notify processor
+        if (onNoteInserted)
+            onNoteInserted(measureIndex, beatIndex, stringIndex, fret, midiNote);
+        
+        recalculateLayout();
+        repaint();
+    }
+    
+    /** Navigiere zum nächsten/vorherigen Beat */
+    void navigateBeat(int direction)
+    {
+        int m = lastSelectedNote.valid ? lastSelectedNote.measureIndex : 0;
+        int b = lastSelectedNote.valid ? lastSelectedNote.beatIndex : -1;
+        
+        if (m < 0 || m >= track.measures.size()) m = 0;
+        
+        b += direction;
+        
+        // Handle measure boundary
+        if (b < 0)
+        {
+            // Go to last beat of previous measure
+            m--;
+            if (m < 0) return;  // Already at start
+            b = track.measures[m].beats.size() - 1;
+        }
+        else if (m < track.measures.size() && b >= track.measures[m].beats.size())
+        {
+            // Go to first beat of next measure
+            m++;
+            if (m >= track.measures.size()) return;  // Already at end
+            b = 0;
+        }
+        
+        if (m < 0 || m >= track.measures.size()) return;
+        const auto& measure = track.measures[m];
+        if (b < 0 || b >= measure.beats.size()) return;
+        const auto& beat = measure.beats[b];
+        
+        // Update lastSelectedNote
+        lastSelectedNote.measureIndex = m;
+        lastSelectedNote.beatIndex = b;
+        
+        if (!beat.isRest && !beat.notes.isEmpty())
+        {
+            // Select the first note in the beat
+            const auto& note = beat.notes[0];
+            lastSelectedNote.valid = true;
+            lastSelectedNote.noteIndex = 0;
+            lastSelectedNote.stringIndex = note.string;
+            lastSelectedNote.fret = note.fret;
+            lastSelectedNote.midiNote = note.midiNote >= 0 ? note.midiNote : 
+                (note.string < track.tuning.size() ? track.tuning[note.string] + note.fret : -1);
+            
+            // Find alternatives
+            if (lastSelectedNote.midiNote >= 0)
+            {
+                fretCalculator.setTuning(track.tuning);
+                lastSelectedNote.alternatives = fretCalculator.calculateAlternatives(
+                    lastSelectedNote.midiNote, lastSelectedNote.stringIndex, lastSelectedNote.fret);
+            }
+        }
+        else
+        {
+            // Rest - set position but mark as "no note selected"
+            lastSelectedNote.valid = false;
+            lastSelectedNote.noteIndex = -1;
+            lastSelectedNote.stringIndex = 0;
+            lastSelectedNote.fret = -1;
+            lastSelectedNote.midiNote = -1;
+        }
+        
+        // Scroll to make the beat visible
+        if (m >= 0 && m < track.measures.size())
+        {
+            float measureX = track.measures[m].xPosition;
+            float viewWidth = static_cast<float>(getWidth()) - 20.0f;
+            if (measureX < scrollOffset || measureX + track.measures[m].calculatedWidth > scrollOffset + viewWidth)
+            {
+                scrollOffset = juce::jmax(0.0f, measureX - viewWidth * 0.1f);
+                updateScrollbar();
+            }
+        }
+        
+        repaint();
     }
     
     void recalculateLayout()
