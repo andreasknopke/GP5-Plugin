@@ -280,14 +280,31 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
         // Seek-Position im Processor setzen (nur Plugin-intern, nicht in der DAW)
         audioProcessor.setSeekPosition(measureIndex, positionInMeasure);
         
-        // Hinweis anzeigen: DAW-Cursor manuell setzen
+        // Hinweis anzeigen
         infoLabel.setText(juce::String(juce::CharPointer_UTF8(
             "\xe2\x8c\x96 Takt ")) + juce::String(measureIndex + 1) +
-            juce::String(juce::CharPointer_UTF8(" - Bitte DAW-Cursor auf diese Position setzen")),
+            juce::String(" | Esc = zur DAW-Position | DAW-Cursor manuell setzen"),
             juce::dontSendNotification);
         
         // Transport-Anzeige aktualisieren
         updateTransportDisplay();
+    };
+    
+    // Seek-Cleared Callback - Escape gedrückt, zurück zur DAW-Position
+    tabView.onSeekCleared = [this]() {
+        audioProcessor.clearSeekPosition();
+        tabView.setSeekMode(false);
+        updateTransportDisplay();
+        
+        // Info zurücksetzen
+        if (audioProcessor.isFileLoaded())
+        {
+            const auto& tracks = audioProcessor.getActiveTracks();
+            int numTracks = (int)tracks.size();
+            juce::String fileName = juce::File(audioProcessor.getLoadedFilePath()).getFileName();
+            juce::String infoText = fileName + " | " + juce::String(numTracks) + " Track(s)";
+            infoLabel.setText(infoText, juce::dontSendNotification);
+        }
     };
     
     // Note-Position-Changed Callback
@@ -1060,10 +1077,15 @@ void NewProjectAudioProcessorEditor::timerCallback()
     }
     else if (audioProcessor.hasSeekPosition())
     {
-        // Verwende die geklickte Seek-Position
+        // Verwende die geklickte Seek-Position für den Hauptplayhead
         currentMeasure = audioProcessor.getSeekMeasureIndex();
         positionInMeasure = audioProcessor.getSeekPositionInMeasure();
         tabView.setSeekMode(true);
+        
+        // DAW-Position weiterhin als zweite Markierung anzeigen
+        tabView.setDawPosition(
+            audioProcessor.getCurrentMeasureIndex(),
+            audioProcessor.getPositionInCurrentMeasure());
     }
     else
     {

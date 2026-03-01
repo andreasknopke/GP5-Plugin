@@ -154,6 +154,16 @@ public:
         isSeekMode = seek;
     }
     
+    // Setze die DAW-Position (wird im Seek-Modus als zweite grüne Linie angezeigt)
+    void setDawPosition(int measureIndex, double positionInMeasure)
+    {
+        dawMeasureIndex = measureIndex;
+        dawPositionInMeasure = positionInMeasure;
+    }
+    
+    // Callback wenn der Seek-Modus durch den User beendet wird (z.B. Escape)
+    std::function<void()> onSeekCleared;
+    
     // Setze die exakte Playhead-Position für smooth scrolling
     void setExactPlayheadPosition(int measureIndex, double positionInMeasure)
     {
@@ -298,8 +308,31 @@ public:
             float measureX = 25.0f + measure.xPosition - scrollOffset;
             float measureWidth = measure.calculatedWidth;
             
-            // Semi-transparent overlay für aktuellen Takt
-            // Seek-Modus: Cyan, Playback: Grün
+            // Im Seek-Modus: Zuerst die DAW-Position als dünne grüne Linie zeichnen
+            if (isSeekMode && dawMeasureIndex >= 0 && dawMeasureIndex < track.measures.size())
+            {
+                const auto& dawMeasure = track.measures[dawMeasureIndex];
+                float dawMeasureX = 25.0f + dawMeasure.xPosition - scrollOffset;
+                float dawMeasureWidth = dawMeasure.calculatedWidth;
+                
+                // Leichtes grünes Overlay für DAW-Takt
+                g.setColour(juce::Colour(0x0C00FF00));
+                g.fillRect(dawMeasureX, yOffset, dawMeasureWidth, trackHeight);
+                
+                // DAW-Position: Dünne grüne Linie
+                float dawXOffset = getPlayheadXInMeasure(dawMeasure, scaledConfig, dawPositionInMeasure);
+                float dawPlayheadX = dawMeasureX + dawXOffset;
+                g.setColour(juce::Colours::limegreen.withAlpha(0.5f));
+                g.fillRect(dawPlayheadX - 0.5f, yOffset, 2.0f, trackHeight);
+                
+                // Kleines "DAW" Label an der grünen Linie
+                g.setFont(juce::FontOptions(9.0f));
+                g.setColour(juce::Colours::limegreen.withAlpha(0.7f));
+                g.drawText("DAW", juce::Rectangle<float>(dawPlayheadX - 10.0f, yOffset + trackHeight - 14.0f, 20.0f, 12.0f),
+                           juce::Justification::centred, false);
+            }
+            
+            // Seek-Modus: Cyan Overlay, Playback: Grün Overlay
             if (isSeekMode)
                 g.setColour(juce::Colour(0x1800CCFF));  // Transparentes Cyan
             else
@@ -326,7 +359,7 @@ public:
                 // Hinweis-Text über dem Playhead
                 g.setFont(juce::FontOptions(10.0f));
                 g.setColour(juce::Colours::cyan.withAlpha(0.9f));
-                juce::String hintText = juce::CharPointer_UTF8("\xe2\x86\x91 DAW-Cursor setzen");
+                juce::String hintText = juce::CharPointer_UTF8("Esc = zur\xc3\xbc\x63k zur DAW-Position");
                 float textWidth = g.getCurrentFont().getStringWidthFloat(hintText) + 8.0f;
                 float textX = playheadX - textWidth / 2.0f;
                 float textY = yOffset - 16.0f;
@@ -945,6 +978,16 @@ public:
     
     bool keyPressed(const juce::KeyPress& key) override
     {
+        // Escape key: Clear seek mode and jump back to DAW position
+        if (key == juce::KeyPress::escapeKey)
+        {
+            if (isSeekMode && onSeekCleared)
+            {
+                onSeekCleared();
+                return true;
+            }
+        }
+        
         if (!noteEditingEnabled) return false;
         
         // If a popup is showing, let it handle the key
@@ -1227,6 +1270,8 @@ private:
     double playheadPositionInMeasure = 0.0;
     float lastPlayheadX = 0.0f;
     bool isSeekMode = false;
+    int dawMeasureIndex = -1;
+    double dawPositionInMeasure = 0.0;
     
     // Editor mode (live MIDI input display)
     bool editorMode = false;
