@@ -283,7 +283,7 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
         // Hinweis anzeigen
         infoLabel.setText(juce::String(juce::CharPointer_UTF8(
             "\xe2\x8c\x96 Takt ")) + juce::String(measureIndex + 1) +
-            juce::String(" | Esc = zur DAW-Position | DAW-Cursor manuell setzen"),
+            juce::String(" | DAW-Cursor manuell auf diese Position setzen"),
             juce::dontSendNotification);
         
         // Transport-Anzeige aktualisieren
@@ -295,6 +295,10 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
         audioProcessor.clearSeekPosition();
         tabView.setSeekMode(false);
         updateTransportDisplay();
+        
+        // Zur DAW-Position zurückscrollen
+        int dawMeasure = audioProcessor.getCurrentMeasureIndex();
+        tabView.scrollToMeasure(dawMeasure);
         
         // Info zurücksetzen
         if (audioProcessor.isFileLoaded())

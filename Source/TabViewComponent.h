@@ -152,6 +152,8 @@ public:
     void setSeekMode(bool seek)
     {
         isSeekMode = seek;
+        if (!seek)
+            seekBackButtonBounds = {};
     }
     
     // Setze die DAW-Position (wird im Seek-Modus als zweite grüne Linie angezeigt)
@@ -356,18 +358,24 @@ public:
                     g.fillRect(playheadX - 1.0f, y, 3.0f, h);
                 }
                 
-                // Hinweis-Text über dem Playhead
-                g.setFont(juce::FontOptions(10.0f));
-                g.setColour(juce::Colours::cyan.withAlpha(0.9f));
-                juce::String hintText = juce::CharPointer_UTF8("Esc = zur\xc3\xbc\x63k zur DAW-Position");
-                float textWidth = g.getCurrentFont().getStringWidthFloat(hintText) + 8.0f;
-                float textX = playheadX - textWidth / 2.0f;
-                float textY = yOffset - 16.0f;
-                g.setColour(juce::Colour(0xCC222222));
-                g.fillRoundedRectangle(textX - 2.0f, textY, textWidth + 4.0f, 14.0f, 3.0f);
+                // "Zurück zur DAW"-Button über dem Playhead
+                g.setFont(juce::FontOptions(10.0f, juce::Font::bold));
+                juce::String btnText = juce::CharPointer_UTF8("\xe2\x86\x90 Zur\xc3\xbc\x63k zur DAW");
+                float btnTextWidth = g.getCurrentFont().getStringWidthFloat(btnText) + 16.0f;
+                float btnX = playheadX - btnTextWidth / 2.0f;
+                float btnY = yOffset - 20.0f;
+                float btnH = 18.0f;
+                
+                // Clamp horizontal position to stay visible
+                btnX = juce::jlimit(2.0f, static_cast<float>(getWidth()) - btnTextWidth - 4.0f, btnX);
+                
+                // Button-Hintergrund
+                seekBackButtonBounds = juce::Rectangle<float>(btnX, btnY, btnTextWidth, btnH);
+                g.setColour(juce::Colour(0xFF1A6B8A));  // Dunkles Cyan
+                g.fillRoundedRectangle(seekBackButtonBounds, 4.0f);
                 g.setColour(juce::Colours::cyan);
-                g.drawText(hintText, juce::Rectangle<float>(textX, textY, textWidth, 14.0f),
-                           juce::Justification::centred, false);
+                g.drawRoundedRectangle(seekBackButtonBounds, 4.0f, 1.0f);
+                g.drawText(btnText, seekBackButtonBounds, juce::Justification::centred, false);
             }
             else
             {
@@ -724,6 +732,14 @@ public:
     
     void mouseMove(const juce::MouseEvent& event) override
     {
+        // Cursor change for seek back-button hover
+        if (isSeekMode && !seekBackButtonBounds.isEmpty() &&
+            seekBackButtonBounds.contains(event.position))
+        {
+            setMouseCursor(juce::MouseCursor::PointingHandCursor);
+            return;
+        }
+        
         if (noteEditingEnabled)
         {
             // Prüfe zuerst ob ein Akkordname gehovert wird
@@ -806,6 +822,15 @@ public:
     
     void mouseDown(const juce::MouseEvent& event) override
     {
+        // Check if the seek back-button was clicked
+        if (isSeekMode && !seekBackButtonBounds.isEmpty() &&
+            seekBackButtonBounds.contains(event.position))
+        {
+            if (onSeekCleared)
+                onSeekCleared();
+            return;
+        }
+        
         // Schließe Popups falls offen
         if (noteEditPopup.isShowing())
             noteEditPopup.hide();
@@ -978,16 +1003,6 @@ public:
     
     bool keyPressed(const juce::KeyPress& key) override
     {
-        // Escape key: Clear seek mode and jump back to DAW position
-        if (key == juce::KeyPress::escapeKey)
-        {
-            if (isSeekMode && onSeekCleared)
-            {
-                onSeekCleared();
-                return true;
-            }
-        }
-        
         if (!noteEditingEnabled) return false;
         
         // If a popup is showing, let it handle the key
@@ -1272,6 +1287,7 @@ private:
     bool isSeekMode = false;
     int dawMeasureIndex = -1;
     double dawPositionInMeasure = 0.0;
+    mutable juce::Rectangle<float> seekBackButtonBounds;  // Clickable back-button bounds
     
     // Editor mode (live MIDI input display)
     bool editorMode = false;
