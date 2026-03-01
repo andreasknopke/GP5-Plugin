@@ -168,11 +168,12 @@ public:
         playheadPositionInMeasure = positionInMeasure;
         
         // Berechne die exakte X-Position des Playheads
-        // xPosition/calculatedWidth sind bereits gezoomt (recalculateLayout verwendet scaledConfig)
+        // Verwendet Beat-Layout-Positionen für korrekte Synchronisation
         const auto& measure = track.measures[measureIndex];
         float measureX = measure.xPosition;
-        float measureWidth = measure.calculatedWidth;
-        float playheadX = measureX + static_cast<float>(positionInMeasure) * measureWidth;
+        TabLayoutConfig sc = getScaledConfig();
+        float playheadXOffset = getPlayheadXInMeasure(measure, sc, positionInMeasure);
+        float playheadX = measureX + playheadXOffset;
         
         // Sichtbare Breite
         float viewWidth = static_cast<float>(getWidth()) - 20.0f;
@@ -296,7 +297,9 @@ public:
             g.fillRect(measureX, yOffset, measureWidth, trackHeight);
             
             // Playhead-Linie an der exakten Position innerhalb des Taktes
-            float playheadX = measureX + static_cast<float>(playheadPositionInMeasure) * measureWidth;
+            // Verwendet Beat-Layout-Positionen für perfekte Synchronisation mit Noten-Symbolen
+            float playheadXOffset = getPlayheadXInMeasure(measure, scaledConfig, playheadPositionInMeasure);
+            float playheadX = measureX + playheadXOffset;
             g.setColour(juce::Colours::limegreen);
             g.fillRect(playheadX - 1.0f, yOffset, 3.0f, trackHeight);
         }
@@ -806,8 +809,10 @@ public:
             
             if (clickX >= measureStart && clickX < measureEnd)
             {
-                // Calculate position within measure (0.0 - 1.0)
-                double positionInMeasure = (clickX - measureStart) / measureWidth;
+                // Calculate position within measure (0.0 - 1.0) using beat-layout-aware mapping
+                TabLayoutConfig sc = getScaledConfig();
+                float xInMeasure = clickX - measureStart;
+                double positionInMeasure = getTimeFractionFromX(measure, sc, xInMeasure);
                 positionInMeasure = juce::jlimit(0.0, 1.0, positionInMeasure);
                 
                 // Update visual playhead immediately
@@ -1073,10 +1078,104 @@ public:
     
     TabTrack& getTrackForEditing() { return track; }
     
+    // Berechnet die Playhead-X-Position innerhalb eines Taktes basierend auf
+    // den tatsächlichen Beat-Layout-Positionen statt linearer Interpolation.
+    // Dies stellt sicher, dass der Playhead genau bei den Noten-/Pausen-Symbolen
+    // ankommt, wenn der entsprechende Beat abgespielt wird.
+    float getPlayheadXInMeasure(const TabMeasure& measure, const TabLayoutConfig& cfg, double timeFraction) const
+    {
+        if (measure.beats.isEmpty())
+            return static_cast<float>(timeFraction) * measure.calculatedWidth;
+        
+        if (timeFraction <= 0.0)
+            return cfg.measurePadding;
+        if (timeFraction >= 1.0)
+            return measure.calculatedWidth - cfg.measurePadding;
+        
+        // Taktlänge in Vierteln aus der Taktart
+        double measureLength = measure.timeSignatureNumerator * (4.0 / measure.timeSignatureDenominator);
+        double beatInMeasure = timeFraction * measureLength;
+        
+        // Beat-Positionen vom Layout-Engine holen (gleiche wie beim Rendern)
+        auto beatPositions = layoutEngine.calculateBeatPositions(measure, cfg);
+        
+        // Finde den aktuellen Beat und interpoliere innerhalb
+        double cumulativeTime = 0.0;
+        for (int b = 0; b < measure.beats.size(); ++b)
+        {
+            double dur = measure.beats[b].getDurationInQuarters();
+            if (beatInMeasure < cumulativeTime + dur)
+            {
+                double fractionInBeat = (dur > 0.0) ? (beatInMeasure - cumulativeTime) / dur : 0.0;
+                
+                float beatX = (b < beatPositions.size()) ? beatPositions[b] : cfg.measurePadding;
+                float nextBeatX;
+                if (b + 1 < beatPositions.size())
+                    nextBeatX = beatPositions[b + 1];
+                else
+                    nextBeatX = measure.calculatedWidth - cfg.measurePadding;
+                
+                return beatX + static_cast<float>(fractionInBeat) * (nextBeatX - beatX);
+            }
+            cumulativeTime += dur;
+        }
+        
+        // Position nach dem letzten Beat
+        return measure.calculatedWidth - cfg.measurePadding;
+    }
+    
+    // Umkehrfunktion: Konvertiert eine visuelle X-Position innerhalb des Taktes
+    // zurück zu einer Zeit-Fraktion (0.0-1.0). Wird für Klick-zu-Position-Mapping benötigt.
+    double getTimeFractionFromX(const TabMeasure& measure, const TabLayoutConfig& cfg, float xInMeasure) const
+    {
+        if (measure.beats.isEmpty())
+            return (measure.calculatedWidth > 0) ? xInMeasure / measure.calculatedWidth : 0.0;
+        
+        double measureLength = measure.timeSignatureNumerator * (4.0 / measure.timeSignatureDenominator);
+        auto beatPositions = layoutEngine.calculateBeatPositions(measure, cfg);
+        
+        // Finde in welchem Beat-Bereich die X-Position liegt
+        double cumulativeTime = 0.0;
+        for (int b = 0; b < measure.beats.size(); ++b)
+        {
+            float beatX = (b < beatPositions.size()) ? beatPositions[b] : cfg.measurePadding;
+            float nextBeatX;
+            if (b + 1 < beatPositions.size())
+                nextBeatX = beatPositions[b + 1];
+            else
+                nextBeatX = measure.calculatedWidth - cfg.measurePadding;
+            
+            if (xInMeasure < nextBeatX || b == measure.beats.size() - 1)
+            {
+                float beatWidth = nextBeatX - beatX;
+                double fractionInBeat = (beatWidth > 0) ? (xInMeasure - beatX) / beatWidth : 0.0;
+                fractionInBeat = juce::jlimit(0.0, 1.0, fractionInBeat);
+                
+                double dur = measure.beats[b].getDurationInQuarters();
+                double timeAtClick = cumulativeTime + fractionInBeat * dur;
+                return juce::jlimit(0.0, 1.0, timeAtClick / measureLength);
+            }
+            cumulativeTime += measure.beats[b].getDurationInQuarters();
+        }
+        
+        return 1.0;
+    }
+    
+    // Erstellt eine gezoomte Kopie der Layout-Konfiguration
+    TabLayoutConfig getScaledConfig() const
+    {
+        TabLayoutConfig sc = config;
+        sc.stringSpacing *= zoom;
+        sc.measurePadding *= zoom;
+        sc.minBeatSpacing *= zoom;
+        sc.baseNoteWidth *= zoom;
+        return sc;
+    }
+    
 private:
     TabTrack track;
     TabRenderer renderer;
-    TabLayoutEngine layoutEngine;
+    mutable TabLayoutEngine layoutEngine;
     TabLayoutConfig config;
     FretPositionCalculator fretCalculator;
     
