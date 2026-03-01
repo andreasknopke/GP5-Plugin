@@ -273,12 +273,18 @@ NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioP
         DBG("Takt " << (measureIndex + 1) << " angeklickt");
     };
     
-    // Position-Klick Callback - springt zur geklickten Position
+    // Position-Klick Callback - springt zur geklickten Position (nur Plugin-intern)
     tabView.onPositionClicked = [this](int measureIndex, double positionInMeasure) {
         DBG("Position angeklickt: Takt " << (measureIndex + 1) << ", Position " << positionInMeasure);
         
-        // Seek-Position im Processor setzen
+        // Seek-Position im Processor setzen (nur Plugin-intern, nicht in der DAW)
         audioProcessor.setSeekPosition(measureIndex, positionInMeasure);
+        
+        // Hinweis anzeigen: DAW-Cursor manuell setzen
+        infoLabel.setText(juce::String(juce::CharPointer_UTF8(
+            "\xe2\x8c\x96 Takt ")) + juce::String(measureIndex + 1) +
+            juce::String(juce::CharPointer_UTF8(" - Bitte DAW-Cursor auf diese Position setzen")),
+            juce::dontSendNotification);
         
         // Transport-Anzeige aktualisieren
         updateTransportDisplay();
@@ -1050,18 +1056,21 @@ void NewProjectAudioProcessorEditor::timerCallback()
         
         // Seek-Position löschen wenn DAW spielt
         audioProcessor.clearSeekPosition();
+        tabView.setSeekMode(false);
     }
     else if (audioProcessor.hasSeekPosition())
     {
         // Verwende die geklickte Seek-Position
         currentMeasure = audioProcessor.getSeekMeasureIndex();
         positionInMeasure = audioProcessor.getSeekPositionInMeasure();
+        tabView.setSeekMode(true);
     }
     else
     {
         // Keine Seek-Position, verwende DAW-Position (gestoppt)
         currentMeasure = audioProcessor.getCurrentMeasureIndex();
         positionInMeasure = audioProcessor.getPositionInCurrentMeasure();
+        tabView.setSeekMode(false);
     }
     
     double currentPositionInBeats = audioProcessor.getHostPositionInBeats();

@@ -148,6 +148,12 @@ public:
         repaint();
     }
     
+    // Setze ob der Playhead im Seek-Modus ist (nur Plugin-interne Navigation)
+    void setSeekMode(bool seek)
+    {
+        isSeekMode = seek;
+    }
+    
     // Setze die exakte Playhead-Position für smooth scrolling
     void setExactPlayheadPosition(int measureIndex, double positionInMeasure)
     {
@@ -292,16 +298,50 @@ public:
             float measureX = 25.0f + measure.xPosition - scrollOffset;
             float measureWidth = measure.calculatedWidth;
             
-            // Semi-transparent green overlay fuer aktuellen Takt
-            g.setColour(juce::Colour(0x2000FF00));  // Transparentes Gruen
+            // Semi-transparent overlay für aktuellen Takt
+            // Seek-Modus: Cyan, Playback: Grün
+            if (isSeekMode)
+                g.setColour(juce::Colour(0x1800CCFF));  // Transparentes Cyan
+            else
+                g.setColour(juce::Colour(0x2000FF00));  // Transparentes Gruen
             g.fillRect(measureX, yOffset, measureWidth, trackHeight);
             
             // Playhead-Linie an der exakten Position innerhalb des Taktes
             // Verwendet Beat-Layout-Positionen für perfekte Synchronisation mit Noten-Symbolen
             float playheadXOffset = getPlayheadXInMeasure(measure, scaledConfig, playheadPositionInMeasure);
             float playheadX = measureX + playheadXOffset;
-            g.setColour(juce::Colours::limegreen);
-            g.fillRect(playheadX - 1.0f, yOffset, 3.0f, trackHeight);
+            
+            if (isSeekMode)
+            {
+                // Seek-Modus: Gestrichelte Cyan-Linie
+                g.setColour(juce::Colours::cyan);
+                float dashHeight = 4.0f;
+                float gapHeight = 3.0f;
+                for (float y = yOffset; y < yOffset + trackHeight; y += dashHeight + gapHeight)
+                {
+                    float h = juce::jmin(dashHeight, yOffset + trackHeight - y);
+                    g.fillRect(playheadX - 1.0f, y, 3.0f, h);
+                }
+                
+                // Hinweis-Text über dem Playhead
+                g.setFont(juce::FontOptions(10.0f));
+                g.setColour(juce::Colours::cyan.withAlpha(0.9f));
+                juce::String hintText = juce::CharPointer_UTF8("\xe2\x86\x91 DAW-Cursor setzen");
+                float textWidth = g.getCurrentFont().getStringWidthFloat(hintText) + 8.0f;
+                float textX = playheadX - textWidth / 2.0f;
+                float textY = yOffset - 16.0f;
+                g.setColour(juce::Colour(0xCC222222));
+                g.fillRoundedRectangle(textX - 2.0f, textY, textWidth + 4.0f, 14.0f, 3.0f);
+                g.setColour(juce::Colours::cyan);
+                g.drawText(hintText, juce::Rectangle<float>(textX, textY, textWidth, 14.0f),
+                           juce::Justification::centred, false);
+            }
+            else
+            {
+                // Playback: Solide grüne Linie
+                g.setColour(juce::Colours::limegreen);
+                g.fillRect(playheadX - 1.0f, yOffset, 3.0f, trackHeight);
+            }
         }
         
         // Draw note hover highlight when note editing is enabled
@@ -1186,6 +1226,7 @@ private:
     int currentPlayingMeasure = -1;
     double playheadPositionInMeasure = 0.0;
     float lastPlayheadX = 0.0f;
+    bool isSeekMode = false;
     
     // Editor mode (live MIDI input display)
     bool editorMode = false;
