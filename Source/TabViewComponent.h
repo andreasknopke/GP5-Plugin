@@ -28,6 +28,20 @@ class TabViewComponent : public juce::Component,
                          public juce::ScrollBar::Listener
 {
 public:
+    static juce::File getDiagnosticLogFile()
+    {
+        return juce::File::getSpecialLocation(juce::File::tempDirectory)
+            .getChildFile("GP5_VST_Editor_ptb_ui.log");
+    }
+
+    static void appendDiagnosticLog(const juce::String& message)
+    {
+        auto logLine = juce::Time::getCurrentTime().formatted("%Y-%m-%d %H:%M:%S")
+                     + " [TabView] " + message + "\n";
+        getDiagnosticLogFile().appendText(logLine);
+        Logger::writeToLog(message);
+    }
+
     // Structure for live MIDI notes to display
     struct LiveNote {
         int string = 0;
@@ -64,12 +78,134 @@ public:
     {
         horizontalScrollbar.removeListener(this);
     }
+
+    static TabTrack normalizeTrackForView(const TabTrack& sourceTrack)
+    {
+        TabTrack normalizedTrack = sourceTrack;
+
+        int normalizedStringCount = normalizedTrack.stringCount;
+        if (normalizedStringCount <= 0)
+            normalizedStringCount = normalizedTrack.tuning.size();
+        if (normalizedStringCount <= 0)
+            normalizedStringCount = 6;
+
+        normalizedTrack.stringCount = normalizedStringCount;
+
+        static const int defaultTuning[] = { 64, 59, 55, 50, 45, 40, 35, 30 };
+        while (normalizedTrack.tuning.size() < normalizedStringCount)
+        {
+            int fallbackIndex = juce::jlimit(0, static_cast<int>(std::size(defaultTuning)) - 1,
+                                             normalizedTrack.tuning.size());
+            normalizedTrack.tuning.add(defaultTuning[fallbackIndex]);
+        }
+
+        for (auto& measure : normalizedTrack.measures)
+        {
+            for (auto& beat : measure.beats)
+            {
+                const int originalNoteCount = beat.notes.size();
+                juce::Array<TabNote> normalizedNotes;
+                for (int s = 0; s < normalizedStringCount; ++s)
+                {
+                    TabNote placeholder;
+                    placeholder.string = s;
+                    placeholder.fret = -1;
+                    placeholder.midiNote = -1;
+                    normalizedNotes.add(placeholder);
+                }
+
+                bool hasPlayableNote = false;
+                for (int noteIndex = 0; noteIndex < beat.notes.size(); ++noteIndex)
+                {
+                    TabNote note = beat.notes[noteIndex];
+                    int targetString = note.string;
+
+                    if (targetString < 0 || targetString >= normalizedStringCount)
+                    {
+                        if (noteIndex >= 0 && noteIndex < normalizedStringCount)
+                            targetString = noteIndex;
+                        else
+                            continue;
+                    }
+
+                    note.string = targetString;
+                    if (note.fret < 0)
+                        note.midiNote = -1;
+
+                    normalizedNotes.set(targetString, note);
+                    if (note.fret >= 0)
+                        hasPlayableNote = true;
+                }
+
+                beat.notes = normalizedNotes;
+                if (!hasPlayableNote)
+                    beat.isRest = true;
+
+                if (originalNoteCount != normalizedNotes.size())
+                {
+                    DBG("TabView normalizeTrackForView: resized beat notes from "
+                        << originalNoteCount << " to " << normalizedNotes.size()
+                        << " (track=" << normalizedTrack.name << ")");
+                }
+            }
+        }
+
+        return normalizedTrack;
+    }
     
     void setTrack(const TabTrack& newTrack)
     {
-        track = newTrack;
+        DBG("TabView setTrack: incoming track='" << newTrack.name
+            << "' strings=" << newTrack.stringCount
+            << " tuning=" << newTrack.tuning.size()
+            << " measures=" << newTrack.measures.size());
+        appendDiagnosticLog("setTrack incoming: name='" + newTrack.name
+                            + "' strings=" + juce::String(newTrack.stringCount)
+                            + " tuning=" + juce::String(newTrack.tuning.size())
+                            + " measures=" + juce::String(newTrack.measures.size()));
+
+        try
+        {
+
+        if (noteEditPopup.isShowing()) noteEditPopup.hide();
+        if (groupEditPopup.isShowing()) groupEditPopup.hide();
+        if (restEditPopup.isShowing()) restEditPopup.hide();
+        if (fretInputPopup.isShowing()) fretInputPopup.hide();
+
+        track = normalizeTrackForView(newTrack);
+        diagnosticPaintTraceRemaining = 1;
+        hoveredNoteInfo = {};
+        hoveredChordInfo = {};
+        hoveredRestInfo = {};
+        lastSelectedNote = {};
+        selectedNotes.clear();
+        isDragSelecting = false;
+        selectionRect = {};
+        ghostPreview = {};
+        groupGhostPreview = {};
+
+        DBG("TabView setTrack: normalized track='" << track.name
+            << "' strings=" << track.stringCount
+            << " tuning=" << track.tuning.size()
+            << " measures=" << track.measures.size());
+        appendDiagnosticLog("setTrack normalized: name='" + track.name
+                            + "' strings=" + juce::String(track.stringCount)
+                            + " tuning=" + juce::String(track.tuning.size())
+                            + " measures=" + juce::String(track.measures.size()));
+
         recalculateLayout();
         repaint();
+        }
+        catch (const std::exception& e)
+        {
+            appendDiagnosticLog("setTrack std::exception: " + juce::String(e.what()));
+            throw;
+        }
+        catch (...)
+        {
+            appendDiagnosticLog("setTrack unknown exception");
+            throw;
+        }
     }
     
     const TabTrack& getTrack() const { return track; }
@@ -260,6 +396,11 @@ public:
     
     void paint(juce::Graphics& g) override
     {
+        appendDiagnosticLog("paint begin: track='" + track.name + "' measures=" + juce::String(track.measures.size()) + "'");
+        const bool traceThisPaint = diagnosticPaintTraceRemaining > 0;
+        if (traceThisPaint)
+            --diagnosticPaintTraceRemaining;
+
         // Apply zoom to config
         TabLayoutConfig scaledConfig = config;
         scaledConfig.stringSpacing *= zoom;
@@ -300,7 +441,13 @@ public:
         
         // Draw track FIRST
         juce::Rectangle<float> renderBounds(0, yOffset, static_cast<float>(getWidth()), trackHeight);
+        if (traceThisPaint)
+            appendDiagnosticLog("paint stage: renderer.render begin");
+        renderer.setDiagnosticLoggingEnabled(traceThisPaint, track.name);
         renderer.render(g, track, scaledConfig, renderBounds, scrollOffset, highlightedMeasure);
+        renderer.setDiagnosticLoggingEnabled(false);
+        if (traceThisPaint)
+            appendDiagnosticLog("paint stage: renderer.render end");
         
         // Draw current playing measure highlight AFTER track rendering (so it's visible on top)
         if (currentPlayingMeasure >= 0 && currentPlayingMeasure < track.measures.size())
@@ -384,6 +531,8 @@ public:
                 g.fillRect(playheadX - 1.0f, yOffset, 3.0f, trackHeight);
             }
         }
+        if (traceThisPaint)
+            appendDiagnosticLog("paint stage: playing-measure overlay end");
         
         // Draw note hover highlight when note editing is enabled
         if (noteEditingEnabled)
@@ -563,6 +712,8 @@ public:
                 }
             }
         }
+        if (traceThisPaint)
+            appendDiagnosticLog("paint stage: note-editing overlays end");
         
         // Draw live MIDI notes (editor mode)
         if (!liveNotes.empty())
@@ -674,6 +825,8 @@ public:
                            juce::Justification::centred, false);
             }
         }
+        if (traceThisPaint)
+            appendDiagnosticLog("paint stage: live-midi overlays end");
         
         // Draw overlay message (Audio-to-MIDI recording / processing)
         if (overlayMessage.isNotEmpty())
@@ -704,6 +857,10 @@ public:
                        static_cast<int>(boxWidth), static_cast<int>(boxHeight),
                        juce::Justification::centred, false);
         }
+        if (traceThisPaint)
+            appendDiagnosticLog("paint stage: overlay-message end");
+
+        appendDiagnosticLog("paint end");
     }
     
     void resized() override
@@ -1333,6 +1490,7 @@ private:
         FretPositionCalculator::GroupAlternative ghostPositions;
     };
     GroupGhostPreview groupGhostPreview;
+    int diagnosticPaintTraceRemaining = 0;
     
     juce::ScrollBar horizontalScrollbar { false };
     const int scrollbarHeight = 14;
@@ -2189,7 +2347,7 @@ private:
                 }
                 
                 // MIDI-Note berechnen falls nicht gesetzt
-                if (hitInfo.midiNote < 0 && note.string < track.tuning.size())
+                if (hitInfo.midiNote < 0 && note.string >= 0 && note.string < track.tuning.size())
                 {
                     hitInfo.midiNote = track.tuning[note.string] + note.fret;
                 }
@@ -2356,6 +2514,14 @@ private:
                 restBeat.isRest = true;
                 restBeat.duration = restDur.first;
                 restBeat.isDotted = restDur.second;
+                for (int s = 0; s < track.stringCount; ++s)
+                {
+                    TabNote placeholder;
+                    placeholder.string = s;
+                    placeholder.fret = -1;
+                    placeholder.midiNote = -1;
+                    restBeat.notes.add(placeholder);
+                }
                 float restLen = restBeat.getDurationInQuarters();
                 remaining -= restLen;
                 if (insertPos > measure.beats.size()) insertPos = measure.beats.size();
@@ -2425,7 +2591,7 @@ private:
             lastSelectedNote.stringIndex = note.string;
             lastSelectedNote.fret = note.fret;
             lastSelectedNote.midiNote = note.midiNote >= 0 ? note.midiNote : 
-                (note.string < track.tuning.size() ? track.tuning[note.string] + note.fret : -1);
+                ((note.string >= 0 && note.string < track.tuning.size()) ? track.tuning[note.string] + note.fret : -1);
             
             // Find alternatives
             if (lastSelectedNote.midiNote >= 0)
@@ -2462,6 +2628,16 @@ private:
     
     void recalculateLayout()
     {
+        DBG("TabView recalculateLayout: track='" << track.name
+            << "' measures=" << track.measures.size()
+            << " width=" << getWidth());
+        appendDiagnosticLog("recalculateLayout begin: track='" + track.name
+                            + "' measures=" + juce::String(track.measures.size())
+                            + " width=" + juce::String(getWidth()));
+
+        try
+        {
+
         // Apply zoom to config
         TabLayoutConfig scaledConfig = config;
         scaledConfig.stringSpacing *= zoom;
@@ -2476,6 +2652,20 @@ private:
         scrollOffset = juce::jlimit(0.0f, juce::jmax(0.0f, totalWidth - getWidth()), scrollOffset);
         
         updateScrollbar();
+
+        DBG("TabView recalculateLayout: totalWidth=" << totalWidth);
+        appendDiagnosticLog("recalculateLayout end: totalWidth=" + juce::String(totalWidth));
+        }
+        catch (const std::exception& e)
+        {
+            appendDiagnosticLog("recalculateLayout std::exception: " + juce::String(e.what()));
+            throw;
+        }
+        catch (...)
+        {
+            appendDiagnosticLog("recalculateLayout unknown exception");
+            throw;
+        }
     }
     
     void updateScrollbar()

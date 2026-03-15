@@ -36,6 +36,9 @@
 #include "tuning.h"
 #include "guitarin.h"
 
+#include <algorithm>
+#include <cmath>
+
 //==============================================================================
 PTBParser::PTBParser() {}
 PTBParser::~PTBParser() {}
@@ -57,6 +60,176 @@ static int convertPTBDurationToGP5(uint8_t ptbDuration)
         case 64: return 4;    // 64th
         default: return 0;    // quarter as fallback
     }
+}
+
+static void buildPTBBendCurve(GP5Note& gp5Note, int gp5BendType, int rawBentValue, int rawReleaseValue)
+{
+    gp5Note.hasBend = true;
+    gp5Note.bendType = gp5BendType;
+    gp5Note.hasReleaseBend = (gp5BendType == 2 || gp5BendType == 3 || gp5BendType == 5 || rawReleaseValue > 0);
+    gp5Note.bendValue = juce::jmax(rawBentValue, rawReleaseValue);
+    gp5Note.bendPoints.clear();
+
+    GP5BendPoint p0, p1, p2;
+
+    switch (gp5BendType)
+    {
+        case 2:
+            p0.position = 0;  p0.value = 0;
+            p1.position = 30; p1.value = rawBentValue;
+            p2.position = 60; p2.value = rawReleaseValue;
+            gp5Note.bendPoints.push_back(p0);
+            gp5Note.bendPoints.push_back(p1);
+            gp5Note.bendPoints.push_back(p2);
+            break;
+
+        case 3:
+            p0.position = 0;  p0.value = juce::jmax(rawBentValue, rawReleaseValue);
+            p1.position = 60; p1.value = rawReleaseValue;
+            gp5Note.bendPoints.push_back(p0);
+            gp5Note.bendPoints.push_back(p1);
+            break;
+
+        case 4:
+            p0.position = 0; p0.value = rawBentValue;
+            gp5Note.bendPoints.push_back(p0);
+            break;
+
+        case 5:
+            p0.position = 0;  p0.value = rawBentValue;
+            p1.position = 60; p1.value = rawReleaseValue;
+            gp5Note.bendPoints.push_back(p0);
+            gp5Note.bendPoints.push_back(p1);
+            break;
+
+        default:
+            p0.position = 0;  p0.value = 0;
+            p1.position = 60; p1.value = rawBentValue;
+            gp5Note.bendPoints.push_back(p0);
+            gp5Note.bendPoints.push_back(p1);
+            break;
+    }
+}
+
+static NoteDuration convertGP5DurationToTabDuration(int gp5Duration)
+{
+    switch (gp5Duration)
+    {
+        case -2: return NoteDuration::Whole;
+        case -1: return NoteDuration::Half;
+        case 0:  return NoteDuration::Quarter;
+        case 1:  return NoteDuration::Eighth;
+        case 2:  return NoteDuration::Sixteenth;
+        case 3:  return NoteDuration::ThirtySecond;
+        default: return NoteDuration::Quarter;
+    }
+}
+
+static void applyTupletToTabBeat(TabBeat& tabBeat, int tupletN)
+{
+    if (tupletN > 0)
+    {
+        tabBeat.tupletNumerator = tupletN;
+        tabBeat.tupletDenominator = (tupletN == 3) ? 2 :
+                                    (tupletN == 5 || tupletN == 6) ? 4 :
+                                    tupletN - 1;
+    }
+}
+
+static TabNote convertGP5NoteToTabNote(const GP5Note& gp5Note, int stringIndex, std::map<int, int>& lastFretPerString)
+{
+    TabNote tabNote;
+    tabNote.string = stringIndex;
+    tabNote.fret = -1;
+    tabNote.velocity = gp5Note.velocity;
+    tabNote.isTied = gp5Note.isTied;
+
+    if (gp5Note.isTied && lastFretPerString.count(stringIndex))
+        tabNote.fret = lastFretPerString[stringIndex];
+    else
+        tabNote.fret = gp5Note.fret;
+
+    if (!gp5Note.isTied)
+        lastFretPerString[stringIndex] = gp5Note.fret;
+
+    tabNote.effects.vibrato = gp5Note.hasVibrato;
+    tabNote.effects.ghostNote = gp5Note.isGhost;
+    tabNote.effects.deadNote = gp5Note.isDead;
+    tabNote.effects.accentuatedNote = gp5Note.hasAccent;
+    tabNote.effects.heavyAccentuatedNote = gp5Note.hasHeavyAccent;
+    tabNote.effects.hammerOn = gp5Note.hasHammerOn;
+    tabNote.effects.bend = gp5Note.hasBend;
+    tabNote.effects.bendValue = gp5Note.bendValue / 100.0f;
+    tabNote.effects.bendType = gp5Note.bendType;
+    tabNote.effects.releaseBend = gp5Note.hasReleaseBend;
+
+    for (const auto& bp : gp5Note.bendPoints)
+    {
+        TabBendPoint tbp;
+        tbp.position = bp.position;
+        tbp.value = bp.value;
+        tbp.vibrato = bp.vibrato;
+        tabNote.effects.bendPoints.push_back(tbp);
+    }
+
+    if (gp5Note.hasSlide)
+    {
+        switch (gp5Note.slideType)
+        {
+            case 1: tabNote.effects.slideType = SlideType::ShiftSlide; break;
+            case 2: tabNote.effects.slideType = SlideType::LegatoSlide; break;
+            case 3: tabNote.effects.slideType = SlideType::SlideOutDownwards; break;
+            case 4: tabNote.effects.slideType = SlideType::SlideOutUpwards; break;
+            case 5: tabNote.effects.slideType = SlideType::SlideIntoFromBelow; break;
+            case 6: tabNote.effects.slideType = SlideType::SlideIntoFromAbove; break;
+            default: tabNote.effects.slideType = SlideType::ShiftSlide; break;
+        }
+    }
+
+    if (gp5Note.hasHarmonic)
+    {
+        tabNote.effects.harmonic = static_cast<HarmonicType>(gp5Note.harmonicType);
+        tabNote.effects.harmonicSemitone = gp5Note.harmonicSemitone;
+        tabNote.effects.harmonicAccidental = gp5Note.harmonicAccidental;
+        tabNote.effects.harmonicOctave = gp5Note.harmonicOctave;
+        tabNote.effects.harmonicFret = gp5Note.harmonicFret;
+    }
+
+    return tabNote;
+}
+
+static TabBeat createTabBeatFromGP5Beat(const GP5Beat& gp5Beat,
+                                        int stringCount,
+                                        std::map<int, int>& lastFretPerString)
+{
+    TabBeat tabBeat;
+    tabBeat.duration = convertGP5DurationToTabDuration(gp5Beat.duration);
+    tabBeat.isDotted = gp5Beat.isDotted;
+    tabBeat.isRest = gp5Beat.isRest;
+    tabBeat.isPalmMuted = gp5Beat.isPalmMute;
+    tabBeat.hasDownstroke = gp5Beat.hasDownstroke;
+    tabBeat.hasUpstroke = gp5Beat.hasUpstroke;
+    tabBeat.text = gp5Beat.text;
+    tabBeat.chordName = gp5Beat.chordName;
+    applyTupletToTabBeat(tabBeat, gp5Beat.tupletN);
+
+    for (int s = 0; s < stringCount; ++s)
+    {
+        TabNote tabNote;
+        tabNote.string = s;
+        tabNote.fret = -1;
+
+        if (!gp5Beat.isRest)
+        {
+            auto noteIt = gp5Beat.notes.find(s);
+            if (noteIt != gp5Beat.notes.end())
+                tabNote = convertGP5NoteToTabNote(noteIt->second, s, lastFretPerString);
+        }
+
+        tabBeat.notes.add(tabNote);
+    }
+
+    return tabBeat;
 }
 
 //==============================================================================
@@ -589,24 +762,11 @@ bool PTBParser::parse(const juce::File& file)
                                                 uint8_t bendDuration = 0, drawStart = 0, drawEnd = 0;
                                                 ptbNote->GetBend(bendType, bentPitch, releasePitch, 
                                                                  bendDuration, drawStart, drawEnd);
-                                                
-                                                gp5Note.hasBend = true;
-                                                gp5Note.bendType = convertPTBBendToGP5(bendType);
-                                                // PTB bend pitch is in quarter steps (1 = 1/4 tone)
-                                                // GP5 bend value is in 1/100 semitones (100 = 1/2 tone)
-                                                gp5Note.bendValue = bentPitch * 50; // quarter step * 50 = 1/100 semitones
-                                                
-                                                if (releasePitch > 0)
-                                                    gp5Note.hasReleaseBend = true;
-                                                
-                                                // Create simple bend points
-                                                GP5BendPoint bp0, bp1;
-                                                bp0.position = 0;
-                                                bp0.value = 0;
-                                                bp1.position = 60;
-                                                bp1.value = gp5Note.bendValue;
-                                                gp5Note.bendPoints.push_back(bp0);
-                                                gp5Note.bendPoints.push_back(bp1);
+
+                                                const int gp5BendType = convertPTBBendToGP5(bendType);
+                                                const int rawBentValue = bentPitch * 25;
+                                                const int rawReleaseValue = releasePitch * 25;
+                                                buildPTBBendCurve(gp5Note, gp5BendType, rawBentValue, rawReleaseValue);
                                             }
                                             
                                             beat.notes[stringIdx] = gp5Note;
@@ -735,111 +895,12 @@ TabTrack PTBParser::convertToTabTrack(int trackIndex) const
         tabMeasure.alternateEnding = header.repeatAlternative;
         tabMeasure.marker = header.marker;
         
+        // Convert beats from voice 1 (primary voice) — simple linear processing
+        // Voice merging was removed because it caused rhythm corruption and crashes.
+        // The voices are already separated in the GP5TrackMeasure format.
         for (const auto& gp5Beat : gp5Measure.voice1)
         {
-            TabBeat tabBeat;
-            
-            // Convert GP5 duration encoding to NoteDuration
-            switch (gp5Beat.duration)
-            {
-                case -2: tabBeat.duration = NoteDuration::Whole; break;
-                case -1: tabBeat.duration = NoteDuration::Half; break;
-                case 0:  tabBeat.duration = NoteDuration::Quarter; break;
-                case 1:  tabBeat.duration = NoteDuration::Eighth; break;
-                case 2:  tabBeat.duration = NoteDuration::Sixteenth; break;
-                case 3:  tabBeat.duration = NoteDuration::ThirtySecond; break;
-                default: tabBeat.duration = NoteDuration::Quarter; break;
-            }
-            
-            tabBeat.isDotted = gp5Beat.isDotted;
-            tabBeat.isRest = gp5Beat.isRest;
-            tabBeat.isPalmMuted = gp5Beat.isPalmMute;
-            tabBeat.hasDownstroke = gp5Beat.hasDownstroke;
-            tabBeat.hasUpstroke = gp5Beat.hasUpstroke;
-            tabBeat.text = gp5Beat.text;
-            tabBeat.chordName = gp5Beat.chordName;
-            
-            if (gp5Beat.tupletN > 0)
-            {
-                tabBeat.tupletNumerator = gp5Beat.tupletN;
-                tabBeat.tupletDenominator = (gp5Beat.tupletN == 3) ? 2 :
-                                            (gp5Beat.tupletN == 5 || gp5Beat.tupletN == 6) ? 4 :
-                                            gp5Beat.tupletN - 1;
-            }
-            
-            // Create one TabNote per string (unified format)
-            for (int s = 0; s < gp5Track.stringCount; ++s)
-            {
-                TabNote tabNote;
-                tabNote.string = s;
-                tabNote.fret = -1;
-                
-                if (!gp5Beat.isRest)
-                {
-                    auto noteIt = gp5Beat.notes.find(s);
-                    if (noteIt != gp5Beat.notes.end())
-                    {
-                        const auto& gp5Note = noteIt->second;
-                        tabNote.velocity = gp5Note.velocity;
-                        tabNote.isTied = gp5Note.isTied;
-                        
-                        if (gp5Note.isTied && lastFretPerString.count(s))
-                            tabNote.fret = lastFretPerString[s];
-                        else
-                            tabNote.fret = gp5Note.fret;
-                        
-                        if (!gp5Note.isTied)
-                            lastFretPerString[s] = gp5Note.fret;
-                        
-                        // Effects
-                        tabNote.effects.vibrato = gp5Note.hasVibrato;
-                        tabNote.effects.ghostNote = gp5Note.isGhost;
-                        tabNote.effects.deadNote = gp5Note.isDead;
-                        tabNote.effects.accentuatedNote = gp5Note.hasAccent;
-                        tabNote.effects.heavyAccentuatedNote = gp5Note.hasHeavyAccent;
-                        tabNote.effects.hammerOn = gp5Note.hasHammerOn;
-                        tabNote.effects.bend = gp5Note.hasBend;
-                        tabNote.effects.bendValue = gp5Note.bendValue / 100.0f;
-                        tabNote.effects.bendType = gp5Note.bendType;
-                        tabNote.effects.releaseBend = gp5Note.hasReleaseBend;
-                        
-                        for (const auto& bp : gp5Note.bendPoints)
-                        {
-                            TabBendPoint tbp;
-                            tbp.position = bp.position;
-                            tbp.value = bp.value;
-                            tbp.vibrato = bp.vibrato;
-                            tabNote.effects.bendPoints.push_back(tbp);
-                        }
-                        
-                        if (gp5Note.hasSlide)
-                        {
-                            switch (gp5Note.slideType)
-                            {
-                                case 1: tabNote.effects.slideType = SlideType::ShiftSlide; break;
-                                case 2: tabNote.effects.slideType = SlideType::LegatoSlide; break;
-                                case 3: tabNote.effects.slideType = SlideType::SlideOutDownwards; break;
-                                case 4: tabNote.effects.slideType = SlideType::SlideOutUpwards; break;
-                                case 5: tabNote.effects.slideType = SlideType::SlideIntoFromBelow; break;
-                                case 6: tabNote.effects.slideType = SlideType::SlideIntoFromAbove; break;
-                                default: tabNote.effects.slideType = SlideType::ShiftSlide; break;
-                            }
-                        }
-                        
-                        if (gp5Note.hasHarmonic)
-                        {
-                            tabNote.effects.harmonic = static_cast<HarmonicType>(gp5Note.harmonicType);
-                            tabNote.effects.harmonicSemitone = gp5Note.harmonicSemitone;
-                            tabNote.effects.harmonicAccidental = gp5Note.harmonicAccidental;
-                            tabNote.effects.harmonicOctave = gp5Note.harmonicOctave;
-                            tabNote.effects.harmonicFret = gp5Note.harmonicFret;
-                        }
-                    }
-                }
-                
-                tabBeat.notes.add(tabNote);
-            }
-            
+            TabBeat tabBeat = createTabBeatFromGP5Beat(gp5Beat, gp5Track.stringCount, lastFretPerString);
             tabMeasure.beats.add(tabBeat);
         }
         

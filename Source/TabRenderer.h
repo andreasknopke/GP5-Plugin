@@ -15,6 +15,23 @@
 #include "TabLayoutEngine.h"
 #include <juce_graphics/juce_graphics.h>
 
+namespace tabrenderer_diagnostics
+{
+    static juce::File getDiagnosticLogFile()
+    {
+        return juce::File::getSpecialLocation(juce::File::tempDirectory)
+            .getChildFile("GP5_VST_Editor_ptb_ui.log");
+    }
+
+    static void appendDiagnosticLog(const juce::String& message)
+    {
+        auto logLine = juce::Time::getCurrentTime().formatted("%Y-%m-%d %H:%M:%S")
+                     + " [TabRenderer] " + message + "\n";
+        getDiagnosticLogFile().appendText(logLine);
+        Logger::writeToLog(message);
+    }
+}
+
 //==============================================================================
 /**
  * RenderedNoteInfo - Speichert Informationen über eine gerenderte Note für Hit-Testing.
@@ -76,6 +93,12 @@ public:
     }
     
     void clearHiddenNotes() { hiddenNotes.clear(); }
+
+    void setDiagnosticLoggingEnabled(bool enabled, const juce::String& context = {})
+    {
+        diagnosticLoggingEnabled = enabled;
+        diagnosticLoggingContext = context;
+    }
     
     /**
      * Zeichnet einen Track in den angegebenen Bereich.
@@ -87,8 +110,18 @@ public:
                 float scrollOffset = 0.0f,
                 int highlightMeasure = -1)
     {
+        if (diagnosticLoggingEnabled)
+        {
+            tabrenderer_diagnostics::appendDiagnosticLog("render begin: context='" + diagnosticLoggingContext
+                + "' track='" + track.name + "' measures=" + juce::String(track.measures.size()));
+        }
+
         if (track.measures.isEmpty())
+        {
+            if (diagnosticLoggingEnabled)
+                tabrenderer_diagnostics::appendDiagnosticLog("render early exit: no measures");
             return;
+        }
         
         this->config = config;
         this->bounds = bounds;
@@ -145,6 +178,14 @@ public:
             // Skip if not visible
             if (measureEndX < bounds.getX() || measureX > bounds.getRight())
                 continue;
+
+            if (diagnosticLoggingEnabled)
+            {
+                tabrenderer_diagnostics::appendDiagnosticLog("render measure " + juce::String(m)
+                    + ": beats=" + juce::String(measure.beats.size())
+                    + " width=" + juce::String(measure.calculatedWidth)
+                    + " number=" + juce::String(measure.measureNumber));
+            }
             
             // Highlight current measure
             if (m == highlightMeasure)
@@ -176,6 +217,14 @@ public:
             {
                 const auto& beat = measure.beats[b];
                 float beatX = measureX + (b < beatPositions.size() ? beatPositions[b] : 0);
+
+                if (diagnosticLoggingEnabled)
+                {
+                    tabrenderer_diagnostics::appendDiagnosticLog("render beat " + juce::String(m) + ":" + juce::String(b)
+                        + " rest=" + juce::String(beat.isRest ? 1 : 0)
+                        + " notes=" + juce::String(beat.notes.size())
+                        + " duration=" + juce::String(static_cast<int>(beat.duration)));
+                }
                 
                 // Calculate next beat X position for vibrato drawing
                 float nextBeatX = measureEndX; // Default to end of measure
@@ -218,7 +267,7 @@ public:
                     for (const auto& note : beat.notes)
                     {
                         // Überspringe leere Note-Slots (fret = -1 bedeutet keine Note auf dieser Saite)
-                        if (note.fret < 0)
+                        if (note.fret < 0 || note.string < 0 || note.string >= stringCount)
                         {
                             noteIdx++;
                             continue;
@@ -266,7 +315,7 @@ public:
                         {
                             for (const auto& note : beat.notes)
                             {
-                                if (note.fret < 0) continue;  // Skip empty note slots
+                                if (note.fret < 0 || note.string < 0 || note.string >= stringCount) continue;  // Skip empty note slots
                                 if (note.effects.slideType == SlideType::ShiftSlide ||
                                     note.effects.slideType == SlideType::LegatoSlide)
                                 {
@@ -274,7 +323,7 @@ public:
                                     for (const auto& nextNote : nextBeat.notes)
                                     {
                                         // Slide geht typischerweise zur gleichen Saite
-                                        if (nextNote.string == note.string)
+                                        if (nextNote.fret >= 0 && nextNote.string == note.string)
                                         {
                                             float noteY = firstStringY + note.string * config.stringSpacing;
                                             float nextNoteY = firstStringY + nextNote.string * config.stringSpacing;
@@ -297,12 +346,13 @@ public:
                                         }
                                         if (!foundOnSameString)
                                         {
-                                            // Slide zur ersten Note des nächsten Beats
-                                            const auto& nextNote = nextBeat.notes[0];
-                                            float noteY = firstStringY + note.string * config.stringSpacing;
-                                            float nextNoteY = firstStringY + nextNote.string * config.stringSpacing;
-                                            drawSlideLine(g, beatX, nextBeatX, noteY, nextNoteY,
-                                                         note.effects.slideType, note.fret, nextNote.fret);
+                                            if (const auto* nextPlayableNote = findFirstPlayableNote(nextBeat, stringCount))
+                                            {
+                                                float noteY = firstStringY + note.string * config.stringSpacing;
+                                                float nextNoteY = firstStringY + nextPlayableNote->string * config.stringSpacing;
+                                                drawSlideLine(g, beatX, nextBeatX, noteY, nextNoteY,
+                                                             note.effects.slideType, note.fret, nextPlayableNote->fret);
+                                            }
                                         }
                                     }
                                 }
@@ -326,7 +376,7 @@ public:
                         // Letzter Beat im Takt - zeichne Slides ohne Zielnote
                         for (const auto& note : beat.notes)
                         {
-                            if (note.fret < 0) continue;  // Skip empty note slots
+                            if (note.fret < 0 || note.string < 0 || note.string >= stringCount) continue;  // Skip empty note slots
                             float noteY = firstStringY + note.string * config.stringSpacing;
                             
                             if (note.effects.slideType == SlideType::SlideIntoFromBelow ||
@@ -359,6 +409,11 @@ public:
             if (measure.repeatCount > 0)
                 drawRepeatClose(g, measureEndX, firstStringY, stringCount, measure.repeatCount);
         }
+
+        if (diagnosticLoggingEnabled)
+        {
+            tabrenderer_diagnostics::appendDiagnosticLog("render end: context='" + diagnosticLoggingContext + "'");
+        }
     }
 
 private:
@@ -372,6 +427,8 @@ private:
     int currentBeatIndex = 0;
     int currentNoteIndex = 0;
     std::vector<std::tuple<int, int, int>> hiddenNotes;  // Notes to hide for ghost preview
+    bool diagnosticLoggingEnabled = false;
+    juce::String diagnosticLoggingContext;
     
     bool isNoteHidden(int measureIdx, int beatIdx, int noteIdx) const
     {
@@ -383,6 +440,17 @@ private:
                 return true;
         }
         return false;
+    }
+
+    const TabNote* findFirstPlayableNote(const TabBeat& beat, int stringCount) const
+    {
+        for (const auto& note : beat.notes)
+        {
+            if (note.fret >= 0 && note.string >= 0 && note.string < stringCount)
+                return &note;
+        }
+
+        return nullptr;
     }
     
     void drawNote(juce::Graphics& g, const TabNote& note, float x, float y, float nextBeatX, float firstStringY)
@@ -875,7 +943,7 @@ private:
         
         for (const auto& note : beat.notes)
         {
-            if (note.fret < 0) continue;  // Skip empty note slots
+            if (note.fret < 0 || note.string < 0 || note.string >= currentTrackTuning.size()) continue;  // Skip empty note slots
             float noteY = firstStringY + note.string * config.stringSpacing;
             float noteRadius = config.stringSpacing * 0.45f;
             

@@ -2,10 +2,87 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "An Cubase anheften",
+            "name": "Host starten (Pfad eingeben)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${input:hostExecutable}",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "stopAtEntry": false,
+            "symbolSearchPath": "${workspaceFolder}\\build\\GP5_VST_Editor_artefacts\\Debug\\VST3;${workspaceFolder}\\build",
+            "requireExactSource": true,
+            "symbolOptions": {
+                "searchPaths": [
+                    "${workspaceFolder}\\build\\GP5_VST_Editor_artefacts\\Debug\\VST3",
+                    "${workspaceFolder}\\build"
+                ],
+                "searchMicrosoftSymbolServer": true,
+                "cachePath": "%TEMP%\\symcache"
+            },
+            "logging": {
+                "exceptions": true,
+                "moduleLoad": true,
+                "engineLogging": true,
+                "trace": true
+            },
+            "environment": [],
+            "console": "internalConsole"
+        },
+        {
+            "name": "An Cubase/Host anheften",
             "type": "cppvsdbg",
             "request": "attach",
-            "processId": "${command:extension.pickNativeProcess}"
+            "processId": "${command:extension.pickNativeProcess}",
+            "symbolSearchPath": "${workspaceFolder}\\build\\GP5_VST_Editor_artefacts\\Debug\\VST3;${workspaceFolder}\\build",
+            "requireExactSource": true,
+            "symbolOptions": {
+                "searchPaths": [
+                    "${workspaceFolder}\\build\\GP5_VST_Editor_artefacts\\Debug\\VST3",
+                    "${workspaceFolder}\\build"
+                ],
+                "searchMicrosoftSymbolServer": true,
+                "cachePath": "%TEMP%\\symcache"
+            },
+            "logging": {
+                "exceptions": true,
+                "moduleLoad": true,
+                "engineLogging": true,
+                "trace": true
+            }
+        },
+        {
+            "name": "VST3-Helper starten",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}\\build\\GP5_VST_Editor_vst3_helper.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "stopAtEntry": false,
+            "symbolSearchPath": "${workspaceFolder}\\build\\GP5_VST_Editor_artefacts\\Debug\\VST3;${workspaceFolder}\\build",
+            "requireExactSource": true,
+            "symbolOptions": {
+                "searchPaths": [
+                    "${workspaceFolder}\\build\\GP5_VST_Editor_artefacts\\Debug\\VST3",
+                    "${workspaceFolder}\\build"
+                ],
+                "searchMicrosoftSymbolServer": true,
+                "cachePath": "%TEMP%\\symcache"
+            },
+            "logging": {
+                "exceptions": true,
+                "moduleLoad": true,
+                "engineLogging": true,
+                "trace": true
+            },
+            "console": "internalConsole"
+        }
+    ],
+    "inputs": [
+        {
+            "id": "hostExecutable",
+            "type": "promptString",
+            "description": "Pfad zur Host-EXE (z. B. Cubase.exe)",
+            "default": "C:\\Program Files\\Steinberg\\Cubase 14\\Cubase14.exe"
         }
     ]
 }

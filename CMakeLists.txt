@@ -2,6 +2,13 @@ cmake_minimum_required(VERSION 3.22)
 
 project(GP5_VST_Editor VERSION 1.0.1)
 
+if (MSVC)
+    string(REPLACE "/RTC1" "" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
+    string(REPLACE "/RTC1" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
+    set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}" CACHE STRING "MSVC debug C flags" FORCE)
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}" CACHE STRING "MSVC debug C++ flags" FORCE)
+endif()
+
 # JUCE Pfad konfigurieren
 set(JUCE_PATH "D:/GitHub/JUCE" CACHE PATH "Path to JUCE")
 
@@ -83,9 +90,9 @@ target_compile_definitions(BasicPitchCNN PUBLIC RTNEURAL_USE_STL=1)
 target_link_libraries(BasicPitchCNN PUBLIC RTNeural bin_data)
 # Always optimize BasicPitchCNN (even in Debug) because RTNeural is very slow without optimization
 if (MSVC)
-    target_compile_options(BasicPitchCNN PUBLIC /O2)
+    target_compile_options(BasicPitchCNN PRIVATE /O2)
 else()
-    target_compile_options(BasicPitchCNN PUBLIC -O3)
+    target_compile_options(BasicPitchCNN PRIVATE -O3)
 endif()
 
 # ==============================================================================

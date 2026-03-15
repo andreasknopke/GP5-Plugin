@@ -9,6 +9,23 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+namespace
+{
+    static juce::File getDiagnosticLogFile()
+    {
+        return juce::File::getSpecialLocation(juce::File::tempDirectory)
+            .getChildFile("GP5_VST_Editor_ptb_ui.log");
+    }
+
+    static void appendDiagnosticLog(const juce::String& message)
+    {
+        auto logLine = juce::Time::getCurrentTime().formatted("%Y-%m-%d %H:%M:%S")
+                     + " [PluginEditor] " + message + "\n";
+        getDiagnosticLogFile().appendText(logLine);
+        Logger::writeToLog(message);
+    }
+}
+
 //==============================================================================
 NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
@@ -803,6 +820,12 @@ void NewProjectAudioProcessorEditor::trackSelectionChanged()
         return;
     
     int trackIndex = selectedId - 1;  // Zurück zu 0-basiert
+    DBG("trackSelectionChanged: selectedId=" << selectedId << ", trackIndex=" << trackIndex);
+    appendDiagnosticLog("trackSelectionChanged: selectedId=" + juce::String(selectedId)
+                        + ", trackIndex=" + juce::String(trackIndex));
+
+    try
+    {
     
     // Unterscheide zwischen Player-Modus (Datei geladen) und Editor-Modus (Aufnahmen)
     if (audioProcessor.isFileLoaded())
@@ -815,9 +838,11 @@ void NewProjectAudioProcessorEditor::trackSelectionChanged()
         {
             // Tab-Ansicht aktualisieren: editierten Track bevorzugen, sonst Parser
             TabTrack track;
+            DBG("trackSelectionChanged: preparing track " << trackIndex << ", fileLoaded path");
             if (audioProcessor.hasEditedTrack(trackIndex))
             {
                 track = audioProcessor.getEditedTrack(trackIndex);
+                DBG("trackSelectionChanged: using edited track");
             }
             else if (audioProcessor.isUsingGP7Parser())
             {
@@ -827,23 +852,42 @@ void NewProjectAudioProcessorEditor::trackSelectionChanged()
                 track.stringCount = gp7Tracks[trackIndex].stringCount;
                 track.tuning = gp7Tracks[trackIndex].tuning;
                 track.measures = measures;
+                DBG("trackSelectionChanged: using GP7 parser track, measures=" << track.measures.size());
             }
             else if (audioProcessor.isUsingMidiImporter())
             {
                 track = audioProcessor.getMidiImporter().convertToTabTrack(trackIndex);
+                DBG("trackSelectionChanged: using MIDI importer track, measures=" << track.measures.size());
             }
             else if (audioProcessor.isUsingPTBParser())
             {
+                DBG("trackSelectionChanged: converting PTB track " << trackIndex);
+                appendDiagnosticLog("trackSelectionChanged: converting PTB track " + juce::String(trackIndex));
                 track = audioProcessor.getPTBParser().convertToTabTrack(trackIndex);
+                DBG("trackSelectionChanged: PTB track converted, strings=" << track.stringCount
+                    << ", tuning=" << track.tuning.size()
+                    << ", measures=" << track.measures.size());
+                appendDiagnosticLog("trackSelectionChanged: PTB track converted, strings="
+                                    + juce::String(track.stringCount)
+                                    + ", tuning=" + juce::String(track.tuning.size())
+                                    + ", measures=" + juce::String(track.measures.size()));
             }
             else
             {
                 track = audioProcessor.getGP5Parser().convertToTabTrack(trackIndex);
+                DBG("trackSelectionChanged: using GP5 parser track, measures=" << track.measures.size());
             }
+
+            DBG("trackSelectionChanged: calling tabView.setTrack()");
+            appendDiagnosticLog("trackSelectionChanged: calling tabView.setTrack()");
             tabView.setTrack(track);
+            DBG("trackSelectionChanged: tabView.setTrack() completed");
+            appendDiagnosticLog("trackSelectionChanged: tabView.setTrack() completed");
             
             // MIDI-Output auf diesen Track setzen
             audioProcessor.setSelectedTrack(trackIndex);
+            DBG("trackSelectionChanged: processor selected track set");
+            appendDiagnosticLog("trackSelectionChanged: processor selected track set");
             
             const auto& gp5Track = tracks[trackIndex];
             DBG("Track " << (trackIndex + 1) << " geladen: " << gp5Track.name 
@@ -873,6 +917,17 @@ void NewProjectAudioProcessorEditor::trackSelectionChanged()
                     << recordedTracks[trackIndex].name);
             }
         }
+    }
+    }
+    catch (const std::exception& e)
+    {
+        appendDiagnosticLog("trackSelectionChanged std::exception: " + juce::String(e.what()));
+        infoLabel.setText("Track load error: " + juce::String(e.what()), juce::dontSendNotification);
+    }
+    catch (...)
+    {
+        appendDiagnosticLog("trackSelectionChanged unknown exception");
+        infoLabel.setText("Track load error: unknown exception", juce::dontSendNotification);
     }
 }
 
