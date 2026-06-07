@@ -13,6 +13,7 @@
 #include "GP7Parser.h"
 #include "PTBParser.h"
 #include "MidiImporter.h"
+#include "TabImageImporter.h"
 #include "TabModels.h"
 #include "ChordMatcher.h"
 #include "ChordFingerDB.h"
@@ -86,7 +87,9 @@ public:
     bool isUsingGP7Parser() const { return usingGP7Parser; }
     bool isUsingPTBParser() const { return usingPTBParser; }
     bool isUsingMidiImporter() const { return usingMidiImporter; }
+    bool isUsingTabImageImporter() const { return usingTabImageImporter; }
     const MidiImporter& getMidiImporter() const { return midiImporter; }
+    const TabImageImporter& getTabImageImporter() const { return tabImageImporter; }
     
     // Convenience methods that work with whichever parser is active
     const juce::Array<GP5Track>& getActiveTracks() const 
@@ -128,6 +131,8 @@ public:
     
     // Get track name for display (works for both modes)
     juce::String getDisplayTrackName(int trackIndex) const;
+    TabTrack getLoadedTabTrack(int trackIndex) const;
+    int getLoadedMeasureCount() const;
     
     //==============================================================================
     // DAW Synchronisation - Thread-safe access from Editor
@@ -448,9 +453,11 @@ private:
     GP7Parser gp7Parser;
     PTBParser ptbParser;
     MidiImporter midiImporter;
+    TabImageImporter tabImageImporter;
     bool usingGP7Parser = false;  // Which parser was used for current file
     bool usingPTBParser = false;  // PTB parser active
     bool usingMidiImporter = false;  // MIDI file importer active
+    bool usingTabImageImporter = false;  // OMR JSON importer active
     juce::String loadedFilePath;
     bool fileLoaded = false;
     

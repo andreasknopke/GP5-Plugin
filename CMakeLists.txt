@@ -168,6 +168,8 @@ target_sources(GP5_VST_Editor
         Source/TabLayoutEngine.h
         Source/TabRenderer.h
         Source/TabViewComponent.h
+            Source/TabImageImporter.cpp
+            Source/TabImageImporter.h
         # BasicPitch integration (NeuralNote-based polyphonic transcription)
         Source/BasicPitch/BasicPitchConstants.h
         Source/BasicPitch/Features.cpp

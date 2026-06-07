@@ -1651,6 +1651,7 @@ void NewProjectAudioProcessor::unloadFile()
     usingGP7Parser = false;
     usingPTBParser = false;
     usingMidiImporter = false;
+    usingTabImageImporter = false;
     
     // Reset all track settings
     for (int i = 0; i < maxTracks; ++i)
@@ -1678,6 +1679,29 @@ bool NewProjectAudioProcessor::loadGP5File(const juce::File& file)
 {
     // Check file extension to determine which parser to use
     auto extension = file.getFileExtension().toLowerCase();
+
+    if (extension == ".json")
+    {
+        if (tabImageImporter.parseFile(file))
+        {
+            loadedFilePath = file.getFullPathName();
+            fileLoaded = true;
+            usingGP7Parser = false;
+            usingPTBParser = false;
+            usingMidiImporter = false;
+            usingTabImageImporter = true;
+
+            initializeTrackSettings();
+
+            DBG("Processor: OMR JSON file loaded successfully: " << loadedFilePath);
+            return true;
+        }
+
+        fileLoaded = false;
+        usingTabImageImporter = false;
+        DBG("Processor: Failed to load OMR JSON file: " << tabImageImporter.getLastError());
+        return false;
+    }
     
     // MIDI file import
     if (extension == ".mid" || extension == ".midi")
@@ -1689,6 +1713,7 @@ bool NewProjectAudioProcessor::loadGP5File(const juce::File& file)
             usingGP7Parser = false;
             usingPTBParser = false;
             usingMidiImporter = true;
+            usingTabImageImporter = false;
             
             // Initialize track settings based on imported MIDI
             initializeTrackSettings();
@@ -1714,6 +1739,7 @@ bool NewProjectAudioProcessor::loadGP5File(const juce::File& file)
             usingGP7Parser = true;
             usingPTBParser = false;
             usingMidiImporter = false;
+            usingTabImageImporter = false;
             
             // Initialize track settings based on loaded file
             initializeTrackSettings();
@@ -1739,6 +1765,7 @@ bool NewProjectAudioProcessor::loadGP5File(const juce::File& file)
             usingGP7Parser = false;
             usingPTBParser = true;
             usingMidiImporter = false;
+            usingTabImageImporter = false;
             
             // Initialize track settings based on loaded file
             initializeTrackSettings();
@@ -1762,6 +1789,7 @@ bool NewProjectAudioProcessor::loadGP5File(const juce::File& file)
         usingGP7Parser = false;
         usingPTBParser = false;
         usingMidiImporter = false;
+        usingTabImageImporter = false;
         
         // Initialize track settings based on loaded file
         initializeTrackSettings();
@@ -1779,7 +1807,7 @@ bool NewProjectAudioProcessor::loadGP5File(const juce::File& file)
 
 void NewProjectAudioProcessor::initializeTrackSettings()
 {
-    const auto& tracks = getActiveTracks();
+    const auto tracks = getDisplayTracks();
     
     for (int i = 0; i < juce::jmin((int)tracks.size(), maxTracks); ++i)
     {
@@ -5664,6 +5692,23 @@ juce::Array<GP5Track> NewProjectAudioProcessor::getDisplayTracks() const
     // If file is loaded, return the file's tracks
     if (fileLoaded)
     {
+        if (usingTabImageImporter)
+        {
+            juce::Array<GP5Track> tracks;
+            auto tabTrack = tabImageImporter.convertToTabTrack(0);
+            if (!tabTrack.measures.isEmpty())
+            {
+                GP5Track track;
+                track.name = tabTrack.name;
+                track.stringCount = tabTrack.stringCount;
+                track.tuning = tabTrack.tuning;
+                track.midiChannel = tabTrack.midiChannel + 1;
+                track.volume = 100;
+                track.pan = 64;
+                tracks.add(track);
+            }
+            return tracks;
+        }
         return getActiveTracks();
     }
     
@@ -5733,6 +5778,8 @@ int NewProjectAudioProcessor::getDisplayTrackCount() const
 {
     if (fileLoaded)
     {
+        if (usingTabImageImporter)
+            return tabImageImporter.getTrackCount();
         return getActiveTracks().size();
     }
     
@@ -5753,6 +5800,8 @@ juce::String NewProjectAudioProcessor::getDisplayTrackName(int trackIndex) const
 {
     if (fileLoaded)
     {
+        if (usingTabImageImporter)
+            return tabImageImporter.getTrackName(trackIndex);
         const auto& tracks = getActiveTracks();
         if (trackIndex >= 0 && trackIndex < tracks.size())
         {
@@ -5770,6 +5819,49 @@ juce::String NewProjectAudioProcessor::getDisplayTrackName(int trackIndex) const
     return "Recording";
 }
 
+TabTrack NewProjectAudioProcessor::getLoadedTabTrack(int trackIndex) const
+{
+    if (!fileLoaded)
+        return {};
+
+    if (usingTabImageImporter)
+        return tabImageImporter.convertToTabTrack(trackIndex);
+
+    if (usingGP7Parser)
+    {
+        TabTrack track;
+        const auto& gp7Tracks = gp7Parser.getTracks();
+        if (!juce::isPositiveAndBelow(trackIndex, gp7Tracks.size()))
+            return track;
+
+        juce::Array<TabMeasure> measures = gp7Parser.convertToTabMeasures(trackIndex);
+        track.name = gp7Tracks[trackIndex].name;
+        track.stringCount = gp7Tracks[trackIndex].stringCount;
+        track.tuning = gp7Tracks[trackIndex].tuning;
+        track.measures = measures;
+        return track;
+    }
+
+    if (usingMidiImporter)
+        return midiImporter.convertToTabTrack(trackIndex);
+
+    if (usingPTBParser)
+        return ptbParser.convertToTabTrack(trackIndex);
+
+    return gp5Parser.convertToTabTrack(trackIndex);
+}
+
+int NewProjectAudioProcessor::getLoadedMeasureCount() const
+{
+    if (!fileLoaded)
+        return 0;
+
+    if (usingTabImageImporter)
+        return getLoadedTabTrack(0).measures.size();
+
+    return getActiveMeasureHeaders().size();
+}
+
 bool NewProjectAudioProcessor::exportRecordingToGP5(const juce::File& outputFile, const juce::String& title)
 {
     std::vector<TabTrack> tracks;
@@ -5777,23 +5869,18 @@ bool NewProjectAudioProcessor::exportRecordingToGP5(const juce::File& outputFile
     if (isFileLoaded())
     {
         // Use edited tracks if available, otherwise convert from active parser data
-        const auto& loadedTracks = getActiveTracks();
-        for (int i = 0; i < loadedTracks.size(); ++i)
+        const int loadedTrackCount = getDisplayTrackCount();
+        for (int i = 0; i < loadedTrackCount; ++i)
         {
             if (hasEditedTrack(i))
             {
                 tracks.push_back(getEditedTrack(i));
                 DBG("Track " << i << ": using edited version");
             }
-            else if (usingPTBParser)
-            {
-                tracks.push_back(ptbParser.convertToTabTrack(i));
-                DBG("Track " << i << ": using PTB parser data");
-            }
             else
             {
-                tracks.push_back(gp5Parser.convertToTabTrack(i));
-                DBG("Track " << i << ": using original GP5 data");
+                tracks.push_back(getLoadedTabTrack(i));
+                DBG("Track " << i << ": using loaded track conversion data");
             }
         }
     }
@@ -5854,26 +5941,21 @@ bool NewProjectAudioProcessor::exportRecordingToGP5WithMetadata(
     if (isFileLoaded())
     {
         // Use edited tracks if available, otherwise convert from active parser data
-        const auto& loadedTracks = getActiveTracks();
-        for (int i = 0; i < loadedTracks.size(); ++i)
+        const int loadedTrackCount = getDisplayTrackCount();
+        for (int i = 0; i < loadedTrackCount; ++i)
         {
             if (hasEditedTrack(i))
             {
                 tracks.push_back(getEditedTrack(i));
                 DBG("Track " << i << ": using edited version");
             }
-            else if (usingPTBParser)
-            {
-                tracks.push_back(ptbParser.convertToTabTrack(i));
-                DBG("Track " << i << ": using PTB parser data");
-            }
             else
             {
-                tracks.push_back(gp5Parser.convertToTabTrack(i));
-                DBG("Track " << i << ": using original GP5 data");
+                tracks.push_back(getLoadedTabTrack(i));
+                DBG("Track " << i << ": using loaded track conversion data");
             }
         }
-        DBG("Exporting from loaded file: " << loadedTracks.size() << " tracks");
+        DBG("Exporting from loaded file: " << loadedTrackCount << " tracks");
     }
     else
     {

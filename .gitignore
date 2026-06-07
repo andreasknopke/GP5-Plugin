@@ -29,3 +29,55 @@ JuceLibraryCode/
 # Temporary files
 *.tmp
 *.log
+
+# Python virtual environments
+.venv-omr/
+.venv/
+
+# Debug memory dumps & binary blobs
+*.dmp
+*.bin
+test.png
+
+# Generated analysis artifacts (specific)
+gp5_scan_report.json
+GP5_DUMP_SCANNER.md
+Guitar.dmp
+GR.pdf
+
+# Extract/cluster analysis files
+guitar_candidate1_context.bin
+guitar_candidate2_context.bin
+guitar_dump_analysis_summary.md
+guitar_gpif_carve.json
+guitar_gpif_carve.md
+guitar_gpif_carve_cluster*_strings_redacted.txt
+guitar_gpif_context_*.bin
+guitar_gpif_focus_04630642.json
+guitar_gpif_focus_04630642.md
+guitar_gpif_focus_04630642_cluster1_strings_structural.txt
+
+# New untracked Python scripts (work-in-progress)
+gpif_heap_carver.py
+scan_gp5_dump.py
+
+# Planning / MVP documents
+OCR_TAB_IMPORT_MVP.md
+
+# Untracked source files (new feature work-in-progress)
+Source/TabImageImporter.cpp
+Source/TabImageImporter.h
+Source/TabPdfImporter.cpp
+Source/TabPdfImporter.h
+
+# Analysis artifacts directories
+artifacts/
+tools/
+
+# OMR test output directories
+omr_out_test/
+omr_out_test_loose/
+omr_out_test_ocr/
+omr_out_test_ocr2/
+omr_out_test_track/
+*.log

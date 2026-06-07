@@ -536,9 +536,9 @@ void NewProjectAudioProcessorEditor::resized()
 void NewProjectAudioProcessorEditor::loadButtonClicked()
 {
     fileChooser = std::make_unique<juce::FileChooser> (
-        "Select a Guitar Pro / MIDI / Power Tab file...",
+        "Select a Guitar Pro / MIDI / Power Tab / OMR JSON file...",
         juce::File::getSpecialLocation (juce::File::userHomeDirectory),
-        "*.gp;*.gp3;*.gp4;*.gp5;*.ptb;*.mid;*.midi");
+        "*.gp;*.gp3;*.gp4;*.gp5;*.ptb;*.mid;*.midi;*.json");
 
     auto chooserFlags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
 
@@ -570,6 +570,8 @@ void NewProjectAudioProcessorEditor::loadButtonClicked()
                     errorMsg = audioProcessor.getMidiImporter().getLastError();
                 else if (ext == ".ptb")
                     errorMsg = audioProcessor.getPTBParser().getLastError();
+                else if (ext == ".json")
+                    errorMsg = audioProcessor.getTabImageImporter().getLastError();
                 else if (ext == ".gp")
                     errorMsg = audioProcessor.getGP7Parser().getLastError();
                 else
@@ -702,18 +704,29 @@ void NewProjectAudioProcessorEditor::refreshFromProcessor()
         tabView.setEditorMode(true);
         return;
     }
-    
+
+    const bool usingOmrJson = audioProcessor.isUsingTabImageImporter();
     const auto& info = audioProcessor.getActiveSongInfo();
-    int trackCount = audioProcessor.getActiveTracks().size();
-    int measureCount = audioProcessor.getActiveMeasureHeaders().size();
+    int trackCount = audioProcessor.getDisplayTrackCount();
+    int measureCount = audioProcessor.getLoadedMeasureCount();
     
     DBG("Refreshing UI from processor. Track count: " << trackCount);
     
     // Info-Label aktualisieren
-    juce::String infoText = info.title;
-    if (info.artist.isNotEmpty())
-        infoText += " - " + info.artist;
-    infoText += " | " + juce::String(info.tempo) + " BPM";
+    juce::String infoText;
+    if (usingOmrJson)
+    {
+        infoText = audioProcessor.getDisplayTrackName(0);
+        if (infoText.isEmpty())
+            infoText = "OMR Import";
+    }
+    else
+    {
+        infoText = info.title;
+        if (info.artist.isNotEmpty())
+            infoText += " - " + info.artist;
+        infoText += " | " + juce::String(info.tempo) + " BPM";
+    }
     infoText += " | " + juce::String(trackCount) + " Tracks";
     infoText += " | " + juce::String(measureCount) + " Measures";
     infoLabel.setText(infoText, juce::dontSendNotification);
@@ -756,26 +769,45 @@ void NewProjectAudioProcessorEditor::refreshFromProcessor()
 void NewProjectAudioProcessorEditor::updateTrackSelector()
 {
     trackSelector.clear(juce::dontSendNotification);
-    
+
+    if (audioProcessor.isUsingTabImageImporter())
+    {
+        const int trackCount = audioProcessor.getDisplayTrackCount();
+        DBG("updateTrackSelector: " << trackCount << " OMR tracks found");
+
+        for (int i = 0; i < trackCount; ++i)
+        {
+            TabTrack track = audioProcessor.getLoadedTabTrack(i);
+            juce::String itemText = juce::String(i + 1) + ": " + audioProcessor.getDisplayTrackName(i);
+            if (track.stringCount > 0)
+                itemText += " (" + juce::String(track.stringCount) + " Strings)";
+
+            DBG("  Adding OMR track: " << itemText);
+            trackSelector.addItem(itemText, i + 1);
+        }
+
+        DBG("Track-Selector mit " << trackCount << " OMR tracks aktualisiert");
+        return;
+    }
+
     const auto& tracks = audioProcessor.getActiveTracks();
-    
+
     DBG("updateTrackSelector: " << tracks.size() << " tracks found");
-    
+
     for (int i = 0; i < tracks.size(); ++i)
     {
         const auto& track = tracks[i];
         juce::String itemText = juce::String(i + 1) + ": " + track.name;
-        
-        // MIDI-Instrument-Info hinzufügen
+
         if (track.isPercussion)
             itemText += " (Drums)";
         else if (track.stringCount > 0)
             itemText += " (" + juce::String(track.stringCount) + " Strings)";
-        
+
         DBG("  Adding track: " << itemText);
-        trackSelector.addItem(itemText, i + 1);  // ID ist 1-basiert
+        trackSelector.addItem(itemText, i + 1);
     }
-    
+
     DBG("Track-Selector mit " << tracks.size() << " Tracks aktualisiert");
 }
 
@@ -831,8 +863,7 @@ void NewProjectAudioProcessorEditor::trackSelectionChanged()
     if (audioProcessor.isFileLoaded())
     {
         // Player-Modus: Verwende geladene Datei
-        const auto& tracks = audioProcessor.getActiveTracks();
-        int trackCount = (int)tracks.size();
+        int trackCount = audioProcessor.getDisplayTrackCount();
         
         if (trackIndex >= 0 && trackIndex < trackCount)
         {
@@ -844,38 +875,10 @@ void NewProjectAudioProcessorEditor::trackSelectionChanged()
                 track = audioProcessor.getEditedTrack(trackIndex);
                 DBG("trackSelectionChanged: using edited track");
             }
-            else if (audioProcessor.isUsingGP7Parser())
-            {
-                const auto& gp7Tracks = audioProcessor.getGP7Parser().getTracks();
-                juce::Array<TabMeasure> measures = audioProcessor.getGP7Parser().convertToTabMeasures(trackIndex);
-                track.name = gp7Tracks[trackIndex].name;
-                track.stringCount = gp7Tracks[trackIndex].stringCount;
-                track.tuning = gp7Tracks[trackIndex].tuning;
-                track.measures = measures;
-                DBG("trackSelectionChanged: using GP7 parser track, measures=" << track.measures.size());
-            }
-            else if (audioProcessor.isUsingMidiImporter())
-            {
-                track = audioProcessor.getMidiImporter().convertToTabTrack(trackIndex);
-                DBG("trackSelectionChanged: using MIDI importer track, measures=" << track.measures.size());
-            }
-            else if (audioProcessor.isUsingPTBParser())
-            {
-                DBG("trackSelectionChanged: converting PTB track " << trackIndex);
-                appendDiagnosticLog("trackSelectionChanged: converting PTB track " + juce::String(trackIndex));
-                track = audioProcessor.getPTBParser().convertToTabTrack(trackIndex);
-                DBG("trackSelectionChanged: PTB track converted, strings=" << track.stringCount
-                    << ", tuning=" << track.tuning.size()
-                    << ", measures=" << track.measures.size());
-                appendDiagnosticLog("trackSelectionChanged: PTB track converted, strings="
-                                    + juce::String(track.stringCount)
-                                    + ", tuning=" + juce::String(track.tuning.size())
-                                    + ", measures=" + juce::String(track.measures.size()));
-            }
             else
             {
-                track = audioProcessor.getGP5Parser().convertToTabTrack(trackIndex);
-                DBG("trackSelectionChanged: using GP5 parser track, measures=" << track.measures.size());
+                track = audioProcessor.getLoadedTabTrack(trackIndex);
+                DBG("trackSelectionChanged: using loaded track converter, measures=" << track.measures.size());
             }
 
             DBG("trackSelectionChanged: calling tabView.setTrack()");
@@ -889,8 +892,7 @@ void NewProjectAudioProcessorEditor::trackSelectionChanged()
             DBG("trackSelectionChanged: processor selected track set");
             appendDiagnosticLog("trackSelectionChanged: processor selected track set");
             
-            const auto& gp5Track = tracks[trackIndex];
-            DBG("Track " << (trackIndex + 1) << " geladen: " << gp5Track.name 
+            DBG("Track " << (trackIndex + 1) << " geladen: " << track.name 
                 << " mit " << track.measures.size() << " Takten (MIDI Output aktiviert)");
         }
     }
